@@ -28,13 +28,25 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.export_utils import artifacts_root, write_json  # noqa: E402
 from src.load_multimodal_model import load_multimodal_sentence_transformer  # noqa: E402
 from src.load_text_model import DEFAULT_MODEL, ensure_hf_cache_env  # noqa: E402
-from src.multimodal_media import write_default_media  # noqa: E402
+from src.multimodal_media import AUDIO_SR, write_default_media  # noqa: E402
 
 DEFAULT_PROMPTS = REPO_ROOT / "tests" / "fixtures" / "multimodal_prompts.json"
 
 
 def _vector_digest(arr: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
+
+
+def _wav_f32(path: Path) -> np.ndarray:
+    """Mono int16 wav → float32 samples (avoids transformers' librosa path load)."""
+    import wave
+
+    with wave.open(str(path), "r") as w:
+        raw = w.readframes(w.getnframes())
+        sr = int(w.getframerate())
+    if sr != AUDIO_SR:
+        raise ValueError(f"{path} sr={sr} != {AUDIO_SR}")
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
 def _encode_one(model, item: dict, media_dir: Path) -> np.ndarray:
@@ -49,7 +61,7 @@ def _encode_one(model, item: dict, media_dir: Path) -> np.ndarray:
     if item.get("image"):
         payload["image"] = [str(media_dir / name) for name in item["image"]]
     if item.get("audio"):
-        payload["audio"] = str(media_dir / item["audio"])
+        payload["audio"] = _wav_f32(media_dir / item["audio"])
     if item.get("video_frames"):
         payload["video"] = [Image.open(media_dir / name) for name in item["video_frames"]]
     kwargs = {}
