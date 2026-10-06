@@ -153,6 +153,8 @@ mp4 (M4 Pro) first run: FP16 **does** place on ANE (`2307` ANE / `17` CPU prefer
 
 `ane_smoke.py --precision FLOAT16` also times `CPU_AND_GPU` and `ALL` (warm + p50/p90) and classifies every CPU-preferred op as begin / mid / end. The 17 leftovers are a **begin-of-graph** island (pad/window mask + embedding gather). That is **not** a full-ANE graph: one CPU→ANE switch at the start is expected; mid-graph CPU islands would be a fail. `ALL` may still prefer ANE — use `CPU_AND_GPU` for the GPU number.
 
+mp4 timings (S=512, warmup=2, iters=5): CPU_ONLY p50 **65.0 ms** / CPU_AND_NE **27.4 ms** / CPU_AND_GPU **38.6 ms** / ALL **28.4 ms**. ALL plan is 2246 ANE + 78 GPU (begin GPU island), not a GPU path and not full ANE.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
