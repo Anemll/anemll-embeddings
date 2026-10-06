@@ -185,6 +185,12 @@ def main() -> int:
     parser.add_argument("--prompts", type=Path, default=DEFAULT_PROMPTS)
     parser.add_argument("--reference", type=Path, default=DEFAULT_NPY)
     parser.add_argument("--mlpackage", type=Path, default=None)
+    parser.add_argument(
+        "--precision",
+        default="FLOAT32",
+        choices=("FLOAT32", "FLOAT16"),
+        help="Select *-fp16 artifacts when FLOAT16 (T10).",
+    )
     parser.add_argument("--cosine-gate", type=float, default=COSINE_GATE)
     parser.add_argument("--rel-l2-gate", type=float, default=REL_L2_GATE)
     parser.add_argument("--warmup", type=int, default=2)
@@ -196,8 +202,8 @@ def main() -> int:
         return 1
 
     seq_len = int(args.seq_len)
-    out_dir = artifact_subdir(seq_len, args.artifacts)
-    stem = package_stem(seq_len)
+    out_dir = artifact_subdir(seq_len, args.artifacts, precision=args.precision)
+    stem = package_stem(seq_len, precision=args.precision)
     pkg_path = args.mlpackage or (out_dir / f"{stem}.mlpackage")
     report_path = out_dir / f"{stem}.ane.json"
 
@@ -293,10 +299,11 @@ def main() -> int:
         fail_reasons.append(place_reason)
 
     report = {
-        "ticket": "T7",
+        "ticket": "T10" if args.precision == "FLOAT16" else "T7",
         "created_at_utc": utc_now(),
         "git_sha": git_sha(REPO_ROOT),
         "seq_len": seq_len,
+        "compute_precision": args.precision,
         "mlpackage": str(pkg_path),
         "reference": str(args.reference),
         "soc": soc,

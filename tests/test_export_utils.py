@@ -80,6 +80,8 @@ def test_sliding_window_inclusive() -> None:
 def test_package_stem() -> None:
     if package_stem(512) != "embeddinggemma2-text-s512":
         _fail(package_stem(512))
+    if package_stem(512, precision="FLOAT16") != "embeddinggemma2-text-s512-fp16":
+        _fail(package_stem(512, precision="FLOAT16"))
 
 
 def test_rotate_half_chunk() -> None:

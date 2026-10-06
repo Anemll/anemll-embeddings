@@ -46,13 +46,29 @@ def artifacts_root() -> Path:
     return Path(raw) if raw else DEFAULT_ARTIFACTS
 
 
-def package_stem(seq_len: int) -> str:
-    return f"embeddinggemma2-text-s{int(seq_len)}"
+def normalize_precision(precision: str | None) -> str:
+    key = (precision or "FLOAT32").upper().replace(" ", "")
+    if key in ("FLOAT16", "FP16"):
+        return "FLOAT16"
+    if key in ("FLOAT32", "FP32"):
+        return "FLOAT32"
+    raise ValueError(f"unsupported compute precision {precision!r}")
 
 
-def artifact_subdir(seq_len: int, root: Path | None = None) -> Path:
+def package_stem(seq_len: int, precision: str | None = None) -> str:
+    stem = f"embeddinggemma2-text-s{int(seq_len)}"
+    if normalize_precision(precision) == "FLOAT16":
+        return f"{stem}-fp16"
+    return stem
+
+
+def artifact_subdir(
+    seq_len: int,
+    root: Path | None = None,
+    precision: str | None = None,
+) -> Path:
     base = root if root is not None else artifacts_root()
-    return base / package_stem(seq_len)
+    return base / package_stem(seq_len, precision=precision)
 
 
 def git_sha(repo_root: Path) -> str | None:

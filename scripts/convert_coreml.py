@@ -39,6 +39,7 @@ from src.export_utils import (  # noqa: E402
     example_trace_inputs,
     git_sha,
     host_versions,
+    normalize_precision,
     package_stem,
     sha256_file,
     utc_now,
@@ -98,8 +99,15 @@ def main() -> int:
     parser.add_argument(
         "--precision",
         default="FLOAT32",
-        choices=("FLOAT32",),
-        help="FP32 baseline only (FP16 is T10; never the first convert).",
+        choices=("FLOAT32", "FLOAT16"),
+        help="Core ML compute precision. FLOAT16 is the T10 hazard experiment; "
+        "writes a separate *-fp16 artifact and reuses the T4 FP32 .pt.",
+    )
+    parser.add_argument(
+        "--source-pt",
+        type=Path,
+        default=None,
+        help="TorchScript .pt to convert (default: matching stem, else T4 FP32 .pt)",
     )
     parser.add_argument(
         "--skip-predict",
@@ -117,9 +125,17 @@ def main() -> int:
         return 1
 
     seq_len = int(args.seq_len)
-    out_dir = artifact_subdir(seq_len, args.artifacts)
-    stem = package_stem(seq_len)
-    pt_path = out_dir / f"{stem}.pt"
+    precision_name = normalize_precision(args.precision)
+    out_dir = artifact_subdir(seq_len, args.artifacts, precision=precision_name)
+    stem = package_stem(seq_len, precision=precision_name)
+    fp32_dir = artifact_subdir(seq_len, args.artifacts, precision="FLOAT32")
+    fp32_stem = package_stem(seq_len, precision="FLOAT32")
+    if args.source_pt is not None:
+        pt_path = args.source_pt
+    else:
+        pt_path = out_dir / f"{stem}.pt"
+        if not pt_path.is_file():
+            pt_path = fp32_dir / f"{fp32_stem}.pt"
     pkg_path = out_dir / f"{stem}.mlpackage"
     meta_path = out_dir / f"{stem}.convert.json"
 
@@ -132,7 +148,10 @@ def main() -> int:
 
     compute_units = _resolve_compute_units(args.compute_units, ct)
     min_target = _resolve_target(args.deployment_target, ct)
-    precision = ct.precision.FLOAT32
+    if precision_name == "FLOAT16":
+        precision = ct.precision.FLOAT16
+    else:
+        precision = ct.precision.FLOAT32
 
     print(f"Loading {pt_path}")
     ts = torch.jit.load(str(pt_path), map_location="cpu")
@@ -155,7 +174,7 @@ def main() -> int:
     )
     mlmodel.short_description = (
         "EmbeddingGemma 2 text-only (270M): ids/mask → 768-d L2 embedding. "
-        f"Fixed S={seq_len}. Not from forge.py convert."
+        f"Fixed S={seq_len} compute={precision_name}. Not from forge.py convert."
     )
     mlmodel.author = "anemll-embeddings"
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -170,14 +189,16 @@ def main() -> int:
     spec = mlmodel.get_spec()
     in_names = [inp.name for inp in spec.description.input]
     out_names = [out.name for out in spec.description.output]
-    export_meta = out_dir / f"{stem}.pt.meta.json"
+    export_meta = pt_path.with_name(pt_path.name + ".meta.json")
+    if not export_meta.is_file():
+        export_meta = fp32_dir / f"{fp32_stem}.pt.meta.json"
     ts_sha = None
     if export_meta.is_file():
         ts_sha = json.loads(export_meta.read_text()).get("torchscript_sha256")
     spec_path = pkg_path / "Data" / "com.apple.CoreML" / "model.mlmodel"
 
     meta = {
-        "ticket": "T5",
+        "ticket": "T10" if precision_name == "FLOAT16" else "T5",
         "created_at_utc": utc_now(),
         "git_sha": git_sha(REPO_ROOT),
         "seq_len": seq_len,
@@ -186,7 +207,7 @@ def main() -> int:
         "mlpackage": str(pkg_path),
         "mlmodel_sha256": sha256_file(spec_path) if spec_path.is_file() else None,
         "compute_units": args.compute_units,
-        "compute_precision": args.precision,
+        "compute_precision": precision_name,
         "minimum_deployment_target": args.deployment_target,
         "inputs": {
             "input_ids": {"shape": [1, seq_len], "dtype": "int32"},
@@ -210,7 +231,12 @@ def main() -> int:
         "host": host_versions(),
         "notes": [
             "CPU_AND_NE does not prove ANE placement (T7).",
-            "FP32 baseline; FP16 hazard is T10.",
+            (
+                "T10 FP16 compute experiment. PyTorch reference stays BF16/FP32; "
+                "only Core ML compute_precision is FLOAT16. Separate *-fp16 artifacts."
+                if precision_name == "FLOAT16"
+                else "FP32 baseline; FP16 hazard is T10."
+            ),
             "Do not call forge.py convert.",
         ],
     }
@@ -253,7 +279,7 @@ def main() -> int:
             print(f"ERROR: embedding dim {vec.shape} != 768")
             return 1
 
-    print("OK: T5 Core ML convert")
+    print(f"OK: {'T10 FP16' if precision_name == 'FLOAT16' else 'T5'} Core ML convert")
     return 0
 
 

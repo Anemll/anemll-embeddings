@@ -133,6 +133,22 @@ export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
 
 Report: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512/embeddinggemma2-text-s512.ane.json`.
 
+## FP16 hazard experiment (T10)
+
+Reuses the T4 FP32 TorchScript. Converts a **separate** `*-fp16` package (`ct.precision.FLOAT16`) so the T5 FLOAT32 artifacts stay put. PyTorch stays BF16/FP32.
+
+```sh
+export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/convert_coreml.py --seq-len 512 --precision FLOAT16
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/parity_cosine.py --seq-len 512 --precision FLOAT16
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/ane_smoke.py --seq-len 512 --precision FLOAT16
+```
+
+Artifacts: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512-fp16/`. Record NaN rate, cosine/rel-L2, and ANE compute-plan counts. Do not treat T6/T7 CPU numbers as ANE.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
