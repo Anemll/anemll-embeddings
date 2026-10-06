@@ -11,6 +11,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.audio_export_patches import gather_seq_windows  # noqa: E402
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
@@ -48,6 +49,29 @@ def test_audio_example_shape() -> None:
         _fail("expected full-valid mask")
 
 
+def test_gather_seq_windows_matches_unfold() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(2, 70, 8, 16)
+    window, step = 24, 12
+    ref = torch.movedim(x.unfold(1, window, step), -1, 2)
+    got = gather_seq_windows(x, window, step)
+    if got.shape != ref.shape:
+        _fail(f"shape {tuple(got.shape)} != {tuple(ref.shape)}")
+    if not torch.equal(got, ref):
+        _fail("gather_seq_windows != unfold+movedim")
+
+
+def test_gather_seq_windows_export_has_no_unfold() -> None:
+    class _Win(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return gather_seq_windows(x, 24, 12)
+
+    ep = torch.export.export(_Win(), (torch.randn(1, 70, 4, 8),), strict=False)
+    targets = [str(n.target) for n in ep.graph.nodes]
+    if any("unfold" in t for t in targets):
+        _fail(f"export still contains unfold: {targets}")
+
+
 def test_io_specs() -> None:
     v = tower_io_spec("vision")
     if v["outputs"]["soft_tokens"] != [1, VISION_SOFT_TOKENS, 512]:
@@ -59,7 +83,13 @@ def test_io_specs() -> None:
 
 
 def main() -> int:
-    tests = [test_vision_example_shape, test_audio_example_shape, test_io_specs]
+    tests = [
+        test_vision_example_shape,
+        test_audio_example_shape,
+        test_gather_seq_windows_matches_unfold,
+        test_gather_seq_windows_export_has_no_unfold,
+        test_io_specs,
+    ]
     for fn in tests:
         fn()
         print(f"OK {fn.__name__}")

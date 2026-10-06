@@ -23,6 +23,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.audio_export_patches import apply_audio_unfold_patch  # noqa: E402
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
@@ -149,6 +150,8 @@ def _export_vision(out_dir: Path, *, convert: bool) -> dict:
 
 def _export_audio(out_dir: Path, *, convert: bool) -> dict:
     print("Loading audio+text ST (vision off) on CPU FP32 …")
+    unfold_patch = apply_audio_unfold_patch()
+    print(f"audio unfold patch={unfold_patch}")
     st, load_meta = load_multimodal_sentence_transformer(
         dtype=torch.float32, device="cpu", vision=False, audio=True
     )
@@ -181,6 +184,7 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
         "convert_rc": rc,
         "io": tower_io_spec("audio"),
         "finite": bool(torch.isfinite(soft).all()),
+        "unfold_patch": unfold_patch,
     }
 
 
