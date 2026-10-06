@@ -11,6 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.ane_placement import (  # noqa: E402
+    classify_device_sequence,
+    cpu_op_role,
     device_kind,
     placement_verdict,
     summarize_compute_plan,
@@ -80,12 +82,63 @@ def test_summarize_skips_const() -> None:
         _fail(str(summary["by_device"]))
 
 
+def test_cpu_op_role() -> None:
+    if cpu_op_role("ios18.gather", ["embed_weight"]) != "embedding_gather":
+        _fail(cpu_op_role("ios18.gather", ["embed_weight"]))
+    if cpu_op_role("ios18.greater_equal", ["input_ids"]) != "ids_bounds":
+        _fail(cpu_op_role("ios18.greater_equal", ["input_ids"]))
+    if cpu_op_role("ios18.logical_and", ["keep_1"]) != "mask_bias_sliding":
+        _fail(cpu_op_role("ios18.logical_and", ["keep_1"]))
+    if cpu_op_role("ios18.cast", ["attention_mask"]) != "mask_bias":
+        _fail(cpu_op_role("ios18.cast", ["attention_mask"]))
+
+
+def test_begin_end_only_no_mid_island() -> None:
+    rows = (
+        [{"op": "cast", "device": "CPU", "supported": ["CPU"], "bindings": ["attention_mask"]}]
+        * 3
+        + [{"op": "linear", "device": "ANE", "supported": ["ANE"], "bindings": []}] * 5
+    )
+    got = classify_device_sequence(rows)
+    if not got["begin_end_switches_only"]:
+        _fail(str(got))
+    if got["mid_graph_switch_count"] != 0 or got["mid_graph_cpu_islands"]:
+        _fail(str(got))
+    if [r["device"] for r in got["device_runs"]] != ["CPU", "ANE"]:
+        _fail(str(got["device_runs"]))
+    if any(op["position"] != "begin" for op in got["cpu_ops_classified"]):
+        _fail(str(got["cpu_ops_classified"]))
+
+
+def test_mid_graph_island_is_flagged() -> None:
+    rows = [
+        {"op": "cast", "device": "CPU", "supported": ["CPU"], "bindings": []},
+        {"op": "linear", "device": "ANE", "supported": ["ANE"], "bindings": []},
+        {"op": "gather", "device": "CPU", "supported": ["CPU"], "bindings": []},
+        {"op": "linear", "device": "ANE", "supported": ["ANE"], "bindings": []},
+        {"op": "cast", "device": "CPU", "supported": ["CPU"], "bindings": []},
+    ]
+    got = classify_device_sequence(rows)
+    if got["begin_end_switches_only"]:
+        _fail("mid island should fail begin_end_only")
+    if len(got["mid_graph_cpu_islands"]) != 1:
+        _fail(str(got["mid_graph_cpu_islands"]))
+    if got["mid_graph_switch_count"] < 2:
+        _fail(str(got["device_switches"]))
+    positions = [op["position"] for op in got["cpu_ops_classified"]]
+    if positions != ["begin", "mid", "end"]:
+        _fail(positions)
+
+
 def main() -> int:
     tests = [
         test_device_kind_none,
         test_verdict_fail_closed,
         test_verdict_pass_with_ane_ops,
         test_summarize_skips_const,
+        test_cpu_op_role,
+        test_begin_end_only_no_mid_island,
+        test_mid_graph_island_is_flagged,
     ]
     for fn in tests:
         fn()

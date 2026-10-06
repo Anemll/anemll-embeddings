@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""T7: ANE smoke + placement on the same T5 ``.mlpackage``.
+"""T7/T10: ANE smoke + placement on the same T5 ``.mlpackage``.
 
-Loads the package with CPU_ONLY and CPU_AND_NE, scores T1 fixtures on the
-ANE-capable path, dumps an MLComputePlan, and times both units after warmup.
+Loads CPU_ONLY, CPU_AND_NE, CPU_AND_GPU, and ALL. Scores T1 fixtures on the
+ANE-capable path, dumps MLComputePlan preferred devices (including begin/mid/end
+CPU leftovers), and times all four units after warmup (p50/p90).
 
 Fails if the compute plan has no ANE-preferred ops (silent CPU fallback) or
 if ANE embeddings are non-finite / miss PLAN cosine/rel-L2 gates.
-Does **not** treat T6 CPU parity as ANE success.
+Does **not** treat T6 CPU parity as ANE success and does **not** claim full ANE
+just because leftovers sit at graph begin.
 """
 
 from __future__ import annotations
@@ -143,14 +145,21 @@ def _run_fixtures(mlmodel, batches, ref: np.ndarray) -> list[dict]:
     return rows
 
 
-def _median_ms(times: list[float]) -> float:
+def _percentile_ms(times: list[float], p: float) -> float:
     if not times:
         return float("nan")
     s = sorted(times)
-    mid = len(s) // 2
-    if len(s) % 2:
-        return float(s[mid] * 1000.0)
-    return float((s[mid - 1] + s[mid]) * 500.0)
+    if len(s) == 1:
+        return float(s[0] * 1000.0)
+    k = (len(s) - 1) * (p / 100.0)
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    frac = k - lo
+    return float((s[lo] * (1.0 - frac) + s[hi] * frac) * 1000.0)
+
+
+def _median_ms(times: list[float]) -> float:
+    return _percentile_ms(times, 50.0)
 
 
 def _time_predict(mlmodel, batch, *, warmup: int, iters: int) -> dict[str, float]:
@@ -165,6 +174,7 @@ def _time_predict(mlmodel, batch, *, warmup: int, iters: int) -> dict[str, float
         "warmup": warmup,
         "iters": iters,
         "p50_ms": _median_ms(times),
+        "p90_ms": _percentile_ms(times, 90.0),
         "min_ms": float(min(times) * 1000.0) if times else float("nan"),
         "max_ms": float(max(times) * 1000.0) if times else float("nan"),
     }
@@ -233,6 +243,10 @@ def main() -> int:
     cpu_model = _load_model(pkg_path, ct.ComputeUnit.CPU_ONLY)
     print("Loading Core ML CPU_AND_NE …")
     ane_model = _load_model(pkg_path, ct.ComputeUnit.CPU_AND_NE)
+    print("Loading Core ML CPU_AND_GPU …")
+    gpu_model = _load_model(pkg_path, ct.ComputeUnit.CPU_AND_GPU)
+    print("Loading Core ML ALL …")
+    all_model = _load_model(pkg_path, ct.ComputeUnit.ALL)
 
     print("Scoring fixtures on CPU_AND_NE …")
     ane_rows_raw = _run_fixtures(ane_model, batches, ref)
@@ -264,6 +278,38 @@ def main() -> int:
     )
     print(f"  top_ane_ops={plan_summary.get('top_ane_ops')}")
     print(f"  top_cpu_ops={plan_summary.get('top_cpu_ops')}")
+    print(
+        f"  device_runs={[(r.get('device'), r.get('count')) for r in plan_summary.get('device_runs') or []]}"
+    )
+    print(
+        f"  mid_graph_cpu_islands={len(plan_summary.get('mid_graph_cpu_islands') or [])} "
+        f"mid_switches={plan_summary.get('mid_graph_switch_count')} "
+        f"begin_end_only={plan_summary.get('begin_end_switches_only')}"
+    )
+    for op in plan_summary.get("cpu_ops_classified") or []:
+        print(
+            f"  cpu[{op.get('index')}] {op.get('op')} role={op.get('role')} "
+            f"pos={op.get('position')} ane_ok={op.get('ane_supported')}"
+        )
+
+    print("Compute plan (CPU_AND_GPU) …")
+    gpu_plan = _compute_plan_summary(gpu_model, ct.ComputeUnit.CPU_AND_GPU)
+    print(f"  by_device={gpu_plan.get('by_device')}")
+    print("Compute plan (ALL) …")
+    all_plan = _compute_plan_summary(all_model, ct.ComputeUnit.ALL)
+    print(f"  by_device={all_plan.get('by_device')}")
+    all_prefers_gpu = int(all_plan.get("gpu_ops") or 0) > 0
+    all_prefers_ane = int(all_plan.get("ane_ops") or 0) > 0
+    all_note = (
+        "ALL prefers ANE (not a GPU path)"
+        if all_prefers_ane and not all_prefers_gpu
+        else (
+            "ALL prefers GPU"
+            if all_prefers_gpu and not all_prefers_ane
+            else f"ALL mix ANE={all_plan.get('ane_ops')} GPU={all_plan.get('gpu_ops')} CPU={all_plan.get('cpu_ops')}"
+        )
+    )
+    print(f"  {all_note}")
 
     print("Timing (same first prompt) …")
     timing = {
@@ -273,11 +319,24 @@ def main() -> int:
         "cpu_and_ne": _time_predict(
             ane_model, batches[0], warmup=args.warmup, iters=args.iters
         ),
+        "cpu_and_gpu": _time_predict(
+            gpu_model, batches[0], warmup=args.warmup, iters=args.iters
+        ),
+        "all": _time_predict(
+            all_model, batches[0], warmup=args.warmup, iters=args.iters
+        ),
     }
-    print(
-        f"  CPU p50={timing['cpu_only']['p50_ms']:.2f} ms  "
-        f"CPU_AND_NE p50={timing['cpu_and_ne']['p50_ms']:.2f} ms"
-    )
+    for key, label in (
+        ("cpu_only", "CPU_ONLY"),
+        ("cpu_and_ne", "CPU_AND_NE"),
+        ("cpu_and_gpu", "CPU_AND_GPU"),
+        ("all", "ALL"),
+    ):
+        t = timing[key]
+        print(
+            f"  {label} p50={t['p50_ms']:.2f} ms p90={t['p90_ms']:.2f} ms "
+            f"min={t['min_ms']:.2f} max={t['max_ms']:.2f}"
+        )
 
     ane_cos = [float(r["cosine"]) for r in ane_rows]
     ane_rel = [float(r["rel_l2"]) for r in ane_rows]
@@ -317,9 +376,28 @@ def main() -> int:
             "truncated": truncated,
             "placement_ok": placed_ok,
             "placement_reason": place_reason,
+            "begin_end_switches_only": bool(plan_summary.get("begin_end_switches_only")),
+            "mid_graph_switch_count": int(plan_summary.get("mid_graph_switch_count") or 0),
+            "cpu_ops_classified": len(plan_summary.get("cpu_ops_classified") or []),
+            "all_compute_note": all_note,
             "pass": not fail_reasons,
         },
         "placement": plan_summary,
+        "placement_cpu_and_gpu": {
+            "by_device": gpu_plan.get("by_device"),
+            "ane_ops": gpu_plan.get("ane_ops"),
+            "cpu_ops": gpu_plan.get("cpu_ops"),
+            "gpu_ops": gpu_plan.get("gpu_ops"),
+        },
+        "placement_all": {
+            "by_device": all_plan.get("by_device"),
+            "ane_ops": all_plan.get("ane_ops"),
+            "cpu_ops": all_plan.get("cpu_ops"),
+            "gpu_ops": all_plan.get("gpu_ops"),
+            "note": all_note,
+            "prefers_ane": all_prefers_ane,
+            "prefers_gpu": all_prefers_gpu,
+        },
         "timing_ms": timing,
         "rows_ane_vs_t1": ane_rows,
         "rows_cpu_vs_ane": cpu_vs_ane,
@@ -330,6 +408,8 @@ def main() -> int:
             "Placement is from MLComputePlan preferred devices (const ops skipped).",
             "Forge bonded-compile mode not applied (Core ML, host may be pre-M5).",
             "Do not promote T6 CPU parity to ANE correctness.",
+            "Not a full-ANE graph: leftover CPU ops are allowed only at begin/end.",
+            "CPU_AND_GPU is the GPU timing path; ALL may still prefer ANE.",
         ],
         "fail_reasons": fail_reasons,
     }

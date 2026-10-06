@@ -151,6 +151,8 @@ Artifacts: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512-fp16/`. Recor
 
 mp4 (M4 Pro) first run: FP16 **does** place on ANE (`2307` ANE / `17` CPU preferred). ANE vs T1 min cosine `0.99988`. CPU_ONLY FP16 vs T1 min cosine `0.920` (no NaNs) — the FP16 hazard is the **CPU** path, not ANE. Convert logged MIL `overflow encountered in cast` warnings.
 
+`ane_smoke.py --precision FLOAT16` also times `CPU_AND_GPU` and `ALL` (warm + p50/p90) and classifies every CPU-preferred op as begin / mid / end. The 17 leftovers are a **begin-of-graph** island (pad/window mask + embedding gather). That is **not** a full-ANE graph: one CPU→ANE switch at the start is expected; mid-graph CPU islands would be a fail. `ALL` may still prefer ANE — use `CPU_AND_GPU` for the GPU number.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
