@@ -45,6 +45,7 @@ def summarize_compute_plan(plan: Any, *, skip_const: bool = True) -> dict[str, A
             "gpu_ops": 0,
             "other_ops": 0,
             "total_ops": 0,
+            "supported_ane_ops": 0,
             "top_cpu_ops": [],
             "top_ane_ops": [],
         }
@@ -61,6 +62,7 @@ def summarize_compute_plan(plan: Any, *, skip_const: bool = True) -> dict[str, A
             "gpu_ops": 0,
             "other_ops": 0,
             "total_ops": 0,
+            "supported_ane_ops": 0,
             "top_cpu_ops": [],
             "top_ane_ops": [],
         }
@@ -69,6 +71,7 @@ def summarize_compute_plan(plan: Any, *, skip_const: bool = True) -> dict[str, A
     operations = list(getattr(block, "operations", []) or [])
     by_device: Counter[str] = Counter()
     by_op_device: dict[str, Counter[str]] = {"ANE": Counter(), "CPU": Counter(), "GPU": Counter()}
+    supported_ane = 0
     getter = getattr(plan, "get_compute_device_usage_for_mlprogram_operation")
     for op in operations:
         op_name = getattr(op, "operator_name", None) or getattr(op, "operatorName", "")
@@ -80,6 +83,14 @@ def summarize_compute_plan(plan: Any, *, skip_const: bool = True) -> dict[str, A
         by_device[kind] += 1
         if kind in by_op_device:
             by_op_device[kind][str(op_name)] += 1
+        supported = []
+        if usage is not None:
+            supported = [
+                device_kind(d)
+                for d in (getattr(usage, "supported_compute_devices", None) or [])
+            ]
+        if "ANE" in supported:
+            supported_ane += 1
 
     def _top(counter: Counter[str], n: int = 8) -> list[dict[str, Any]]:
         return [{"op": name, "count": int(c)} for name, c in counter.most_common(n)]
@@ -97,6 +108,7 @@ def summarize_compute_plan(plan: Any, *, skip_const: bool = True) -> dict[str, A
         "gpu_ops": gpu,
         "other_ops": total - ane - cpu - gpu,
         "total_ops": total,
+        "supported_ane_ops": int(supported_ane),
         "top_cpu_ops": _top(by_op_device["CPU"]),
         "top_ane_ops": _top(by_op_device["ANE"]),
     }
@@ -107,5 +119,10 @@ def placement_verdict(summary: dict[str, Any]) -> tuple[bool, str]:
     if not summary.get("available"):
         return False, f"compute plan unavailable: {summary.get('reason')}"
     if int(summary.get("ane_ops") or 0) <= 0:
-        return False, "CPU fallback suspected: 0 non-const ops prefer ANE"
+        supported = int(summary.get("supported_ane_ops") or 0)
+        return (
+            False,
+            "CPU fallback suspected: 0 non-const ops prefer ANE "
+            f"(ANE listed as supported on {supported} ops)",
+        )
     return True, f"{summary['ane_ops']} non-const ops prefer ANE"

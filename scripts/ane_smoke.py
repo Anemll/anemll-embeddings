@@ -252,7 +252,10 @@ def main() -> int:
     print("Compute plan (CPU_AND_NE) …")
     plan_summary = _compute_plan_summary(ane_model, ct.ComputeUnit.CPU_AND_NE)
     placed_ok, place_reason = placement_verdict(plan_summary)
-    print(f"  by_device={plan_summary.get('by_device')} {place_reason}")
+    print(
+        f"  by_device={plan_summary.get('by_device')} "
+        f"supported_ane={plan_summary.get('supported_ane_ops')} {place_reason}"
+    )
     print(f"  top_ane_ops={plan_summary.get('top_ane_ops')}")
     print(f"  top_cpu_ops={plan_summary.get('top_cpu_ops')}")
 
