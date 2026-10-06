@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "generated_at_utc": "2026-10-06T19:39:31.441083+00:00",
+  "host": "mp4",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "python": "3.13.5",
+  "packages": {
+    "torch": "2.14.1",
+    "transformers": "5.19.0",
+    "sentence_transformers": "6.1.0",
+    "numpy": "2.5.3"
+  },
+  "load": {
+    "model_path": "/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2",
+    "torch_dtype": "bfloat16",
+    "device": "mps",
+    "text_only": true,
+    "config_kwargs": {
+      "vision_config": null,
+      "audio_config": null
+    }
+  },
+  "normalize_embeddings": true,
+  "prompts_file": "tests/fixtures/prompts.json",
+  "prompt_ids": [
+    "sq_short",
+    "doc_short",
+    "sq_medium",
+    "doc_medium",
+    "code_q",
+    "code_doc",
+    "sts_a",
+    "sts_b",
+    "cls_one",
+    "cluster_one",
+    "sq_emptyish",
+    "doc_titled"
+  ],
+  "prompt_names": [
+    "SearchQuery",
+    "Document",
+    "SearchQuery",
+    "Document",
+    "CodeRetrieval",
+    "Document",
+    "SentenceSimilarity",
+    "SentenceSimilarity",
+    "Classification",
+    "Clustering",
+    "SearchQuery",
+    null
+  ],
+  "embedding_shape": [
+    12,
+    768
+  ],
+  "embedding_dtype": "float32",
+  "l2_norms": [
+    0.9985851645469666,
+    0.9992824792861938,
+    1.00276517868042,
+    1.0010398626327515,
+    1.0006321668624878,
+    1.002087950706482,
+    1.0002763271331787,
+    0.9983068108558655,
+    0.9996286630630493,
+    1.000738263130188,
+    0.999467134475708,
+    1.001658320426941
+  ],
+  "vector_sha256": {
+    "sq_short": "d584950ec141c6760178911165cb0090c391cfa9afa14b24bddf63dbdb88b92a",
+    "doc_short": "f177824c40b47987e317f4cde0b59398de35b860dd0919597bedef1e426041ec",
+    "sq_medium": "6c589869530d85f7e29b88b61a308affe0835c8ee9ac6a79b76b71f7b12a3d2e",
+    "doc_medium": "3290f9ab268663b125915fd35fac22ec371736898503ace57ba7b56171a06b63",
+    "code_q": "a9e65e65c58e77ce3b542b4d771232d41d4ed3ceff670ca63e058e836c8d50db",
+    "code_doc": "a800706145620bdd3b74b5022bbe31331f95d2259045369fedfea53ca9db3cef",
+    "sts_a": "028413b58175f0d583db0d4aa97307e565f4f587213b034f2d19cc0f818b0174",
+    "sts_b": "e114d82cfcecef1f9dd5daf904bed16c5886e33031b2da66ee2a03082ede6d99",
+    "cls_one": "c936c1ed793b41cd1eee6d57f9eaf28548e9c7f81178d963c15fd633ee1dd858",
+    "cluster_one": "32f7aab31f12340f67ac51d1c4a871866cd6340f98d4b0c8b029daf657716b28",
+    "sq_emptyish": "d29c6bbd4b36e67ec7859159c437ca3d5ab1a0d79ff12d207705acdde4a96e4c",
+    "doc_titled": "09c84f4c9fc1a80e9337345b149ccdd1ecd34887fbe727139623d1fb57f98874"
+  },
+  "model_safetensors_sha256": "197a32965d4b1105faf060417baa899e193fb73cd401f42ec9295234d5553d79",
+  "anemll_embeddings_artifacts": null,
+  "notes": [
+    "Text-only load via config_kwargs vision_config/audio_config=None.",
+    "dtype policy: BF16 if available else FP32; never FP16.",
+    "Compile/Core ML outputs belong under ANEMLL_EMBEDDINGS_ARTIFACTS (TBD disk)."
+  ]
+}

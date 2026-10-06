@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "description": "Fixed text-only EmbeddingGemma 2 prompts for ST reference fixtures (T1).",
+  "prompts": [
+    {
+      "id": "sq_short",
+      "prompt_name": "SearchQuery",
+      "text": "What causes the northern lights?"
+    },
+    {
+      "id": "doc_short",
+      "prompt_name": "Document",
+      "text": "The northern lights are caused by charged particles from the sun."
+    },
+    {
+      "id": "sq_medium",
+      "prompt_name": "SearchQuery",
+      "text": "How does mean pooling with an attention mask affect sentence embedding quality for padded batches?"
+    },
+    {
+      "id": "doc_medium",
+      "prompt_name": "Document",
+      "text": "Mask-aware mean pooling averages only non-padding token states. Ignoring the mask lets pad tokens poison the pooled vector and hurts retrieval cosine scores."
+    },
+    {
+      "id": "code_q",
+      "prompt_name": "CodeRetrieval",
+      "text": "python function to L2-normalize a 2D numpy array along the last axis"
+    },
+    {
+      "id": "code_doc",
+      "prompt_name": "Document",
+      "text": "def l2_normalize(x):\n    n = np.linalg.norm(x, axis=-1, keepdims=True)\n    return x / np.clip(n, 1e-12, None)"
+    },
+    {
+      "id": "sts_a",
+      "prompt_name": "SentenceSimilarity",
+      "text": "The cat sat on the mat."
+    },
+    {
+      "id": "sts_b",
+      "prompt_name": "SentenceSimilarity",
+      "text": "A feline rested on the rug."
+    },
+    {
+      "id": "cls_one",
+      "prompt_name": "Classification",
+      "text": "Customer requested a refund after late delivery."
+    },
+    {
+      "id": "cluster_one",
+      "prompt_name": "Clustering",
+      "text": "Apple Silicon Neural Engine Core ML embedding conversion."
+    },
+    {
+      "id": "sq_emptyish",
+      "prompt_name": "SearchQuery",
+      "text": "."
+    },
+    {
+      "id": "doc_titled",
+      "prompt_name": null,
+      "text": "title: Aurora FAQ | text: Charged solar particles excite atmospheric gases, producing aurora borealis."
+    }
+  ]
+}
