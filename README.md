@@ -155,6 +155,25 @@ mp4 (M4 Pro) first run: FP16 **does** place on ANE (`2307` ANE / `17` CPU prefer
 
 mp4 timings (S=512, warmup=2, iters=5): CPU_ONLY p50 **65.0 ms** / CPU_AND_NE **27.4 ms** / CPU_AND_GPU **38.6 ms** / ALL **28.4 ms**. ALL plan is 2246 ANE + 78 GPU (begin GPU island), not a GPU path and not full ANE.
 
+## Multimodal 740M → Core AI (primary)
+
+Text-only Core ML stays as the T4–T10 bonus path. New work targets **Core AI** (`torch.export` → `.aimodel`) for the full checkpoint (vision 170M + audio 300M + text 270M). Do **not** call `forge.py convert`. Use forge’s `coreai/.venv` only as the Core AI toolchain (`ANEMLL_COREAI_PYTHON`).
+
+The TB36 `google-embeddinggemma-2` safetensors already include `vision_tower` + `audio_tower`. Load them with empty `config_kwargs` (not T2’s text-only strip).
+
+```sh
+export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
+/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_multimodal_media.py
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/gen_multimodal_fixtures.py
+ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
+  /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_vision.py --probe
+```
+
+Synthetic media + multimodal embeddings land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/` (not git, not the FLOAT32 text `.mlpackage` tree). Prefixes are text-only; image/video/audio use `<|image|>` / `<|video|>` / `<|audio|>`.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
