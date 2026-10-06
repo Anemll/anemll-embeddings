@@ -175,7 +175,7 @@ ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
   /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_towers.py
 ```
 
-Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `text_s128.aimodel` (ids/mask → 768). Audio chunked attention windows K/V with a gather (`index_select`) instead of `aten.unfold` so Core AI convert can see the graph. Host interleaves placeholders. Cast16 can clash on int `div`; convert retries without it.
+Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `audio_s280.aimodel` (280×128 mel → 70×512; chunked attn windows via `index_select` instead of `aten.unfold`), `text_s128.aimodel` (ids/mask → 768). Audio `.pt2` save can hit TreeSpec; convert uses the live exported program. Host interleaves placeholders. Cast16 can clash on int `div`; convert retries without it.
 
 Synthetic media + multimodal embeddings land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/` (not git, not the FLOAT32 text `.mlpackage` tree). Prefixes are text-only; image/video/audio use `<|image|>` / `<|video|>` / `<|audio|>`.
 
