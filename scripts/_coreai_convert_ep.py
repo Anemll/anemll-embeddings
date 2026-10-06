@@ -19,6 +19,11 @@ def main() -> int:
     parser.add_argument("--entry", required=True)
     parser.add_argument("--input-names", required=True, help="comma-separated")
     parser.add_argument("--output-names", required=True, help="comma-separated")
+    parser.add_argument(
+        "--no-cast16",
+        action="store_true",
+        help="Skip cast_to_16_bit_precision (debug int-div dtype clashes).",
+    )
     args = parser.parse_args()
 
     try:
@@ -33,10 +38,11 @@ def main() -> int:
         print(f"ERROR: missing exported program {args.ep}")
         return 1
 
-    print(f"load {args.ep}")
+    print(f"load {args.ep} no_cast16={args.no_cast16}")
     ep = torch.export.load(str(args.ep))
     ep = ep.run_decompositions(coreai_torch.get_decomp_table())
-    cast_to_16_bit_precision(ep)
+    if not args.no_cast16:
+        cast_to_16_bit_precision(ep)
     conv = coreai_torch.TorchConverter(mode=coreai_torch.TorchConverter.Mode.RELEASE)
     conv.add_exported_program(
         ep,

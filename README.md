@@ -175,7 +175,7 @@ ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
   /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_towers.py
 ```
 
-Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `audio_s280.aimodel`, `text_s128.aimodel` (ids/mask → 768). Host interleaves placeholders.
+Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `text_s128.aimodel` (ids/mask → 768). Audio eager is `[1,70,512]` but Core AI convert still hits `aten.unfold` in the USM subsample/chunked attn — next change, not this PR. Host interleaves placeholders. Cast16 can clash on int `div`; convert retries without it.
 
 Synthetic media + multimodal embeddings land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/` (not git, not the FLOAT32 text `.mlpackage` tree). Prefixes are text-only; image/video/audio use `<|image|>` / `<|video|>` / `<|audio|>`.
 

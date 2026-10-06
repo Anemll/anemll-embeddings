@@ -69,7 +69,15 @@ def _export_program(module: torch.nn.Module, args: tuple, path: Path) -> None:
     print(f"wrote {path}")
 
 
-def _convert(ep: Path, out: Path, *, entry: str, inputs: list[str], outputs: list[str]) -> int:
+def _convert(
+    ep: Path,
+    out: Path,
+    *,
+    entry: str,
+    inputs: list[str],
+    outputs: list[str],
+    no_cast16: bool = False,
+) -> int:
     py = _coreai_python()
     if not py.is_file():
         print(f"ERROR: Core AI python missing at {py}")
@@ -88,8 +96,16 @@ def _convert(ep: Path, out: Path, *, entry: str, inputs: list[str], outputs: lis
         "--output-names",
         ",".join(outputs),
     ]
+    if no_cast16:
+        cmd.append("--no-cast16")
     print("convert:", " ".join(cmd))
-    return int(subprocess.call(cmd))
+    rc = int(subprocess.call(cmd))
+    if rc != 0 and not no_cast16:
+        print("convert failed with cast16; retrying --no-cast16")
+        return _convert(
+            ep, out, entry=entry, inputs=inputs, outputs=outputs, no_cast16=True
+        )
+    return rc
 
 
 def _export_vision(out_dir: Path, *, convert: bool) -> dict:

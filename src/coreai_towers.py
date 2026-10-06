@@ -24,6 +24,7 @@ VISION_PATCH_DIM = 768  # 3 * 16 * 16
 VISION_SOFT_TOKENS = 280
 AUDIO_FRAMES = 280
 AUDIO_FEAT = 128
+AUDIO_SOFT_TOKENS = 70  # 280 frames / 4× subsample
 TEXT_HIDDEN = 512
 TEXT_EMBED = 768
 
@@ -55,14 +56,16 @@ class VisionSoftTokens(nn.Module):
             attention_mask=~padding_positions,
             pixel_position_ids=pixel_position_ids,
         )
-        hidden_states, _mask = self.vision_tower.pooler(
-            hidden_states=encoded.last_hidden_state,
-            pixel_position_ids=pixel_position_ids,
-            padding_positions=padding_positions,
-            output_length=self.output_length,
-        )
-        hidden_states = hidden_states.to(dtype=inputs_embeds.dtype)
-        return self.embed_vision(hidden_states)
+        hidden = encoded.last_hidden_state
+        # Fixed 2520→280 is a 3×3 mean (k^2=9). Avoid int torch.div in the
+        # HF one_hot pooler — Core AI cast16 turns those indices si32 vs si16.
+        group = hidden.shape[1] // self.output_length
+        hidden = hidden.reshape(hidden.shape[0], self.output_length, group, hidden.shape[-1])
+        hidden = hidden.mean(dim=2)
+        hidden = hidden.to(dtype=inputs_embeds.dtype)
+        scale = float(self.vision_tower.pooler.root_hidden_size)
+        hidden = hidden * scale
+        return self.embed_vision(hidden)
 
 
 class AudioSoftTokens(nn.Module):
@@ -124,7 +127,7 @@ def tower_io_spec(name: str) -> dict[str, Any]:
                 "input_features": [1, AUDIO_FRAMES, AUDIO_FEAT],
                 "input_features_mask": [1, AUDIO_FRAMES],
             },
-            "outputs": {"soft_tokens": "subsampled [1, T, 512]"},
+            "outputs": {"soft_tokens": [1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
         }
     if name == "text":
         return {

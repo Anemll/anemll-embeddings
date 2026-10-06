@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
+    AUDIO_SOFT_TOKENS,
     VISION_PATCH_DIM,
     VISION_PATCHES,
     VISION_SOFT_TOKENS,
@@ -51,6 +52,8 @@ def test_io_specs() -> None:
     v = tower_io_spec("vision")
     if v["outputs"]["soft_tokens"] != [1, VISION_SOFT_TOKENS, 512]:
         _fail(str(v))
+    if tower_io_spec("audio")["outputs"]["soft_tokens"] != [1, AUDIO_SOFT_TOKENS, 512]:
+        _fail("audio tokens")
     if tower_io_spec("text")["outputs"]["embedding"] != [1, 768]:
         _fail("text embed")
 
