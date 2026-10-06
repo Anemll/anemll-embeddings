@@ -77,6 +77,32 @@ export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
 /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/smoke_wrapper_vs_fixtures.py
 ```
 
+## Trace + Core ML convert (T4 / T5)
+
+Fixed-S `torch.jit.trace` then public `coremltools==9.0` (see `requirements-conversion.txt`). This is **not** `forge.py convert`.
+
+```sh
+export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
+/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_export_utils.py
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_torchscript.py --seq-len 512
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/convert_coreml.py --seq-len 512
+```
+
+Default `S=512` matches this checkpoint’s `text_config.sliding_window` (PLAN’s 1024 note is the later ladder). Artifacts land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512/` (gitignored).
+
+Core ML I/O (names are fixed):
+
+| Name | Role | Shape | Dtype |
+| --- | --- | --- | --- |
+| `input_ids` | token ids (host tokenizer + task prefix) | `[1, S]` | `int32` |
+| `attention_mask` | `1` = token, `0` = pad | `[1, S]` | `int32` |
+| `embedding` | L2-normalized 768-d vector | `[1, 768]` | `float32` |
+
+`CPU_AND_NE` on convert does **not** prove ANE placement (T7). First package is FP32 compute (`ct.precision.FLOAT32`); FP16 is T10.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
