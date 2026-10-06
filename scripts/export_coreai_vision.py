@@ -8,7 +8,7 @@ The embeddings venv has no ``coreai_torch``. This script re-execs under
 toolchain probe / convert. It never imports forge's Qwen convert.
 
 ``--probe`` writes a tiny conv .aimodel to prove the Core AI toolchain.
-A real vision-tower export needs I/O from the 740M ST load (next step).
+Real towers: ``scripts/export_coreai_towers.py``.
 """
 
 from __future__ import annotations

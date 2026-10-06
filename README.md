@@ -170,7 +170,12 @@ export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
 /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/gen_multimodal_fixtures.py
 ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
   /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_vision.py --probe
+/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_coreai_towers.py
+ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
+  /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_towers.py
 ```
+
+Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `audio_s280.aimodel`, `text_s128.aimodel` (ids/mask → 768). Host interleaves placeholders.
 
 Synthetic media + multimodal embeddings land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/` (not git, not the FLOAT32 text `.mlpackage` tree). Prefixes are text-only; image/video/audio use `<|image|>` / `<|video|>` / `<|audio|>`.
 
