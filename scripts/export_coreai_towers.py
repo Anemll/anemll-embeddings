@@ -6,6 +6,8 @@ outside the graph (PLAN Phase 2 separate packages).
 
 Phase A (embeddings venv): load the matching ST slice, wrap, torch.export,
 save ``.pt2``. Phase B (``ANEMLL_COREAI_PYTHON``): convert ``.pt2`` → ``.aimodel``.
+Audio ``.pt2`` save can hit TreeSpec/``flat_apply``; then convert the live
+ExportedProgram with forge ``coreai`` site-packages on ``sys.path``.
 
 FLOAT32 text Core ML artifacts are not touched.
 """
@@ -14,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -61,13 +65,73 @@ def _coreai_python() -> Path:
     return Path(raw) if raw else DEFAULT_COREAI_PY
 
 
-def _export_program(module: torch.nn.Module, args: tuple, path: Path) -> None:
+def _coreai_site_packages() -> Path | None:
+    venv = _coreai_python().resolve().parent.parent
+    sites = sorted(venv.glob("lib/python*/site-packages"))
+    return sites[-1] if sites else None
+
+
+def _export_program(module: torch.nn.Module, args: tuple, path: Path):
+    """``torch.export`` and try to save ``.pt2``. Audio save can hit TreeSpec."""
     module.eval()
     with torch.no_grad():
         ep = torch.export.export(module, args, strict=False)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.export.save(ep, str(path))
-    print(f"wrote {path}")
+    try:
+        torch.export.save(ep, str(path))
+        print(f"wrote {path}")
+        return ep, None
+    except Exception as exc:
+        print(f"torch.export.save skipped ({type(exc).__name__}: {exc})")
+        return ep, f"{type(exc).__name__}: {exc}"
+
+
+def _unsupported_ops(exc: BaseException) -> list[str]:
+    text = f"{exc}"
+    found = re.findall(r"aten\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+", text)
+    return list(dict.fromkeys(found))
+
+
+def _convert_inprocess(
+    ep,
+    out: Path,
+    *,
+    entry: str,
+    inputs: list[str],
+    outputs: list[str],
+    no_cast16: bool = False,
+) -> int:
+    """Convert a live ExportedProgram. Used when ``.pt2`` save hits TreeSpec."""
+    site = _coreai_site_packages()
+    if site is None or not site.is_dir():
+        print(f"ERROR: Core AI site-packages missing under {_coreai_python()}")
+        return 2
+    if str(site) not in sys.path:
+        sys.path.insert(0, str(site))
+    try:
+        import coreai_torch
+        from coreai_opt.casting import cast_to_16_bit_precision
+    except ImportError as exc:
+        print(f"ERROR: in-process coreai_torch import failed: {exc}")
+        return 2
+    print(f"in-process convert no_cast16={no_cast16} site={site}")
+    ep = ep.run_decompositions(coreai_torch.get_decomp_table())
+    if not no_cast16:
+        cast_to_16_bit_precision(ep)
+    conv = coreai_torch.TorchConverter(mode=coreai_torch.TorchConverter.Mode.RELEASE)
+    conv.add_exported_program(
+        ep,
+        input_names=inputs,
+        output_names=outputs,
+        entrypoint_name=entry,
+    )
+    prog = conv.to_coreai()
+    prog.optimize()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(out, ignore_errors=True)
+    prog.save_asset(out)
+    print(f"wrote {out}")
+    return 0
 
 
 def _convert(
@@ -164,17 +228,51 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
         soft = wrapped(feat, mask)
     print(f"audio eager soft_tokens={tuple(soft.shape)} (subsampled from {AUDIO_FRAMES}x{AUDIO_FEAT})")
     ep_path = out_dir / "audio_s280.pt2"
-    _export_program(wrapped, (feat, mask), ep_path)
+    ep, save_err = _export_program(wrapped, (feat, mask), ep_path)
+    if save_err and ep_path.is_file():
+        ep_path.unlink()
+        print(f"removed stale {ep_path}")
     aimodel = out_dir / "audio_s280.aimodel"
     rc = 0
+    convert_error = None
+    unsupported: list[str] = []
     if convert:
-        rc = _convert(
-            ep_path,
-            aimodel,
-            entry="audio_s280",
-            inputs=["input_features", "input_features_mask"],
-            outputs=["soft_tokens"],
-        )
+        try:
+            if save_err is None:
+                rc = _convert(
+                    ep_path,
+                    aimodel,
+                    entry="audio_s280",
+                    inputs=["input_features", "input_features_mask"],
+                    outputs=["soft_tokens"],
+                )
+            else:
+                print("audio .pt2 save failed; converting live ExportedProgram")
+                try:
+                    rc = _convert_inprocess(
+                        ep,
+                        aimodel,
+                        entry="audio_s280",
+                        inputs=["input_features", "input_features_mask"],
+                        outputs=["soft_tokens"],
+                    )
+                except Exception as exc:
+                    print(f"in-process convert failed with cast16: {type(exc).__name__}: {exc}")
+                    rc = _convert_inprocess(
+                        ep,
+                        aimodel,
+                        entry="audio_s280",
+                        inputs=["input_features", "input_features_mask"],
+                        outputs=["soft_tokens"],
+                        no_cast16=True,
+                    )
+        except Exception as exc:
+            convert_error = f"{type(exc).__name__}: {exc}"
+            unsupported = _unsupported_ops(exc)
+            print(f"FAIL audio convert: {convert_error}")
+            if unsupported:
+                print(f"unsupported ops: {unsupported}")
+            rc = 1
     return {
         "tower": "audio",
         "load": load_meta,
@@ -185,6 +283,9 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
         "io": tower_io_spec("audio"),
         "finite": bool(torch.isfinite(soft).all()),
         "unfold_patch": unfold_patch,
+        "save_error": save_err,
+        "convert_error": convert_error,
+        "unsupported_ops": unsupported,
     }
 
 
