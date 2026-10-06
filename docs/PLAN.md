@@ -146,9 +146,9 @@ coremltools.convert(
 
 Small, numbered, independently mergeable:
 
-1. **T1 — Fixture pack:** Add `tests/fixtures/prompts.json` + expected ST embedding hashes **once weights exist** (script to regenerate; commit hashes only, not vectors if large). Until then, commit prompts and the generation script stub.
-2. **T2 — Text-only loader helper:** `src/load_text_model.py` wrapping ST/transformers with `vision_config`/`audio_config` None and BF16/FP32 dtype policy (refuse FP16).
-3. **T3 — Inference wrapper module:** `src/embed_wrapper.py` — mask-aware mean pool + 512→768 + optional L2; unit test vs ST encode on CPU for one prompt (weights required).
+1. **T1 — Fixture pack:** ✅ `tests/fixtures/prompts.json` + `embeddings.npy` + digests; `scripts/gen_reference_fixtures.py`.
+2. **T2 — Text-only loader helper:** ✅ `src/load_text_model.py` — ST load with `vision_config`/`audio_config` None; BF16/FP32 only (refuse FP16).
+3. **T3 — Inference wrapper module:** ✅ `src/embed_wrapper.py` — mask-aware mean pool + 512→768 + optional L2; `scripts/smoke_wrapper_vs_fixtures.py` cosine vs T1.
 4. **T4 — Trace export:** Script `scripts/export_torchscript.py` — fixed-S trace, save `.pt` + metadata (S, dtype, git sha, model revision).
 5. **T5 — coremltools convert:** `scripts/convert_coreml.py` — TorchScript → `.mlpackage`, compute units flag, I/O names documented in README.
 6. **T6 — Parity harness:** `scripts/parity_cosine.py` — ST vs Core ML (CPU) cosine/rel-L2 on fixtures; JSON report.

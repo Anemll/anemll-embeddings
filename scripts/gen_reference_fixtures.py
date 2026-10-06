@@ -9,7 +9,7 @@ Environment:
   HF_HOME / HUGGINGFACE_HUB_CACHE  — keep under TB36 hf-cache
   ANEMLL_EMBEDDINGS_MODEL          — override model dir (default: TB36 checkpoint)
   ANEMLL_EMBEDDINGS_VENV note      — runtime venv should be local (not SMB); see README
-  ANEMLL_EMBEDDINGS_ARTIFACTS      — placeholder for future .mlpackage/.mlmodelc disk
+  ANEMLL_EMBEDDINGS_ARTIFACTS      — /Volumes/Models/anemll-embeddings/artifacts
                                      (do NOT put compile artifacts on TB36/SAN512/internal)
 """
 
@@ -26,29 +26,18 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sentence_transformers import SentenceTransformer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL = Path(
-    "/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2"
+sys.path.insert(0, str(REPO_ROOT))
+
+from src.load_text_model import (  # noqa: E402
+    DEFAULT_MODEL,
+    ensure_hf_cache_env,
+    load_sentence_transformer,
 )
+
 DEFAULT_PROMPTS = REPO_ROOT / "tests" / "fixtures" / "prompts.json"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "fixtures"
-
-
-def _resolve_dtype_device() -> tuple[torch.dtype, str]:
-    """BF16 when available, else FP32. Never FP16."""
-    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
-        return torch.bfloat16, "cuda"
-    if torch.backends.mps.is_available():
-        # Apple Silicon: prefer BF16 on MPS when usable; fall back to FP32.
-        try:
-            t = torch.tensor([1.0], dtype=torch.bfloat16, device="mps")
-            _ = (t * 2).item()
-            return torch.bfloat16, "mps"
-        except Exception:
-            return torch.float32, "mps"
-    return torch.float32, "cpu"
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -63,28 +52,6 @@ def _sha256_file(path: Path) -> str | None:
 
 def _vector_digest(arr: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
-
-
-def load_model(model_path: Path) -> tuple[SentenceTransformer, dict]:
-    dtype, device = _resolve_dtype_device()
-    if dtype == torch.float16:
-        raise RuntimeError("FP16 is forbidden for EmbeddingGemma 2 reference loads")
-
-    model = SentenceTransformer(
-        str(model_path),
-        trust_remote_code=True,
-        device=device,
-        config_kwargs={"vision_config": None, "audio_config": None},
-        model_kwargs={"torch_dtype": dtype},
-    )
-    meta = {
-        "model_path": str(model_path.resolve()),
-        "torch_dtype": str(dtype).replace("torch.", ""),
-        "device": device,
-        "text_only": True,
-        "config_kwargs": {"vision_config": None, "audio_config": None},
-    }
-    return model, meta
 
 
 def main() -> int:
@@ -126,21 +93,14 @@ def main() -> int:
         print(f"ERROR: prompts file missing: {args.prompts}", file=sys.stderr)
         return 1
 
-    # Keep HF caches on TB36 when unset
-    os.environ.setdefault(
-        "HF_HOME", "/Volumes/TB36/Models/anemll-embeddings/hf-cache"
-    )
-    os.environ.setdefault(
-        "HUGGINGFACE_HUB_CACHE",
-        "/Volumes/TB36/Models/anemll-embeddings/hf-cache",
-    )
+    ensure_hf_cache_env()
 
     with args.prompts.open() as f:
         prompt_pack = json.load(f)
     prompts = prompt_pack["prompts"]
 
     print(f"Loading text-only model from {args.model} …")
-    model, load_meta = load_model(args.model)
+    model, load_meta = load_sentence_transformer(args.model)
     print(
         f"  dtype={load_meta['torch_dtype']} device={load_meta['device']} "
         f"st={__import__('sentence_transformers').__version__}"

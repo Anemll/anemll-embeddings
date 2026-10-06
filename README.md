@@ -47,17 +47,35 @@ Regenerate (weights on TB36; runtime venv must be **local**, not SMB — torch S
 export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
 export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
 export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-# Optional later: Core ML / compile outputs (not TB36, not SAN512, not internal SSD)
-# export ANEMLL_EMBEDDINGS_ARTIFACTS=/path/to/artifacts-disk/anemll-embeddings
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
 /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/gen_reference_fixtures.py
 /Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_reference_fixtures.py
 ```
 
 Python env: `/Volumes/Models/anemll-embeddings/.venv` (sentence-transformers≥6.1, transformers, torch, pillow, torchvision — processor import still pulls image deps even for text-only). Pip cache may stay on TB36. A TB36 `.venv` was attempted but native `torch` imports crash with SIGBUS over SMB.
 
-## Artifacts disk (placeholder)
+## Artifacts disk
 
-`.mlpackage` / `.mlmodelc` / build outputs go under **`ANEMLL_EMBEDDINGS_ARTIFACTS`** once that volume is mounted. Do **not** put compile artifacts on TB36 (models+caches only), SAN512, or the internal SSD.
+`.mlpackage` / `.mlmodelc` / TorchScript / build outputs go under:
+
+`ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts`
+
+Do **not** put compile artifacts on TB36 (models + HF caches only), SAN512, or the internal SSD.
+
+## Text-only loader + wrapper (T2 / T3)
+
+- `src/load_text_model.py` — Sentence-Transformers load with `vision_config`/`audio_config=None`, BF16/FP32 only (refuses FP16)
+- `src/embed_wrapper.py` — `EmbeddingGemma2Wrapper`: mask-aware mean pool → 512→768 projection → optional L2 (pool-then-project graph ready for later `torch.jit.trace` / coremltools)
+
+Smoke vs T1 fixtures (cosine ≥ 0.999):
+
+```sh
+export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/smoke_wrapper_vs_fixtures.py
+```
 
 ## License
 
