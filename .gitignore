@@ -1,0 +1,42 @@
+# Python
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Core ML / ANE artifacts (large; keep out of git)
+*.mlpackage
+*.mlmodelc
+*.mlmodel
+*.aimodel
+
+# Large weights / caches — live on external SSD, not in this repo
+# Canonical path: /Volumes/SAN512/MODELS/anemll-embeddings
+models/
+*.safetensors
+*.bin
+*.gguf
+*.ggml
+*.pt
+*.pth
+*.onnx
+*.npzindex.json
+*.npz
+hf-cache/
+pip-cache/
+.cache/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Env / secrets
+.env
+.env.*
+!.env.example
