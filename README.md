@@ -118,6 +118,21 @@ export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
 
 Gates (PLAN starting numbers): per-prompt cosine ≥ 0.999, rel-L2 ≤ 0.05, pairwise |Δcos| ≤ 0.01. JSON report: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512/embeddinggemma2-text-s512.parity.json`.
 
+## ANE smoke + placement (T7)
+
+Same S=512 `.mlpackage`, scored with `CPU_AND_NE`. **T6 CPU parity is not ANE proof.** T7 dumps `MLComputePlan` preferred devices and fails if zero non-const ops prefer ANE.
+
+```sh
+export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
+export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
+/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_ane_placement.py
+/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/ane_smoke.py --seq-len 512
+```
+
+Report: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512/embeddinggemma2-text-s512.ane.json`.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
