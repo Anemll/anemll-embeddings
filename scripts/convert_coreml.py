@@ -15,6 +15,7 @@ I/O (also documented in README)::
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -159,9 +160,6 @@ def main() -> int:
     mlmodel.author = "anemll-embeddings"
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
     if pkg_path.exists():
-        # overwrite previous attempt
-        import shutil
-
         if pkg_path.is_dir():
             shutil.rmtree(pkg_path)
         else:
@@ -169,40 +167,14 @@ def main() -> int:
     mlmodel.save(str(pkg_path))
     print(f"wrote {pkg_path}")
 
-    predict_ok = None
-    predict_shape = None
-    predict_norm = None
-    if not args.skip_predict:
-        ids, mask = example_trace_inputs(seq_len, pad_last=8, device="cpu")
-        loaded = ct.models.MLModel(str(pkg_path), compute_units=ct.ComputeUnit.CPU_ONLY)
-        pred = loaded.predict(
-            {
-                "input_ids": ids.numpy(),
-                "attention_mask": mask.numpy(),
-            }
-        )
-        # coremltools may use the TensorType name or a generated output name
-        if "embedding" in pred:
-            vec = np.asarray(pred["embedding"])
-        else:
-            vec = np.asarray(next(iter(pred.values())))
-        predict_shape = list(vec.shape)
-        predict_ok = bool(np.isfinite(vec).all())
-        predict_norm = float(np.linalg.norm(vec.reshape(-1)))
-        print(
-            f"  CPU predict shape={predict_shape} finite={predict_ok} "
-            f"l2={predict_norm:.6f} keys={list(pred)}"
-        )
-        if not predict_ok:
-            print("ERROR: Core ML predict produced NaN/Inf")
-            return 1
-        if vec.reshape(-1).shape[-1] != 768:
-            print(f"ERROR: embedding dim {vec.shape} != 768")
-            return 1
-
     spec = mlmodel.get_spec()
     in_names = [inp.name for inp in spec.description.input]
     out_names = [out.name for out in spec.description.output]
+    export_meta = out_dir / f"{stem}.pt.meta.json"
+    ts_sha = None
+    if export_meta.is_file():
+        ts_sha = json.loads(export_meta.read_text()).get("torchscript_sha256")
+    spec_path = pkg_path / "Data" / "com.apple.CoreML" / "model.mlmodel"
 
     meta = {
         "ticket": "T5",
@@ -210,8 +182,9 @@ def main() -> int:
         "git_sha": git_sha(REPO_ROOT),
         "seq_len": seq_len,
         "torchscript": str(pt_path),
-        "torchscript_sha256": sha256_file(pt_path),
+        "torchscript_sha256": ts_sha,
         "mlpackage": str(pkg_path),
+        "mlmodel_sha256": sha256_file(spec_path) if spec_path.is_file() else None,
         "compute_units": args.compute_units,
         "compute_precision": args.precision,
         "minimum_deployment_target": args.deployment_target,
@@ -229,10 +202,10 @@ def main() -> int:
         "spec_input_names": in_names,
         "spec_output_names": out_names,
         "cpu_predict_smoke": {
-            "ran": not args.skip_predict,
-            "finite": predict_ok,
-            "shape": predict_shape,
-            "l2_norm": predict_norm,
+            "ran": False,
+            "finite": None,
+            "shape": None,
+            "l2_norm": None,
         },
         "host": host_versions(),
         "notes": [
@@ -244,6 +217,42 @@ def main() -> int:
     write_json(meta_path, meta)
     print(f"wrote {meta_path}")
     print(f"I/O names: inputs={in_names} outputs={out_names}")
+
+    if not args.skip_predict:
+        ids, mask = example_trace_inputs(seq_len, pad_last=8, device="cpu")
+        loaded = ct.models.MLModel(str(pkg_path), compute_units=ct.ComputeUnit.CPU_ONLY)
+        pred = loaded.predict(
+            {
+                "input_ids": ids.numpy(),
+                "attention_mask": mask.numpy(),
+            }
+        )
+        if "embedding" in pred:
+            vec = np.asarray(pred["embedding"])
+        else:
+            vec = np.asarray(next(iter(pred.values())))
+        predict_shape = list(vec.shape)
+        predict_ok = bool(np.isfinite(vec).all())
+        predict_norm = float(np.linalg.norm(vec.reshape(-1)))
+        print(
+            f"  CPU predict shape={predict_shape} finite={predict_ok} "
+            f"l2={predict_norm:.6f} keys={list(pred)}"
+        )
+        meta["cpu_predict_smoke"] = {
+            "ran": True,
+            "finite": predict_ok,
+            "shape": predict_shape,
+            "l2_norm": predict_norm,
+            "output_keys": list(pred),
+        }
+        write_json(meta_path, meta)
+        if not predict_ok:
+            print("ERROR: Core ML predict produced NaN/Inf")
+            return 1
+        if vec.reshape(-1).shape[-1] != 768:
+            print(f"ERROR: embedding dim {vec.shape} != 768")
+            return 1
+
     print("OK: T5 Core ML convert")
     return 0
 

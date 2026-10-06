@@ -35,6 +35,7 @@ from src.export_utils import (  # noqa: E402
     write_json,
 )
 from src.load_text_model import load_sentence_transformer  # noqa: E402
+from src.trace_patches import apply_fixed_shape_patches  # noqa: E402
 from src.traceable_wrapper import TraceableEmbeddingGemma2  # noqa: E402
 
 
@@ -91,6 +92,9 @@ def main() -> int:
     print(f"ANEMLL_EMBEDDINGS_ARTIFACTS={args.artifacts}")
     print(f"seq_len={seq_len} device={args.device} dtype={args.dtype}")
 
+    patches = apply_fixed_shape_patches(seq_len, batch=1)
+    print(f"  export patches {patches}")
+
     print("Loading text-only ST model …")
     st_model, load_meta = load_sentence_transformer()
     wrapper = EmbeddingGemma2Wrapper.from_sentence_transformer(
@@ -99,7 +103,8 @@ def main() -> int:
     force_eager_attention(wrapper)
     # Convert on CPU FP32 for a coremltools-friendly graph (never FP16).
     wrapper = wrapper.float().to(args.device).eval()
-    traced_mod = TraceableEmbeddingGemma2(wrapper).to(args.device).eval()
+    traced_mod = TraceableEmbeddingGemma2(wrapper, seq_len=seq_len, batch=1)
+    traced_mod = traced_mod.to(args.device).eval()
 
     sliding = int(getattr(wrapper.text_model.config, "sliding_window", -1))
     print(f"  sliding_window={sliding} (checkpoint; PLAN mentioned 1024)")
@@ -160,11 +165,13 @@ def main() -> int:
         "torchscript": str(pt_path),
         "torchscript_sha256": sha256_file(pt_path),
         "load": load_meta,
+        "export_patches": patches,
         "host": host_versions(),
         "notes": [
             "Fixed-S jit.trace; no dynamic shapes.",
             "In-graph 4D pad + sliding-window additive bias (finite -1e4).",
-            "Eager attention only. Do not call forge.py convert.",
+            "Eager attention only. Fixed (B,S) view/reshape patches for coremltools.",
+            "Do not call forge.py convert.",
             "MRL truncate+renorm stays on the host (T9).",
         ],
     }

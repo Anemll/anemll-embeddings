@@ -160,10 +160,19 @@ def additive_full_attention_bias(
     attention_mask: torch.Tensor,
     dtype: torch.dtype,
     *,
+    seq_len: int | None = None,
+    batch: int | None = None,
     neg: float = MASK_NEG,
 ) -> torch.Tensor:
-    """2D pad mask [B, S] → additive 4D bias [B, 1, S, S] (keys only)."""
-    batch, seq_len = attention_mask.shape
+    """2D pad mask [B, S] → additive 4D bias [B, 1, S, S] (keys only).
+
+    Prefer Python ``seq_len`` / ``batch`` so jit.trace does not emit
+    ``aten::Int`` on ``tensor.shape`` (coremltools 9 cannot const-fold those).
+    """
+    if seq_len is None:
+        seq_len = int(attention_mask.shape[-1])
+    if batch is None:
+        batch = int(attention_mask.shape[0])
     key_ok = attention_mask.to(dtype=dtype)[:, None, None, :]
     return ((1.0 - key_ok) * float(neg)).expand(batch, 1, seq_len, seq_len).contiguous()
 
@@ -173,14 +182,16 @@ def additive_sliding_attention_bias(
     sliding_window: int,
     dtype: torch.dtype,
     *,
+    seq_len: int | None = None,
     neg: float = MASK_NEG,
 ) -> torch.Tensor:
     """Pad + inclusive |q-k| <= window, matching HF bidirectional overlay."""
-    _batch, seq_len = attention_mask.shape
-    pos = torch.arange(seq_len, device=attention_mask.device)
+    if seq_len is None:
+        seq_len = int(attention_mask.shape[-1])
+    pos = torch.arange(int(seq_len), device=attention_mask.device)
     window_ok = (pos[:, None] - pos[None, :]).abs() <= int(sliding_window)
     key_ok = attention_mask.to(dtype=torch.bool)[:, None, :]
-    keep = window_ok.view(1, seq_len, seq_len) & key_ok
+    keep = window_ok.view(1, int(seq_len), int(seq_len)) & key_ok
     return (~keep).to(dtype=dtype).unsqueeze(1) * float(neg)
 
 

@@ -19,6 +19,7 @@ from src.export_utils import (  # noqa: E402
     package_stem,
     pad_to_seq_len,
 )
+from src.trace_patches import _rotate_half_chunk  # noqa: E402
 
 
 def _fail(msg: str) -> None:
@@ -81,6 +82,15 @@ def test_package_stem() -> None:
         _fail(package_stem(512))
 
 
+def test_rotate_half_chunk() -> None:
+    x = torch.tensor([[[[1.0, 2.0, 3.0, 4.0]]]])
+    got = _rotate_half_chunk(x)
+    # Original rotate_half: cat(-x2, x1) on the last dim split in half.
+    expected = torch.tensor([[[[-3.0, -4.0, 1.0, 2.0]]]])
+    if not torch.equal(got, expected):
+        _fail(f"rotate_half {got}")
+
+
 def main() -> int:
     tests = [
         test_pad_to_seq_len,
@@ -88,6 +98,7 @@ def main() -> int:
         test_full_bias_keys_only,
         test_sliding_window_inclusive,
         test_package_stem,
+        test_rotate_half_chunk,
     ]
     for fn in tests:
         fn()

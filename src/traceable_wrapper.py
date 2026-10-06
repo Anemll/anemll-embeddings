@@ -35,6 +35,8 @@ class TraceableEmbeddingGemma2(nn.Module):
         self,
         wrapper: EmbeddingGemma2Wrapper,
         *,
+        seq_len: int,
+        batch: int = 1,
         mask_neg: float = MASK_NEG,
     ) -> None:
         super().__init__()
@@ -43,10 +45,18 @@ class TraceableEmbeddingGemma2(nn.Module):
         self.pool = wrapper.pool if isinstance(wrapper.pool, nn.Module) else MaskedMeanPool()
         self.normalize = bool(wrapper.normalize)
         self.mask_neg = float(mask_neg)
+        self.seq_len = int(seq_len)
+        self.batch = int(batch)
         cfg = self.text_model.config
         self.sliding_window = int(getattr(cfg, "sliding_window", 512))
         self.hidden_size = int(wrapper.hidden_size)
         self.embedding_dim = int(wrapper.embedding_dim)
+        # Constant RoPE positions so HF does not emit aten::Int(shape[1]).
+        self.register_buffer(
+            "position_ids",
+            torch.arange(self.seq_len, dtype=torch.long).unsqueeze(0).expand(self.batch, -1),
+            persistent=False,
+        )
 
     def _mask_dtype(self) -> torch.dtype:
         weight = self.projection.weight
@@ -61,10 +71,18 @@ class TraceableEmbeddingGemma2(nn.Module):
         dtype = self._mask_dtype()
         return {
             "full_attention": additive_full_attention_bias(
-                attention_mask, dtype, neg=self.mask_neg
+                attention_mask,
+                dtype,
+                seq_len=self.seq_len,
+                batch=self.batch,
+                neg=self.mask_neg,
             ),
             "sliding_attention": additive_sliding_attention_bias(
-                attention_mask, self.sliding_window, dtype, neg=self.mask_neg
+                attention_mask,
+                self.sliding_window,
+                dtype,
+                seq_len=self.seq_len,
+                neg=self.mask_neg,
             ),
         }
 
@@ -75,7 +93,11 @@ class TraceableEmbeddingGemma2(nn.Module):
     ) -> torch.Tensor:
         input_ids = input_ids.to(dtype=torch.long)
         masks = self._attention_mapping(attention_mask)
-        out = self.text_model(input_ids=input_ids, attention_mask=masks)
+        out = self.text_model(
+            input_ids=input_ids,
+            attention_mask=masks,
+            position_ids=self.position_ids,
+        )
         hidden = _last_hidden(out)
         pooled = self.pool(hidden, attention_mask)
         emb = self.projection(pooled)
