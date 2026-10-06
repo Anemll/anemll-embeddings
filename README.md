@@ -8,25 +8,25 @@ Convert Google’s EmbeddingGemma 2 text embedding models to run efficiently on 
 
 ## Sources
 
-- Official model: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (prefer this checkpoint)
+- Official model: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (prefer this checkpoint; ~1.53 GB safetensors)
 - Community / Unsloth guide & variants: [unsloth/embeddinggemma-2](https://huggingface.co/unsloth/embeddinggemma-2), Unsloth EmbeddingGemma docs
 - Conversion workflow reference (read-only): [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge) (`docs/WORKFLOW.md`, `forge.py`)
 
 ## Model weights location
 
-**Weights are not stored in this git repo.** On development machines they live on external storage:
+**Weights are not stored in this git repo.** Keep this checkout lean (code + small configs only).
 
-```text
-/Volumes/SAN512/MODELS/anemll-embeddings
-```
+Canonical models directory: **TBD — network volume** (not the flash USB `/Volumes/SAN512`, which is too slow for large downloads). Do not download checkpoints onto the internal SSD either when free space is tight.
 
-A local `models` symlink may point at that path. See `.gitignore`. Set Hugging Face caches there as well:
+When a network volume path is confirmed, set Hugging Face caches there as well:
 
 ```sh
-export HF_HOME=/Volumes/SAN512/MODELS/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/SAN512/MODELS/anemll-embeddings/hf-cache
+export HF_HOME=<NETWORK_VOLUME>/anemll-embeddings/hf-cache
+export HUGGINGFACE_HUB_CACHE=<NETWORK_VOLUME>/anemll-embeddings/hf-cache
 ```
+
+A local `models` symlink to that path is optional and gitignored.
 
 ## License
 
-Apache License 2.0 — see `LICENSE` when added; EmbeddingGemma upstream terms also apply to model weights.
+Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.

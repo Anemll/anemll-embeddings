@@ -14,8 +14,8 @@ __pycache__/
 *.mlmodel
 *.aimodel
 
-# Large weights / caches — live on external SSD, not in this repo
-# Canonical path: /Volumes/SAN512/MODELS/anemll-embeddings
+# Large weights / caches — live on network volume (TBD), not in this repo
+# Do not use flash USB /Volumes/SAN512 for model downloads (too slow).
 models/
 *.safetensors
 *.bin
