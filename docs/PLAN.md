@@ -5,7 +5,7 @@ Concrete phased plan for converting Google’s **EmbeddingGemma 2** to Core ML f
 **Checkpoint:** [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (prefer official; ~1.53 GB text safetensors when modality encoders are omitted).  
 **Reference stack:** Sentence-Transformers `SentenceTransformer("google/embeddinggemma-2", …)`.  
 **Forge reference (read-only):** `/Users/anemll/anemll-forge` — especially `docs/WORKFLOW.md`, `docs/TECHNIQUES.md`, `docs/ENVIRONMENT.md`, `docs/ANE_COMPILE_MODE_POLICY.md`, `ANE_DELTANET_NUMERICS.md`, `forge.py` `convert` → `scripts/qwen38_ane_model.py` / `qwen38_ane_chunk.py`, `tools/coreml/`.  
-**Weights location:** network volume (TBD). Do **not** download into this git repo, onto flash USB `/Volumes/SAN512`, or onto a full internal SSD. Do **not** download models as part of planning work.
+**Weights location:** `/Volumes/TB36/Models/anemll-embeddings` (TrueNAS SMB **TB36**). Checkpoint dir: `…/google-embeddinggemma-2`. HF cache: `…/hf-cache`. Do **not** download into this git repo, onto flash USB `/Volumes/SAN512` (slow; may hold a partial ~702M copy), or onto a full internal SSD. Do **not** download models as part of planning work.
 
 ---
 
@@ -40,7 +40,7 @@ Sentence-Transformers graph (conceptual): Transformer → mean Pooling (`embeddi
 1. Keep this checkout lean: code, configs, fixed prompt fixtures, docs. Weights and `.mlpackage` / `.mlmodelc` stay gitignored on the network volume.
 2. Conversion venv (separate from forge’s Qwen/Core AI stack): Python 3.11, `torch`, `transformers`, `sentence-transformers`, `safetensors`, `coremltools` 9.x (public wheel first; note forge’s research env used a patched `9.1.dev1` with FP8 work—**do not assume that patch is required** for a text encoder).
 3. Record `python -c '…'` / `forge.py doctor`-style version dumps when the forge checkout is available, but **do not** merge forge’s Core AI Python 3.13 / `coreai-*` pins into this project.
-4. Confirm network volume path; set `HF_HOME` / `HUGGINGFACE_HUB_CACHE` there before any download ticket.
+4. Network volume confirmed: `/Volumes/TB36/Models/anemll-embeddings`. Set `HF_HOME` / `HUGGINGFACE_HUB_CACHE` to `…/hf-cache` before any download ticket.
 
 ---
 
@@ -157,7 +157,7 @@ Small, numbered, independently mergeable:
 9. **T9 — MRL host path:** Truncate+renorm helper matching ST `truncate_dim`; parity at 128/256/512.
 10. **T10 — FP16 hazard report:** Explicit experiment: what happens if convert forces FP16 compute; document NaN/cosine collapse; decide FP32 islands or other mitigation before any release claim.
 11. **T11 — GELU A/B:** Native vs approximate GELU on ANE; pick recipe; note in PLAN results subsection.
-12. **T12 — Network volume + HF cache docs:** Replace TBD path in README once IT/path is known; no model bytes in git.
+12. **T12 — Network volume + HF cache docs:** README pins TB36 paths; keep caches there; no model bytes in git.
 
 ---
 
@@ -176,7 +176,7 @@ Only after Phase 1 cosine/placement gates pass on text.
 
 ## Open questions
 
-- Confirmed **network volume** absolute path for weights + HF cache.
+- ~~Confirmed network volume~~ → `/Volumes/TB36/Models/anemll-embeddings` (+ `hf-cache`).
 - Exact HF revision pin for reproducibility (commit hash, not only `main`).
 - Whether first ship keeps **normalize inside** the `.mlpackage` or on host.
 - Whether embedding **gather stays on ANE** or moves host-side for size/placement.
