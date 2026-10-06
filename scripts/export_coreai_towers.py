@@ -66,7 +66,9 @@ def _coreai_python() -> Path:
 
 
 def _coreai_site_packages() -> Path | None:
-    venv = _coreai_python().resolve().parent.parent
+    # ``.venv/bin/python`` often symlinks to Homebrew; do not resolve it
+    # or site-packages becomes the framework install, not the venv.
+    venv = _coreai_python().parent.parent
     sites = sorted(venv.glob("lib/python*/site-packages"))
     return sites[-1] if sites else None
 
