@@ -149,6 +149,8 @@ export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
 
 Artifacts: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512-fp16/`. Record NaN rate, cosine/rel-L2, and ANE compute-plan counts. Do not treat T6/T7 CPU numbers as ANE.
 
+mp4 (M4 Pro) first run: FP16 **does** place on ANE (`2307` ANE / `17` CPU preferred). ANE vs T1 min cosine `0.99988`. CPU_ONLY FP16 vs T1 min cosine `0.920` (no NaNs) — the FP16 hazard is the **CPU** path, not ANE. Convert logged MIL `overflow encountered in cast` warnings.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
