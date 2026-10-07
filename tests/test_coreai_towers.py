@@ -21,7 +21,6 @@ from src.audio_export_patches import (  # noqa: E402
     blocked_additive_attention_mask,
     depthwise_conv1d_channels_last,
     gather_seq_windows,
-    glu_last_matmul,
     nchw_to_nhwc,
     nhwc_to_nchw,
     rel_pos_ids_float,
@@ -353,26 +352,6 @@ def test_rel_shift_baked_export_has_no_slice() -> None:
         _fail(f"slice/pad still in baked rel-shift export: {targets}")
 
 
-def test_glu_last_matmul_matches_glu() -> None:
-    torch.manual_seed(0)
-    x = torch.randn(1, 70, 2048)
-    got = glu_last_matmul(x)
-    ref = torch.nn.functional.glu(x, dim=-1)
-    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
-        _fail("glu_last_matmul != F.glu")
-
-
-def test_glu_last_matmul_export_has_no_slice() -> None:
-    class _Glu(torch.nn.Module):
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return glu_last_matmul(x)
-
-    ep = torch.export.export(_Glu(), (torch.randn(1, 70, 2048),), strict=False)
-    targets = [str(n.target) for n in ep.graph.nodes]
-    if any("slice" in t for t in targets):
-        _fail(f"slice still in glu export: {targets}")
-
-
 def test_rotate_half_matmul_matches_cat() -> None:
     torch.manual_seed(0)
     x = torch.randn(2, 4, 8)
@@ -504,8 +483,6 @@ def main() -> int:
         test_rel_shift_static_matches_hf,
         test_rel_shift_baked_matches_hf,
         test_rel_shift_baked_export_has_no_slice,
-        test_glu_last_matmul_matches_glu,
-        test_glu_last_matmul_export_has_no_slice,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,

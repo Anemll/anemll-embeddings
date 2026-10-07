@@ -122,24 +122,6 @@ def swap_last_two(x: torch.Tensor) -> torch.Tensor:
     return swap_mid_dims(flat).reshape(*lead, dim_b, dim_a)
 
 
-def glu_last_matmul(x: torch.Tensor) -> torch.Tensor:
-    """``F.glu(x, dim=-1)`` via constant half-takes — no last-dim ``strided_slice``.
-
-    Live leftover ``reshape→strided_slice`` after baked rel-shift was GLU on
-    ``[1,70,2048]`` (affine ``d0*143360 + d1*2048 + d2 + 1024``). That is
-    not the baked ``[12,13]→[12,24]`` window.
-    """
-    last = int(x.shape[-1])
-    if last % 2:
-        raise ValueError(f"glu_last_matmul last dim {last} (want even)")
-    half = last // 2
-    eye = torch.eye(half, device=x.device, dtype=x.dtype)
-    zeros = torch.zeros(half, half, device=x.device, dtype=x.dtype)
-    lo = x @ torch.cat([eye, zeros], dim=0)
-    hi = x @ torch.cat([zeros, eye], dim=0)
-    return lo * torch.sigmoid(hi)
-
-
 def depthwise_conv1d_channels_last(conv: Any, x: torch.Tensor) -> torch.Tensor:
     """Causal depthwise ``conv1d`` on ``[B, S, C]`` without ``transpose(1, 2)``.
 
@@ -459,7 +441,7 @@ def _light_conv1d_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
     residual = hidden_states
     hidden_states = self.pre_layer_norm(hidden_states)
     hidden_states = self.linear_start(hidden_states)
-    hidden_states = glu_last_matmul(hidden_states)
+    hidden_states = F.glu(hidden_states, dim=-1)
     hidden_states = depthwise_conv1d_channels_last(self.depthwise_conv1d, hidden_states)
     gradient_clipping = min(self.gradient_clipping, torch.finfo(hidden_states.dtype).max)
     hidden_states = torch.clamp(hidden_states, -gradient_clipping, gradient_clipping)
@@ -563,7 +545,6 @@ def apply_audio_unfold_patch() -> dict[str, int]:
         "value_dtype": "hidden_no_float_cast",
         "rel_pos": "float_arange",
         "lconv1d": "channels_last_onehot",
-        "glu": "last_matmul",
         "rel_shift": "baked_onehot",
     }
 
