@@ -15,6 +15,7 @@ from src.audio_export_patches import (  # noqa: E402
     AUDIO_CHUNK,
     AUDIO_FUTURE,
     AUDIO_PAST,
+    _rel_shift_baked,
     _rel_shift_matmul,
     _rel_shift_static,
     blocked_additive_attention_mask,
@@ -316,20 +317,39 @@ def test_rel_shift_static_matches_hf() -> None:
             _fail(f"static rel_shift {shape} {tuple(got.shape)} != {tuple(ref.shape)}")
 
 
-def test_rel_shift_static_export_is_one_prefix_slice() -> None:
+def test_rel_shift_baked_matches_hf() -> None:
+    class _Attn:
+        context_size = 24
+
+        def hf(self, x: torch.Tensor) -> torch.Tensor:
+            *lead, block, pos = x.shape
+            context = self.context_size
+            x = torch.nn.functional.pad(x, (0, context + 1 - pos))
+            x = x.reshape(*lead, block * (context + 1))
+            x = x[..., : block * context]
+            return x.reshape(*lead, block, context)
+
+    torch.manual_seed(0)
+    attn = _Attn()
+    for shape in ((1, 2, 6, 12, 24), (8, 1, 6, 12, 13), (8, 6, 12, 13)):
+        x = torch.randn(*shape)
+        got = _rel_shift_baked(attn, x)
+        ref = attn.hf(x)
+        if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+            _fail(f"baked rel_shift {shape} {tuple(got.shape)} != {tuple(ref.shape)}")
+
+
+def test_rel_shift_baked_export_has_no_slice() -> None:
     class _Shift(torch.nn.Module):
         context_size = 24
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return _rel_shift_static(self, x)
+            return _rel_shift_baked(self, x)
 
-    ep = torch.export.export(_Shift(), (torch.randn(1, 1, 2, 12, 13),), strict=False)
+    ep = torch.export.export(_Shift(), (torch.randn(1, 6, 12, 13),), strict=False)
     targets = [str(n.target) for n in ep.graph.nodes]
-    if any("cat" in t or "stack" in t for t in targets):
-        _fail(f"per-row cat/stack still in export: {targets}")
-    blob = " ".join(f"{n.target} {n.meta.get('val', '')}" for n in ep.graph.nodes)
-    if "288" not in blob:
-        _fail("missing one static prefix keep=chunk*context")
+    if any("slice" in t or "cat" in t or "stack" in t or "pad" in t for t in targets):
+        _fail(f"slice/pad still in baked rel-shift export: {targets}")
 
 
 def test_rotate_half_matmul_matches_cat() -> None:
@@ -461,7 +481,8 @@ def main() -> int:
         test_vision_attn_matches_transpose_matmul,
         test_rel_shift_matmul_matches_hf,
         test_rel_shift_static_matches_hf,
-        test_rel_shift_static_export_is_one_prefix_slice,
+        test_rel_shift_baked_matches_hf,
+        test_rel_shift_baked_export_has_no_slice,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,

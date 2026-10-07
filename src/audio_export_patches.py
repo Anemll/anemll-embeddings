@@ -167,11 +167,8 @@ def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
 def _rel_shift_static(self, x: torch.Tensor) -> torch.Tensor:
     """Transformer-XL rel-shift via one static prefix slice (no per-row loop).
 
-    Live ANE leftover on ``ad51606`` was the per-row
-    ``reshape→strided_slice`` / ``strided_slice→reshape`` chain (affine
-    maps ``12×25=300`` with offsets ``+25…+275``). One flatten +
-    ``[..., :chunk*context]`` is the same HF prefix. Do not retry
-    prefix-matmul or the f16 island cast.
+    Live leftover after this was ``reshape→strided_slice→reshape``
+    (affine ``12×25=300``). Kept for tests. Export uses ``_rel_shift_baked``.
     """
     if x.ndim < 2:
         raise ValueError(f"_rel_shift_static rank {x.ndim}")
@@ -182,6 +179,55 @@ def _rel_shift_static(self, x: torch.Tensor) -> torch.Tensor:
     flat = x.reshape(*lead, block_size * (context + 1))
     keep = block_size * context
     return flat[..., :keep].reshape(*lead, block_size, context)
+
+
+def rel_shift_onehot(
+    block_size: int,
+    pos_len: int,
+    context: int,
+    *,
+    device: torch.device | str,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """``[chunk*context, chunk*pos]`` one-hot for XL rel-shift without pad/slice.
+
+    Output ``p`` reads ``scores[r, c]`` where ``r, c = divmod(p, context+1)``
+    when ``c < pos``. Pad slots stay zero. Not the banned 300-wide
+    prefix-matmul (no pad to ``context+1``, no ``[..., :288]``).
+    """
+    block_size = int(block_size)
+    pos_len = int(pos_len)
+    context = int(context)
+    keep = block_size * context
+    src = block_size * pos_len
+    slots = torch.arange(keep, device=device, dtype=dtype)
+    stride = float(context + 1)
+    row = torch.floor(slots / stride)
+    col = slots - row * stride
+    valid = torch.clamp(float(pos_len) - col, 0, 1)
+    src_idx = row * float(pos_len) + col
+    dest = torch.arange(src, device=device, dtype=dtype)
+    return torch.clamp(1.0 - (src_idx.unsqueeze(1) - dest).abs(), 0, 1) * valid.unsqueeze(1)
+
+
+def _rel_shift_baked(self, x: torch.Tensor) -> torch.Tensor:
+    """XL rel-shift via a constant one-hot — no ``strided_slice``.
+
+    GPU leftover on ``62e3011`` was the prefix slice itself
+    (``reshape→strided_slice→reshape``). Do not retry prefix-matmul or
+    the f16 island cast.
+    """
+    if x.ndim < 2:
+        raise ValueError(f"_rel_shift_baked rank {x.ndim}")
+    *lead, block_size, pos_len = x.shape
+    context = int(self.context_size)
+    block_size = int(block_size)
+    pos_len = int(pos_len)
+    select = rel_shift_onehot(
+        block_size, pos_len, context, device=x.device, dtype=x.dtype
+    )
+    flat = x.reshape(*lead, block_size * pos_len)
+    return (flat @ select.T).reshape(*lead, block_size, context)
 
 
 def _rel_shift_matmul(self, x: torch.Tensor) -> torch.Tensor:
@@ -343,7 +389,7 @@ def _audio_attn_forward(
     matrix_bd = q4.reshape(batch_size * num_heads, num_blocks * chunk, head_dim) @ (
         swap_last_two(rel_bh)
     )
-    # One static prefix slice on ``[BH, n, chunk, pos]`` (no 5-D, no per-row).
+    # Baked XL shift on ``[BH, n, chunk, pos]`` — constant one-hot, no slice.
     matrix_bd = self._rel_shift(
         matrix_bd.reshape(batch_size * num_heads, num_blocks, chunk, -1)
     )
@@ -489,7 +535,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     g4.Gemma4AudioSubSampleConvProjectionLayer.forward = _subsample_layer_forward
     g4.Gemma4AudioLightConv1d.forward = _light_conv1d_forward
     g4.Gemma4AudioRelPositionalEncoding.forward = _rel_pos_forward
-    g4.Gemma4AudioAttention._rel_shift = _rel_shift_static
+    g4.Gemma4AudioAttention._rel_shift = _rel_shift_baked
     return {
         "patched": 1,
         "window_op": "onehot_matmul",
@@ -499,7 +545,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
         "value_dtype": "hidden_no_float_cast",
         "rel_pos": "float_arange",
         "lconv1d": "channels_last_onehot",
-        "rel_shift": "static_one_slice",
+        "rel_shift": "baked_onehot",
     }
 
 
