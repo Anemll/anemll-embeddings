@@ -2,6 +2,11 @@
 
 coremltools 9.0 cannot const-fold ``int(non_scalar_tensor)`` from
 ``hidden_states.shape`` unpacks inside EmbeddingGemma 2 attention / PLE.
+
+Preferred-ANE on ``text_embeds_s320`` names ``GPU_region_0`` outputs
+``reshape->permute`` (head ``view`` + ``transpose(1, 2)``) and
+``strided_slice->reshape`` (PLE ``[:, :, layer, :]``). Head layout uses
+``swap_mid_dims``. Each PLE layer is a size-24 one-hot matmul.
 """
 
 from __future__ import annotations
@@ -9,6 +14,8 @@ from __future__ import annotations
 import transformers.models.embedding_gemma2.modeling_embedding_gemma2 as eg2
 import torch
 import torch.nn.functional as F
+
+from src.audio_export_patches import swap_mid_dims
 
 
 def _rotate_half_chunk(x: torch.Tensor) -> torch.Tensor:
@@ -66,7 +73,9 @@ def _make_eager_attention(batch: int, seq_len: int):
         if dropout and module.training:
             attn_weights = F.dropout(attn_weights, p=float(dropout), training=True)
         attn_output = torch.matmul(attn_weights, value_states)
-        attn_output = attn_output.transpose(1, 2).contiguous()
+        # [B, H, S, D] → [B, S, H, D]. One-hot, not transpose: that transpose
+        # fused with the head reshape as GPU ``reshape->permute``.
+        attn_output = swap_mid_dims(attn_output).contiguous()
         return attn_output, attn_weights
 
     return eager_attention_forward
@@ -85,16 +94,17 @@ def _make_attention_forward(batch: int, seq_len: int):
         head_dim = int(self.head_dim)
         n_heads = int(self.q_proj.out_features) // head_dim
         n_kv = int(self.k_proj.out_features) // head_dim
-        query_states = (
-            self.q_proj(hidden_states)
-            .view(batch, seq_len, n_heads, head_dim)
-            .transpose(1, 2)
+        # Heads-last view, then one-hot swap to [B, H, S, D]. Do not
+        # ``transpose(1, 2)`` — that pair is GPU ``reshape->permute``.
+        # K's last-two transpose stays: a [320, 256] one-hot does not fit.
+        query_states = swap_mid_dims(
+            self.q_proj(hidden_states).reshape(batch, seq_len, n_heads, head_dim)
         )
-        key_states = (
-            self.k_proj(hidden_states).view(batch, seq_len, n_kv, head_dim).transpose(1, 2)
+        key_states = swap_mid_dims(
+            self.k_proj(hidden_states).reshape(batch, seq_len, n_kv, head_dim)
         )
-        value_states = (
-            self.v_proj(hidden_states).view(batch, seq_len, n_kv, head_dim).transpose(1, 2)
+        value_states = swap_mid_dims(
+            self.v_proj(hidden_states).reshape(batch, seq_len, n_kv, head_dim)
         )
         query_states = self.q_norm(query_states)
         key_states = self.k_norm(key_states)
@@ -136,10 +146,79 @@ def _make_ple_forward(batch: int, seq_len: int):
     return forward
 
 
-def apply_fixed_shape_patches(seq_len: int, batch: int = 1) -> dict[str, int]:
+def _take_ple_layer(ple: torch.Tensor, layer: int) -> torch.Tensor:
+    """``[B, S, L, W] → [B, S, W]`` for one layer via a length-L one-hot.
+
+    HF indexes ``per_layer_inputs[:, :, i, :]``. That lowered as
+    ``strided_slice->reshape`` inside ``GPU_region_0``.
+    """
+    batch, seq, n_layers, width = (int(s) for s in ple.shape)
+    select = ple.new_zeros(1, n_layers)
+    select[0, int(layer)] = 1
+    flat = ple.reshape(batch * seq, n_layers, width)
+    return (select @ flat).reshape(batch, seq, width)
+
+
+def _text_model_forward(
+    self,
+    input_ids: torch.Tensor | None = None,
+    attention_mask: torch.Tensor | dict | None = None,
+    position_ids: torch.Tensor | None = None,
+    inputs_embeds: torch.Tensor | None = None,
+    **kwargs,
+) -> eg2.BaseModelOutput:
+    """Same as HF ``EmbeddingGemma2TextModel.forward``, PLE layers via matmul."""
+    if (input_ids is None) ^ (inputs_embeds is not None):
+        raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+    if input_ids is not None:
+        inputs_embeds = self.embed_tokens(input_ids)
+    per_layer_inputs = self.ple(inputs_embeds)
+    if position_ids is None:
+        position_ids = torch.arange(
+            inputs_embeds.shape[1], device=inputs_embeds.device
+        ).unsqueeze(0)
+    if not isinstance(attention_mask, dict):
+        mask_kwargs = {
+            "config": self.config,
+            "inputs_embeds": inputs_embeds,
+            "attention_mask": attention_mask,
+        }
+        attention_mask_mapping = {
+            "full_attention": eg2.create_bidirectional_mask(**mask_kwargs),
+            "sliding_attention": eg2.create_bidirectional_sliding_window_mask(**mask_kwargs),
+        }
+    else:
+        attention_mask_mapping = attention_mask
+    hidden_states = inputs_embeds
+    position_embeddings = {}
+    for layer_type in self.unique_layer_types:
+        position_embeddings[layer_type] = self.rotary_emb(
+            hidden_states, position_ids, layer_type
+        )
+    for i, encoder_layer in enumerate(self.layers):
+        hidden_states = encoder_layer(
+            hidden_states,
+            _take_ple_layer(per_layer_inputs, i),
+            attention_mask=attention_mask_mapping[self.config.layer_types[i]],
+            position_embeddings=position_embeddings[self.config.layer_types[i]],
+            **kwargs,
+        )
+    hidden_states = self.norm(hidden_states)
+    hidden_states = self.embedding_projection(hidden_states)
+    return eg2.BaseModelOutput(last_hidden_state=hidden_states)
+
+
+def apply_fixed_shape_patches(seq_len: int, batch: int = 1) -> dict[str, object]:
     """Monkey-patch EmbeddingGemma 2 classes for a single fixed (B, S)."""
     eg2.rotate_half = _rotate_half_chunk
     eg2.eager_attention_forward = _make_eager_attention(batch, seq_len)
     eg2.EmbeddingGemma2Attention.forward = _make_attention_forward(batch, seq_len)
     eg2.EmbeddingGemma2TextPLE.forward = _make_ple_forward(batch, seq_len)
-    return {"seq_len": int(seq_len), "batch": int(batch), "patched": 1}
+    eg2.EmbeddingGemma2TextModel.forward = _text_model_forward
+    return {
+        "seq_len": int(seq_len),
+        "batch": int(batch),
+        "patched": 1,
+        "attn_layout": "swap_mid_dims",
+        "ple_index": "onehot_layer",
+    }

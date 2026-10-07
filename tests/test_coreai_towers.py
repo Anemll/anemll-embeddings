@@ -34,6 +34,10 @@ from src.audio_export_patches import (  # noqa: E402
     swap_last_two,
     swap_mid_dims,
 )
+from src.trace_patches import (  # noqa: E402
+    _make_attention_forward,
+    _take_ple_layer,
+)
 from src.vision_export_patches import (  # noqa: E402
     _apply_multidimensional_rope_ane,
     _recomposition_frequencies_ane,
@@ -577,6 +581,104 @@ def test_depthwise_conv1d_export_has_no_transpose() -> None:
         _fail(f"export still permutes: {bad}")
 
 
+def test_take_ple_layer_matches_index() -> None:
+    torch.manual_seed(0)
+    ple = torch.randn(1, 5, 4, 6)
+    for layer in range(4):
+        got = _take_ple_layer(ple, layer)
+        ref = ple[:, :, layer, :]
+        if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+            _fail(f"ple layer {layer}")
+
+
+def test_take_ple_layer_export_has_no_slice() -> None:
+    class _M(torch.nn.Module):
+        def forward(self, ple: torch.Tensor) -> torch.Tensor:
+            return _take_ple_layer(ple, 2)
+
+    ep = torch.export.export(_M().eval(), (torch.randn(1, 5, 4, 6),), strict=False)
+    bad = [str(n.target) for n in ep.graph.nodes if "slice" in str(n.target)]
+    if bad:
+        _fail(f"slice still in ple take: {bad}")
+
+
+def test_text_attn_swap_matches_transpose() -> None:
+    class _Attn:
+        head_dim = 4
+        scaling = 1.0
+
+        def __init__(self) -> None:
+            self.q_proj = torch.nn.Linear(8, 8, bias=False)
+            self.k_proj = torch.nn.Linear(8, 4, bias=False)
+            self.v_proj = torch.nn.Linear(8, 4, bias=False)
+            self.o_proj = torch.nn.Linear(8, 8, bias=False)
+            self.q_norm = torch.nn.Identity()
+            self.k_norm = torch.nn.Identity()
+            self.v_norm = torch.nn.Identity()
+
+    torch.manual_seed(0)
+    attn = _Attn()
+    x = torch.randn(1, 5, 8)
+    cos = torch.ones(1, 5, 4)
+    sin = torch.zeros(1, 5, 4)
+    mask = torch.zeros(1, 1, 5, 5)
+    forward = _make_attention_forward(1, 5)
+    got, _ = forward(attn, x, attention_mask=mask, position_embeddings=(cos, sin))
+    q = attn.q_proj(x).view(1, 5, 2, 4).transpose(1, 2)
+    k = attn.k_proj(x).view(1, 5, 1, 4).transpose(1, 2)
+    v = attn.v_proj(x).view(1, 5, 1, 4).transpose(1, 2)
+    # n_rep = 2. Match eager repeat.
+    k = k.repeat_interleave(2, dim=1)
+    v = v.repeat_interleave(2, dim=1)
+    w = torch.softmax(q @ k.transpose(2, 3) + mask, dim=-1)
+    ref = attn.o_proj((w @ v).transpose(1, 2).reshape(1, 5, 8))
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("text swap_mid attn != transpose+matmul")
+
+
+def test_text_attn_export_has_no_head_transpose() -> None:
+    class _Attn(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.head_dim = 4
+            self.scaling = 1.0
+            self.q_proj = torch.nn.Linear(8, 8, bias=False)
+            self.k_proj = torch.nn.Linear(8, 4, bias=False)
+            self.v_proj = torch.nn.Linear(8, 4, bias=False)
+            self.o_proj = torch.nn.Linear(8, 8, bias=False)
+            self.q_norm = torch.nn.Identity()
+            self.k_norm = torch.nn.Identity()
+            self.v_norm = torch.nn.Identity()
+            self._fn = _make_attention_forward(1, 5)
+
+        def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, mask: torch.Tensor):
+            out, _ = self._fn(self, x, attention_mask=mask, position_embeddings=(cos, sin))
+            return out
+
+    torch.manual_seed(0)
+    mod = _Attn().eval()
+    args = (
+        torch.randn(1, 5, 8),
+        torch.ones(1, 5, 4),
+        torch.zeros(1, 5, 4),
+        torch.zeros(1, 1, 5, 5),
+    )
+    ep = torch.export.export(mod, args, strict=False)
+    head_transpose = []
+    for n in ep.graph.nodes:
+        name = str(n.target)
+        if "permute" in name:
+            head_transpose.append(name)
+            continue
+        if "transpose" not in name:
+            continue
+        dims = [a for a in n.args if isinstance(a, int)]
+        if dims in ([1, 2], [2, 1]):
+            head_transpose.append(f"{name}{dims}")
+    if head_transpose:
+        _fail(f"head transpose still in text attn export: {head_transpose}")
+
+
 def test_io_specs() -> None:
     v = tower_io_spec("vision")
     if v["outputs"]["soft_tokens"] != [1, VISION_SOFT_TOKENS, 512]:
@@ -630,6 +732,10 @@ def main() -> int:
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,
+        test_take_ple_layer_matches_index,
+        test_take_ple_layer_export_has_no_slice,
+        test_text_attn_swap_matches_transpose,
+        test_text_attn_export_has_no_head_transpose,
         test_io_specs,
     ]
     for fn in tests:
