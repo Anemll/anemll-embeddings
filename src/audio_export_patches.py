@@ -283,8 +283,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     import transformers.models.gemma4.modeling_gemma4 as g4
 
     g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
-    g4.Gemma4AudioAttention._rel_shift = _rel_shift_matmul
-    return {"patched": 1, "window_op": "onehot_matmul", "rel_shift": "prefix_matmul"}
+    return {"patched": 1, "window_op": "onehot_matmul"}
 
 
 def apply_audio_ane_mask_patch() -> dict[str, Any]:
