@@ -58,7 +58,7 @@ from src.load_multimodal_model import (  # noqa: E402
     load_multimodal_sentence_transformer,
 )
 from src.load_text_model import load_sentence_transformer  # noqa: E402
-from src.trace_patches import apply_fixed_shape_patches  # noqa: E402
+from src.trace_patches import apply_fixed_shape_patches, bind_used_weight_layout  # noqa: E402
 from src.traceable_wrapper import (  # noqa: E402
     TraceableEmbeddingGemma2,
     TraceableEmbeddingGemma2Embeds,
@@ -360,6 +360,8 @@ def _export_text_embeds(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     force_eager_attention(wrapper)
     wrapper = wrapper.float().eval()
     traced = TraceableEmbeddingGemma2Embeds(wrapper, seq_len=seq_len, batch=1).eval()
+    bound = bind_used_weight_layout(traced)
+    print(f"text_embeds used weight layout bound={bound}")
     hidden = int(wrapper.hidden_size)
     # ANE-legal I/O: f16 embeds + f16 mask. Graph widens embeds to f32.
     # Mask stays f16 at I/O (anec.not_equal_zero rejects si16; f32 widen

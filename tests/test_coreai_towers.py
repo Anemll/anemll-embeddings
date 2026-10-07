@@ -38,6 +38,7 @@ from src.trace_patches import (  # noqa: E402
     _make_attention_forward,
     _take_ple_layer,
     bake_k_layout,
+    bind_used_weight_layout,
 )
 from src.vision_export_patches import (  # noqa: E402
     _apply_multidimensional_rope_ane,
@@ -637,6 +638,38 @@ def test_text_attn_swap_matches_transpose() -> None:
         _fail("text swap_mid attn != transpose+matmul")
 
 
+def test_used_weight_layout_matches_linear_and_has_no_transpose() -> None:
+    class _M(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.square = torch.nn.Linear(8, 8, bias=False)
+            self.rect = torch.nn.Linear(8, 4, bias=True)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.rect(self.square(x))
+
+    torch.manual_seed(0)
+    mod = _M().eval()
+    x = torch.randn(1, 5, 8)
+    with torch.no_grad():
+        ref = mod(x).clone()
+    bound = bind_used_weight_layout(mod)
+    if bound != 2:
+        _fail(f"bound {bound}")
+    with torch.no_grad():
+        got = mod(x)
+    if not torch.allclose(got, ref, atol=1e-5):
+        _fail("used layout != linear")
+    ep = torch.export.export(mod, (x,), strict=False).run_decompositions()
+    bad = [
+        str(n.target)
+        for n in ep.graph.nodes
+        if "transpose" in str(n.target) or "permute" in str(n.target)
+    ]
+    if bad:
+        _fail(f"constant transpose still in used-layout export: {bad}")
+
+
 def test_bake_k_layout_matches_transpose() -> None:
     torch.manual_seed(0)
     for shape in ((1, 4, 320, 256), (1, 4, 320, 512), (1, 2, 5, 4)):
@@ -761,6 +794,7 @@ def main() -> int:
         test_take_ple_layer_matches_index,
         test_take_ple_layer_export_has_no_slice,
         test_text_attn_swap_matches_transpose,
+        test_used_weight_layout_matches_linear_and_has_no_transpose,
         test_bake_k_layout_matches_transpose,
         test_bake_k_layout_export_has_no_transpose,
         test_text_attn_export_has_no_head_transpose,

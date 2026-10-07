@@ -16,9 +16,48 @@ from __future__ import annotations
 
 import transformers.models.embedding_gemma2.modeling_embedding_gemma2 as eg2
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from src.audio_export_patches import swap_last_two, swap_mid_dims
+
+
+class UsedLayoutLinear(nn.Module):
+    """``nn.Linear`` with weight stored as ``[in, out]``.
+
+    ``aten.linear`` decomposes to ``permute`` of the ``[out, in]`` parameter.
+    Those constant transposes are the ``reshape->transpose`` GPU leftover.
+    ``x @ weight`` lowers to ``mm`` with no transpose of a constant.
+    """
+
+    def __init__(self, linear: nn.Linear) -> None:
+        super().__init__()
+        self.in_features = int(linear.in_features)
+        self.out_features = int(linear.out_features)
+        used = linear.weight.detach().transpose(0, 1).contiguous()
+        self.weight = nn.Parameter(used, requires_grad=False)
+        if linear.bias is None:
+            self.register_parameter("bias", None)
+        else:
+            self.bias = nn.Parameter(linear.bias.detach().contiguous(), requires_grad=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = x @ self.weight
+        if self.bias is not None:
+            y = y + self.bias
+        return y
+
+
+def bind_used_weight_layout(root: nn.Module) -> int:
+    """Replace every ``nn.Linear`` with ``UsedLayoutLinear``. Returns the count."""
+    found = [(name, mod) for name, mod in root.named_modules() if isinstance(mod, nn.Linear)]
+    for name, mod in found:
+        parent: nn.Module = root
+        parts = name.split(".")
+        for part in parts[:-1]:
+            parent = getattr(parent, part)
+        setattr(parent, parts[-1], UsedLayoutLinear(mod))
+    return len(found)
 
 
 def _rotate_half_chunk(x: torch.Tensor) -> torch.Tensor:
