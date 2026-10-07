@@ -27,6 +27,7 @@ def gather_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     """``x.unfold(1, window, step)`` then ``movedim(-1, 2)`` via ``index_select``.
 
     ``x`` is ``[B, S, ...]``. Result is ``[B, n_win, window, ...]``.
+    Kept for tests; export uses ``slice_seq_windows`` (no i64 gather).
     """
     seq_len = int(x.shape[1])
     window = int(window)
@@ -43,12 +44,30 @@ def gather_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     return gathered.reshape(x.shape[0], n_win, window, *x.shape[2:])
 
 
-def _extract_block_context_gather(self, hidden_states: torch.Tensor) -> torch.Tensor:
+def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
+    """Same layout as ``gather_seq_windows`` via static slices + ``stack``.
+
+    No ``index_select`` / ``gather`` — ANE rejected i64 indices on the
+    padded K/V window ``[1, 93, H, D]`` (window=24, step=12).
+    """
+    seq_len = int(x.shape[1])
+    window = int(window)
+    step = int(step)
+    if window <= 0 or step <= 0:
+        raise ValueError(f"window={window} step={step}")
+    n_win = (seq_len - window) // step + 1
+    if n_win <= 0:
+        raise ValueError(f"n_win={n_win} for S={seq_len} window={window} step={step}")
+    windows = [x[:, b * step : b * step + window] for b in range(n_win)]
+    return torch.stack(windows, dim=1)
+
+
+def _extract_block_context_slices(self, hidden_states: torch.Tensor) -> torch.Tensor:
     hidden_states = F.pad(
         hidden_states,
         (0, 0, 0, 0, self.max_past_horizon, self.max_future_horizon + self.chunk_size - 1),
     )
-    hidden_states = gather_seq_windows(hidden_states, self.context_size, self.chunk_size)
+    hidden_states = slice_seq_windows(hidden_states, self.context_size, self.chunk_size)
     return hidden_states.contiguous()
 
 
@@ -214,8 +233,8 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     """Monkey-patch ``Gemma4AudioAttention._extract_block_context`` for export."""
     import transformers.models.gemma4.modeling_gemma4 as g4
 
-    g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_gather
-    return {"patched": 1, "window_op": "index_select"}
+    g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
+    return {"patched": 1, "window_op": "static_slice"}
 
 
 def apply_audio_ane_mask_patch() -> dict[str, Any]:

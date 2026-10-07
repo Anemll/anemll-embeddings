@@ -83,11 +83,11 @@ def expand_media_placeholders(
 
 
 def adapt_vision_position_ids(pos: np.ndarray | torch.Tensor) -> np.ndarray:
-    """``[1, 2520, 2]`` → int16 for the vision package."""
+    """``[1, 2520, 2]`` → float16 for the vision package (ANE-legal I/O)."""
     arr = np.asarray(pos)
     if arr.shape != (1, VISION_PATCHES, 2):
         raise ValueError(f"vision pos shape {arr.shape} != (1, {VISION_PATCHES}, 2)")
-    return arr.astype(np.int16, copy=False)
+    return arr.astype(np.float16, copy=False)
 
 
 def adapt_vision_pixels(pixels: np.ndarray | torch.Tensor) -> np.ndarray:

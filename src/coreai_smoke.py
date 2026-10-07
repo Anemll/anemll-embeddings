@@ -106,10 +106,12 @@ def dummy_numpy_inputs(
     """One legal feed per tower. ``dtypes`` override from function descriptors."""
     dtypes = dtypes or {}
     if name == "vision":
-        pos_dt = resolve_dtype(dtypes.get("pixel_position_ids", "int16"), np.int16)
+        pos_dt = resolve_dtype(dtypes.get("pixel_position_ids", "float16"), np.float16)
         pix_dt = resolve_dtype(dtypes.get("pixel_values", "float16"), np.float16)
-        xs = np.arange(VISION_PATCHES, dtype=pos_dt) % np.array(70, dtype=pos_dt)
-        ys = np.arange(VISION_PATCHES, dtype=pos_dt) // np.array(70, dtype=pos_dt)
+        # Integer grid first — f16 is not exact past 2048, but (x,y) are.
+        idx = np.arange(VISION_PATCHES)
+        xs = (idx % 70).astype(pos_dt, copy=False)
+        ys = (idx // 70).astype(pos_dt, copy=False)
         pos = np.stack((xs, ys), axis=-1)[None, ...].copy()
         pixels = np.full(
             (1, VISION_PATCHES, VISION_PATCH_DIM), 0.5, dtype=pix_dt

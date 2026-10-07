@@ -34,7 +34,7 @@ def test_dummy_shapes() -> None:
         _fail(str(v["pixel_values"].shape))
     if tuple(v["pixel_position_ids"].shape) != (1, 2520, 2):
         _fail(str(v["pixel_position_ids"].shape))
-    if v["pixel_position_ids"].dtype != np.int16:
+    if v["pixel_position_ids"].dtype != np.float16:
         _fail(str(v["pixel_position_ids"].dtype))
     if v["pixel_values"].dtype != np.float16:
         _fail(str(v["pixel_values"].dtype))

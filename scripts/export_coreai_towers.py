@@ -446,8 +446,8 @@ def main() -> int:
             "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
-            "Audio: float 5D mask via static last-dim slices (no gather(-1) i64).",
-            "Vision: si16 pos stays si16; pos embed is float one-hot matmul (no F.embedding i64).",
+            "Audio: float 5D mask + K/V windows via static slices (no gather/index_select).",
+            "Vision: f16 pos I/O (si16→f32 ane_io_cast was InvalidOutputType); pos embed is float one-hot.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

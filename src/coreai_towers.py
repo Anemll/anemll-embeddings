@@ -47,9 +47,9 @@ class VisionSoftTokens(nn.Module):
     def forward(
         self, pixel_values: torch.Tensor, pixel_position_ids: torch.Tensor
     ) -> torch.Tensor:
-        # Pixels may be f16 I/O (ANE-legal). Encoder stays f32 — no cast16.
-        # Keep pos si16 — no i64 widen. Export patch looks up the 2-D table
-        # with a float one-hot matmul; RoPE casts si16 → float itself.
+        # Pixels + pos are f16 I/O (ANE-legal). Encoder stays f32 — no cast16.
+        # si16 pos I/O needed ane_io_cast si16→f32 (InvalidOutputType; only
+        # F16 MemRef <-> F32 Tensor is legal). Grid coords fit f16 exactly.
         pixel_values = pixel_values.to(dtype=torch.float32)
         pos_f = pixel_position_ids.to(dtype=torch.float32)
         keep = torch.clamp(pos_f + 1.0, 0.0, 1.0).amin(dim=-1)
@@ -111,7 +111,7 @@ def vision_example(
     pixels = torch.full(
         (batch, patches, VISION_PATCH_DIM), 0.5, dtype=torch.float16, device=device
     )
-    return pixels, pos.to(dtype=torch.int16)
+    return pixels, pos.to(dtype=torch.float16)
 
 
 def audio_example(
@@ -137,7 +137,7 @@ def tower_io_spec(name: str) -> dict[str, Any]:
             },
             "input_dtypes": {
                 "pixel_values": "float16",
-                "pixel_position_ids": "int16",
+                "pixel_position_ids": "float16",
             },
             "outputs": {"soft_tokens": [1, VISION_SOFT_TOKENS, TEXT_HIDDEN]},
             "output_dtypes": {"soft_tokens": "float16"},

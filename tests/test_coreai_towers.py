@@ -17,6 +17,7 @@ from src.audio_export_patches import (  # noqa: E402
     AUDIO_PAST,
     blocked_additive_attention_mask,
     gather_seq_windows,
+    slice_seq_windows,
 )
 from src.vision_export_patches import embedding_from_int_indices  # noqa: E402
 from src.coreai_towers import (  # noqa: E402
@@ -42,8 +43,8 @@ def test_vision_example_shape() -> None:
         _fail(str(pixels.shape))
     if tuple(pos.shape) != (1, VISION_PATCHES, 2):
         _fail(str(pos.shape))
-    if pos.dtype != torch.int16:
-        _fail(f"pos dtype {pos.dtype} (want int16)")
+    if pos.dtype != torch.float16:
+        _fail(f"pos dtype {pos.dtype} (want float16)")
     if pos.min() < 0:
         _fail("example grid should have no pad (-1)")
 
@@ -68,6 +69,31 @@ def test_gather_seq_windows_matches_unfold() -> None:
         _fail(f"shape {tuple(got.shape)} != {tuple(ref.shape)}")
     if not torch.equal(got, ref):
         _fail("gather_seq_windows != unfold+movedim")
+
+
+def test_slice_seq_windows_matches_unfold() -> None:
+    torch.manual_seed(1)
+    x = torch.randn(1, 93, 8, 16)
+    window, step = 24, 12
+    ref = torch.movedim(x.unfold(1, window, step), -1, 2)
+    got = slice_seq_windows(x, window, step)
+    if got.shape != ref.shape:
+        _fail(f"shape {tuple(got.shape)} != {tuple(ref.shape)}")
+    if not torch.equal(got, ref):
+        _fail("slice_seq_windows != unfold+movedim")
+    if not torch.equal(got, gather_seq_windows(x, window, step)):
+        _fail("slice_seq_windows != gather_seq_windows")
+
+
+def test_slice_seq_windows_export_has_no_gather() -> None:
+    class _Win(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return slice_seq_windows(x, 24, 12)
+
+    ep = torch.export.export(_Win(), (torch.randn(1, 93, 4, 8),), strict=False)
+    targets = [str(n.target) for n in ep.graph.nodes]
+    if any(("gather" in t or "index_select" in t or "unfold" in t) for t in targets):
+        _fail(f"export still contains gather/index_select/unfold: {targets}")
 
 
 def test_gather_seq_windows_export_has_no_unfold() -> None:
@@ -160,6 +186,8 @@ def test_io_specs() -> None:
         _fail(str(v))
     if v.get("output_dtypes", {}).get("soft_tokens") != "float16":
         _fail("vision out dtype")
+    if v.get("input_dtypes", {}).get("pixel_position_ids") != "float16":
+        _fail("vision pos dtype")
     if tower_io_spec("audio")["outputs"]["soft_tokens"] != [1, AUDIO_SOFT_TOKENS, 512]:
         _fail("audio tokens")
     if tower_io_spec("audio").get("output_dtypes", {}).get("soft_tokens") != "float16":
@@ -174,6 +202,8 @@ def main() -> int:
         test_audio_example_shape,
         test_gather_seq_windows_matches_unfold,
         test_gather_seq_windows_export_has_no_unfold,
+        test_slice_seq_windows_matches_unfold,
+        test_slice_seq_windows_export_has_no_gather,
         test_blocked_additive_mask_shape_and_pad,
         test_blocked_additive_mask_export_has_no_gather,
         test_blocked_additive_mask_export_stays_float,

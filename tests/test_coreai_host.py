@@ -99,10 +99,10 @@ def test_scatter_count_mismatch() -> None:
     _fail("expected ValueError")
 
 
-def test_vision_pos_si16() -> None:
+def test_vision_pos_f16() -> None:
     pos = np.zeros((1, 2520, 2), dtype=np.int64)
     got = adapt_vision_position_ids(pos)
-    if got.dtype != np.int16 or got.shape != (1, 2520, 2):
+    if got.dtype != np.float16 or got.shape != (1, 2520, 2):
         _fail(str(got.dtype))
     pix = adapt_vision_pixels(np.zeros((1, 2520, 768), dtype=np.float64))
     if pix.dtype != np.float16:
@@ -160,7 +160,7 @@ def main() -> int:
         test_expand_counts,
         test_scatter_matches_slots,
         test_scatter_count_mismatch,
-        test_vision_pos_si16,
+        test_vision_pos_f16,
         test_crop_trailing_vision_pads,
         test_crop_audio_ceil_frames,
         test_pad_embeds,
