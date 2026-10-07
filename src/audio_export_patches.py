@@ -165,26 +165,23 @@ def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
 
 
 def _rel_shift_static(self, x: torch.Tensor) -> torch.Tensor:
-    """Transformer-XL rel-shift via static last-dim pad/slice (no flatten, no matmul).
+    """Transformer-XL rel-shift via one static prefix slice (no per-row loop).
 
-    HF views last-2 as ``chunk*(context+1)`` then ``strided_slice`` the prefix.
-    That is the leftover ``reshape→strided_slice→reshape``. Prefix-matmul
-    dropped cosine — do not retry it. Stay in the incoming dtype: an f16
-    edge cast drifted mm_audio 0.87080 → 0.87085 and split the graph.
+    Live ANE leftover on ``ad51606`` was the per-row
+    ``reshape→strided_slice`` / ``strided_slice→reshape`` chain (affine
+    maps ``12×25=300`` with offsets ``+25…+275``). One flatten +
+    ``[..., :chunk*context]`` is the same HF prefix. Do not retry
+    prefix-matmul or the f16 island cast.
     """
-    _batch, _heads, _blocks, block_size, pos_len = x.shape
+    if x.ndim < 2:
+        raise ValueError(f"_rel_shift_static rank {x.ndim}")
+    *lead, block_size, pos_len = x.shape
     context = int(self.context_size)
     block_size = int(block_size)
     x = F.pad(x, (0, context + 1 - int(pos_len)))
-    rows = []
-    for i in range(block_size):
-        if i == 0:
-            rows.append(x[..., 0, :context])
-        else:
-            prev = x[..., i - 1, (context + 1 - i) :]
-            cur = x[..., i, : (context - i)]
-            rows.append(torch.cat([prev, cur], dim=-1))
-    return torch.stack(rows, dim=-2)
+    flat = x.reshape(*lead, block_size * (context + 1))
+    keep = block_size * context
+    return flat[..., :keep].reshape(*lead, block_size, context)
 
 
 def _rel_shift_matmul(self, x: torch.Tensor) -> torch.Tensor:
@@ -346,11 +343,10 @@ def _audio_attn_forward(
     matrix_bd = q4.reshape(batch_size * num_heads, num_blocks * chunk, head_dim) @ (
         swap_last_two(rel_bh)
     )
-    # Static pad/slice rel-shift (no flatten, no prefix-matmul).
+    # One static prefix slice on ``[BH, n, chunk, pos]`` (no 5-D, no per-row).
     matrix_bd = self._rel_shift(
-        matrix_bd.reshape(batch_size * num_heads, 1, num_blocks, chunk, -1)
+        matrix_bd.reshape(batch_size * num_heads, num_blocks, chunk, -1)
     )
-    matrix_bd = matrix_bd.reshape(batch_size * num_heads, num_blocks, chunk, context)
 
     attn_weights = matrix_ac + matrix_bd
     attn_weights = attn_weights / self.softcap
@@ -503,7 +499,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
         "value_dtype": "hidden_no_float_cast",
         "rel_pos": "float_arange",
         "lconv1d": "channels_last_onehot",
-        "rel_shift": "static_pad_slice",
+        "rel_shift": "static_one_slice",
     }
 
 

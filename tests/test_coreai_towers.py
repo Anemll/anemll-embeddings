@@ -299,16 +299,16 @@ def test_rel_shift_static_matches_hf() -> None:
         context_size = 24
 
         def hf(self, x: torch.Tensor) -> torch.Tensor:
-            batch, heads, blocks, block, pos = x.shape
+            *lead, block, pos = x.shape
             context = self.context_size
             x = torch.nn.functional.pad(x, (0, context + 1 - pos))
-            x = x.view(batch, heads, blocks, block * (context + 1))
+            x = x.reshape(*lead, block * (context + 1))
             x = x[..., : block * context]
-            return x.view(batch, heads, blocks, block, context)
+            return x.reshape(*lead, block, context)
 
     torch.manual_seed(0)
     attn = _Attn()
-    for shape in ((1, 2, 6, 12, 24), (8, 1, 6, 12, 13)):
+    for shape in ((1, 2, 6, 12, 24), (8, 1, 6, 12, 13), (8, 6, 12, 13)):
         x = torch.randn(*shape)
         got = _rel_shift_static(attn, x)
         ref = attn.hf(x)
@@ -316,7 +316,7 @@ def test_rel_shift_static_matches_hf() -> None:
             _fail(f"static rel_shift {shape} {tuple(got.shape)} != {tuple(ref.shape)}")
 
 
-def test_rel_shift_static_export_has_no_flat_slice() -> None:
+def test_rel_shift_static_export_is_one_prefix_slice() -> None:
     class _Shift(torch.nn.Module):
         context_size = 24
 
@@ -324,9 +324,12 @@ def test_rel_shift_static_export_has_no_flat_slice() -> None:
             return _rel_shift_static(self, x)
 
     ep = torch.export.export(_Shift(), (torch.randn(1, 1, 2, 12, 13),), strict=False)
+    targets = [str(n.target) for n in ep.graph.nodes]
+    if any("cat" in t or "stack" in t for t in targets):
+        _fail(f"per-row cat/stack still in export: {targets}")
     blob = " ".join(f"{n.target} {n.meta.get('val', '')}" for n in ep.graph.nodes)
-    if "288" in blob and "strided" in blob and "300" in blob:
-        _fail("export still flattens chunk*(context+1) then slices")
+    if "288" not in blob:
+        _fail("missing one static prefix keep=chunk*context")
 
 
 def test_rotate_half_matmul_matches_cat() -> None:
@@ -458,7 +461,7 @@ def main() -> int:
         test_vision_attn_matches_transpose_matmul,
         test_rel_shift_matmul_matches_hf,
         test_rel_shift_static_matches_hf,
-        test_rel_shift_static_export_has_no_flat_slice,
+        test_rel_shift_static_export_is_one_prefix_slice,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,

@@ -450,7 +450,7 @@ def main() -> int:
             "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
-            "Audio: 4-D NCHW I/O; static pad/slice rel-shift in f16 (no prefix-matmul).",
+            "Audio: 4-D NCHW I/O; one static prefix-slice rel-shift (no per-row, no prefix-matmul).",
             "Vision: per-head SDPA with matching K/V [B,S,D]; no GEMM transpose.",
         ],
     }
