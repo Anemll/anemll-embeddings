@@ -54,7 +54,10 @@ from src.load_multimodal_model import (  # noqa: E402
 )
 from src.load_text_model import load_sentence_transformer  # noqa: E402
 from src.trace_patches import apply_fixed_shape_patches  # noqa: E402
-from src.traceable_wrapper import TraceableEmbeddingGemma2  # noqa: E402
+from src.traceable_wrapper import (  # noqa: E402
+    TraceableEmbeddingGemma2,
+    TraceableEmbeddingGemma2Embeds,
+)
 
 DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 CONVERT_SCRIPT = REPO_ROOT / "scripts" / "_coreai_convert_ep.py"
@@ -334,15 +337,65 @@ def _export_text(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     }
 
 
+def _export_text_embeds(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
+    """embeds [1, S, 512] + mask → 768. S=320 fits caption+256+25."""
+    print(f"Loading text-only ST on CPU FP32; Core AI text-embeds S={seq_len} …")
+    apply_fixed_shape_patches(seq_len, batch=1)
+    st, load_meta = load_sentence_transformer(dtype=torch.float32, device="cpu")
+    wrapper = EmbeddingGemma2Wrapper.from_sentence_transformer(st, normalize=True)
+    force_eager_attention(wrapper)
+    wrapper = wrapper.float().eval()
+    traced = TraceableEmbeddingGemma2Embeds(wrapper, seq_len=seq_len, batch=1).eval()
+    hidden = int(wrapper.hidden_size)
+    embeds = torch.randn(1, seq_len, hidden, dtype=torch.float32)
+    mask = torch.ones(1, seq_len, dtype=torch.int32)
+    mask[:, -8:] = 0
+    with torch.no_grad():
+        emb = traced(embeds, mask)
+    print(f"text-embeds eager embedding={tuple(emb.shape)} finite={bool(torch.isfinite(emb).all())}")
+    ep_path = out_dir / f"text_embeds_s{seq_len}.pt2"
+    _export_program(traced, (embeds, mask), ep_path)
+    aimodel = out_dir / f"text_embeds_s{seq_len}.aimodel"
+    rc = 0
+    if convert:
+        # Float I/O — skip cast16 (vision lesson: that pass can zero a graph).
+        rc = _convert(
+            ep_path,
+            aimodel,
+            entry=f"text_embeds_s{seq_len}",
+            inputs=["inputs_embeds", "attention_mask"],
+            outputs=["embedding"],
+            no_cast16=True,
+        )
+    return {
+        "tower": "text_embeds",
+        "load": load_meta,
+        "eager_shape": list(emb.shape),
+        "seq_len": seq_len,
+        "ep": str(ep_path),
+        "aimodel": str(aimodel) if convert else None,
+        "convert_rc": rc,
+        "io": tower_io_spec("text_embeds"),
+        "finite": bool(torch.isfinite(emb).all()),
+        "cast16": False,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--tower",
         action="append",
-        choices=("vision", "audio", "text"),
+        choices=("vision", "audio", "text", "text_embeds"),
         help="Repeatable. Default: vision, audio, text.",
     )
-    parser.add_argument("--seq-len", type=int, default=128, help="Text package S (default 128).")
+    parser.add_argument("--seq-len", type=int, default=128, help="Ids text package S (default 128).")
+    parser.add_argument(
+        "--embeds-seq-len",
+        type=int,
+        default=320,
+        help="inputs_embeds text package S (default 320; fits mix 288).",
+    )
     parser.add_argument("--artifacts", type=Path, default=artifacts_root())
     parser.add_argument("--skip-convert", action="store_true")
     args = parser.parse_args()
@@ -362,6 +415,10 @@ def main() -> int:
                 reports.append(_export_vision(out_dir, convert=convert))
             elif name == "audio":
                 reports.append(_export_audio(out_dir, convert=convert))
+            elif name == "text_embeds":
+                reports.append(
+                    _export_text_embeds(out_dir, int(args.embeds_seq_len), convert=convert)
+                )
             else:
                 reports.append(_export_text(out_dir, int(args.seq_len), convert=convert))
         except Exception as exc:
@@ -380,6 +437,7 @@ def main() -> int:
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
             "PyTorch export is FP32; Core AI convert casts to 16-bit except vision (cast16 zeros it).",
             "Text I/O is int32 (vocab 262144 overflows si16). Vision/audio integer I/O stays si16.",
+            "text_embeds_s320: inputs_embeds f32 + int32 mask; convert --no-cast16.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

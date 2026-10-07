@@ -2,8 +2,8 @@
 """Cosine parity: Core AI host path vs ST multimodal fixtures (6×768).
 
 Pure text → text_s128 (int32 ids). Image / audio / caption / mix → Core AI
-vision/audio soft tokens, then PyTorch text ``inputs_embeds`` interleave.
-``text_s128`` is ids-only S=128 and cannot take embeds or 256/25 slots.
+vision/audio soft tokens, host scatter, then Core AI text_embeds_s320
+(transformer + pool + L2). Embed lookup stays on host (not the backbone).
 Video skipped. Crops package 280/70 to HF 256/25 (trailing pads).
 
 Fail-closed: non-finite or cosine below ABSURD (0.10) with no documented
@@ -33,11 +33,13 @@ from src.coreai_host import (  # noqa: E402
     adapt_vision_position_ids,
     crop_audio_soft_to_src,
     crop_vision_soft_to_valid,
-    encode_interleaved,
     expand_media_placeholders,
+    interleaved_inputs_embeds,
     pad_audio_to_package,
+    pad_embeds_to_package,
     slot_report,
     uses_text_package,
+    TEXT_EMBEDS_S,
 )
 from src.coreai_smoke import dummy_numpy_inputs  # noqa: E402
 from src.embed_wrapper import EmbeddingGemma2Wrapper, tokenize_with_st_prompt  # noqa: E402
@@ -128,6 +130,46 @@ def _encode_text_s128(
         "text_s128",
         feed,
         out_dir / f"parity_{case_id}_text.npy",
+    ).reshape(-1)
+
+
+def _encode_text_embeds(
+    *,
+    wrapper,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    image_token_id: int,
+    audio_token_id: int | None,
+    pad_id: int,
+    image_soft: torch.Tensor | None,
+    audio_soft: torch.Tensor | None,
+    out_dir: Path,
+    case_id: str,
+) -> np.ndarray:
+    pkg = out_dir / f"text_embeds_s{TEXT_EMBEDS_S}.aimodel"
+    if not pkg.exists():
+        raise FileNotFoundError(
+            f"missing {pkg} — export text_embeds (ids-only text_s128 cannot take embeds)"
+        )
+    embeds = interleaved_inputs_embeds(
+        wrapper.text_model,
+        input_ids,
+        image_token_id=image_token_id,
+        audio_token_id=audio_token_id,
+        pad_token_id=pad_id,
+        image_soft=image_soft,
+        audio_soft=audio_soft,
+    )
+    embeds, mask = pad_embeds_to_package(embeds, attention_mask, seq_len=TEXT_EMBEDS_S)
+    feed = {
+        "inputs_embeds": embeds.detach().cpu().numpy().astype(np.float32, copy=False),
+        "attention_mask": mask.detach().cpu().numpy().astype(np.int32, copy=False),
+    }
+    return _run_tower(
+        pkg,
+        f"text_embeds_s{TEXT_EMBEDS_S}",
+        feed,
+        out_dir / f"parity_{case_id}_text_embeds.npy",
     ).reshape(-1)
 
 
@@ -290,19 +332,19 @@ def main() -> int:
                 row["slots"] = slots
                 if slots["image_slots"] != n_img or slots["audio_slots"] != n_aud:
                     raise RuntimeError(f"slot mismatch {slots} vs {n_img}/{n_aud}")
-                with torch.no_grad():
-                    emb = encode_interleaved(
-                        wrapper,
-                        batch["input_ids"],
-                        batch["attention_mask"],
-                        image_token_id=image_id,
-                        audio_token_id=audio_id,
-                        pad_token_id=pad_id,
-                        image_soft=img_t,
-                        audio_soft=aud_t,
-                    )
-                pred = emb.detach().cpu().numpy().reshape(-1)
-                row["path"] = "host_interleave_hf_slots"
+                pred = _encode_text_embeds(
+                    wrapper=wrapper,
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    image_token_id=image_id,
+                    audio_token_id=audio_id,
+                    pad_id=pad_id,
+                    image_soft=img_t,
+                    audio_soft=aud_t,
+                    out_dir=out_dir,
+                    case_id=case_id,
+                )
+                row["path"] = "host_interleave_text_embeds_s320"
             finite = bool(pred.shape == (768,) and np.isfinite(pred).all())
             row["finite"] = finite
             row["pred_l2"] = float(np.linalg.norm(pred.astype(np.float64)))
@@ -339,8 +381,8 @@ def main() -> int:
             "audio_slots": "package 70 vs HF 25 (host crops ceil(frames/4); 99→25)",
             "text_ids": "int32 I/O; si16 wraps vocab 262144 (SearchQuery 236787)",
             "caption_mix": (
-                "Core AI vision/audio soft tokens + PyTorch text inputs_embeds. "
-                "text_s128 is ids-only S=128 and cannot take embeds."
+                "Core AI vision/audio + host scatter + Core AI text_embeds_s320. "
+                "text_s128 is ids-only S=128. Embed lookup stays on host."
             ),
             "audio_mask": "all-1s silence pad required for finite audio (keep-mask NaNs)",
         },
@@ -349,7 +391,7 @@ def main() -> int:
             "Host crops vision 280→256 (trailing pad groups) and audio 70→25 (ceil frames/4).",
             "That matches HF slot counts; package graphs stay 280/70 (no re-export).",
             "Video skipped: no video .aimodel.",
-            "text_s128 (int32) is pure text only. Caption/mix/media interleave via PT text embeds.",
+            "text_s128 (int32) is pure text only. Caption/mix/media use text_embeds_s320.",
             "si16 text I/O was the 0.76 gap (3/15 SearchQuery tokens wrapped).",
             "int32 re-export: mm_text_sq cosine 0.995 vs ST (package vs wrapper 0.995; remaining f16/cast16).",
             "Fail-closed: non-finite or cosine < 0.10. Not a T6 0.95 gate.",

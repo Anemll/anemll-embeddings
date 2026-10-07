@@ -5,10 +5,9 @@ The HF processor expands ``<|image|>`` from *valid* patches (256 on the
 64² fixture) and audio from duration (25 for 1 s). This host uses the
 **package** slot counts so scatter lines up with exported graphs.
 
-``text_s128.aimodel`` is ids-only and S=128 — it cannot take ``inputs_embeds``
-or expanded media slots. Pure text uses that package. Media / caption / mix
-768-d interleaves Core AI vision/audio soft tokens into the PyTorch text
-tower (``inputs_embeds``). ANE specialize stays a follow-up.
+``text_s128.aimodel`` is ids-only and S=128 — pure text only.
+``text_embeds_s320.aimodel`` takes scattered ``inputs_embeds`` [1, 320, 512]
+(host token lookup + vision/audio soft tokens). ANE specialize stays a follow-up.
 """
 
 from __future__ import annotations
@@ -31,6 +30,9 @@ from .coreai_towers import (
 IMAGE_SLOTS = VISION_SOFT_TOKENS
 AUDIO_SLOTS = AUDIO_SOFT_TOKENS
 TEXT_PACKAGE_S = 128
+# Caption + 256 image + 25 audio (mm_mix seq 288) + pad.
+TEXT_EMBEDS_S = 320
+TEXT_HIDDEN = 512
 
 
 def has_caption_words(
@@ -239,6 +241,58 @@ def embeds_from_ids(
     return text_model.get_input_embeddings()(safe)
 
 
+def pad_embeds_to_package(
+    embeds: torch.Tensor,
+    attention_mask: torch.Tensor,
+    *,
+    seq_len: int = TEXT_EMBEDS_S,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Right-pad or reject ``[B, S, 512]`` embeds + mask to the text-embeds S."""
+    if embeds.ndim != 3 or attention_mask.ndim != 2:
+        raise ValueError(f"embeds/mask {tuple(embeds.shape)} / {tuple(attention_mask.shape)}")
+    if embeds.shape[:2] != attention_mask.shape:
+        raise ValueError("embeds/mask batch-seq mismatch")
+    cur = int(embeds.shape[1])
+    target = int(seq_len)
+    if cur > target:
+        raise ValueError(f"seq {cur} > text-embeds S={target}")
+    if cur == target:
+        return embeds, attention_mask
+    pad = target - cur
+    hidden = int(embeds.shape[-1])
+    z = embeds.new_zeros(embeds.shape[0], pad, hidden)
+    m = attention_mask.new_zeros(attention_mask.shape[0], pad)
+    return torch.cat([embeds, z], dim=1), torch.cat([attention_mask, m], dim=1)
+
+
+def interleaved_inputs_embeds(
+    text_model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    *,
+    image_token_id: int,
+    audio_token_id: int | None,
+    pad_token_id: int,
+    image_soft: torch.Tensor | None = None,
+    audio_soft: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Token embed lookup + scatter media soft tokens (host, not the backbone)."""
+    embeds = embeds_from_ids(
+        text_model,
+        input_ids,
+        image_token_id=image_token_id,
+        audio_token_id=audio_token_id,
+        pad_token_id=pad_token_id,
+    )
+    return scatter_soft_tokens(
+        embeds,
+        input_ids,
+        image_token_id=image_token_id,
+        audio_token_id=audio_token_id,
+        image_soft=image_soft,
+        audio_soft=audio_soft,
+    )
+
+
 def encode_interleaved(
     wrapper: torch.nn.Module,
     input_ids: torch.Tensor,
@@ -251,18 +305,12 @@ def encode_interleaved(
     audio_soft: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Text tower on scattered embeds → L2 768-d (same pool-then-project)."""
-    embeds = embeds_from_ids(
+    embeds = interleaved_inputs_embeds(
         wrapper.text_model,
         input_ids,
         image_token_id=image_token_id,
         audio_token_id=audio_token_id,
         pad_token_id=pad_token_id,
-    )
-    embeds = scatter_soft_tokens(
-        embeds,
-        input_ids,
-        image_token_id=image_token_id,
-        audio_token_id=audio_token_id,
         image_soft=image_soft,
         audio_soft=audio_soft,
     )

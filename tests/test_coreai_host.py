@@ -25,6 +25,8 @@ from src.coreai_host import (  # noqa: E402
     hf_audio_slots_from_frames,
     hf_image_slots_from_positions,
     pad_audio_to_package,
+    pad_embeds_to_package,
+    TEXT_EMBEDS_S,
     placeholder_masks,
     scatter_soft_tokens,
 )
@@ -127,6 +129,22 @@ def test_crop_audio_ceil_frames() -> None:
         _fail(str(got.shape))
 
 
+def test_pad_embeds() -> None:
+    emb = torch.ones(1, 10, 4)
+    mask = torch.ones(1, 10)
+    got, m = pad_embeds_to_package(emb, mask, seq_len=16)
+    if tuple(got.shape) != (1, 16, 4) or int(m.sum()) != 10:
+        _fail(f"{tuple(got.shape)} {int(m.sum())}")
+    try:
+        pad_embeds_to_package(emb, mask, seq_len=8)
+    except ValueError:
+        pass
+    else:
+        _fail("expected overflow")
+    if TEXT_EMBEDS_S < 288:
+        _fail("S must fit mm_mix 288")
+
+
 def test_audio_pad() -> None:
     feat = np.ones((1, 99, 128), dtype=np.float32)
     x, m = pad_audio_to_package(feat)
@@ -145,6 +163,7 @@ def main() -> int:
         test_vision_pos_si16,
         test_crop_trailing_vision_pads,
         test_crop_audio_ceil_frames,
+        test_pad_embeds,
         test_audio_pad,
     ]
     for fn in tests:

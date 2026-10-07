@@ -152,4 +152,10 @@ def tower_io_spec(name: str) -> dict[str, Any]:
             "input_dtypes": {"input_ids": "int32", "attention_mask": "int32"},
             "outputs": {"embedding": [1, TEXT_EMBED]},
         }
+    if name == "text_embeds":
+        return {
+            "inputs": {"inputs_embeds": [1, 320, TEXT_HIDDEN], "attention_mask": [1, 320]},
+            "input_dtypes": {"inputs_embeds": "float32", "attention_mask": "int32"},
+            "outputs": {"embedding": [1, TEXT_EMBED]},
+        }
     raise ValueError(f"unknown tower {name!r}")
