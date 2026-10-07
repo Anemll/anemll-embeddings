@@ -38,7 +38,6 @@ class TraceableEmbeddingGemma2(nn.Module):
         seq_len: int,
         batch: int = 1,
         mask_neg: float = MASK_NEG,
-        index_dtype: torch.dtype = torch.long,
     ) -> None:
         super().__init__()
         self.text_model = wrapper.text_model
@@ -53,10 +52,9 @@ class TraceableEmbeddingGemma2(nn.Module):
         self.hidden_size = int(wrapper.hidden_size)
         self.embedding_dim = int(wrapper.embedding_dim)
         # Constant RoPE positions so HF does not emit aten::Int(shape[1]).
-        self.index_dtype = index_dtype
         self.register_buffer(
             "position_ids",
-            torch.arange(self.seq_len, dtype=index_dtype).unsqueeze(0).expand(self.batch, -1),
+            torch.arange(self.seq_len, dtype=torch.long).unsqueeze(0).expand(self.batch, -1),
             persistent=False,
         )
 
@@ -93,8 +91,7 @@ class TraceableEmbeddingGemma2(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
     ) -> torch.Tensor:
-        if input_ids.dtype != self.index_dtype:
-            input_ids = input_ids.to(dtype=self.index_dtype)
+        input_ids = input_ids.to(dtype=torch.long)
         masks = self._attention_mapping(attention_mask)
         out = self.text_model(
             input_ids=input_ids,
