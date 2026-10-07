@@ -105,11 +105,13 @@ def blocked_additive_attention_mask(
     keep5 = keep4.reshape(batch, 1, num_blocks, chunk_size, padded_seq)
     keep5 = F.pad(keep5, (max_past_horizon, max_future_horizon), value=0.0)
     context = chunk_size + max_past_horizon + max_future_horizon
-    block_starts = torch.arange(num_blocks, device=keep.device, dtype=torch.long) * chunk_size
-    offsets = torch.arange(context, device=keep.device, dtype=torch.long)
-    kv_indices = (block_starts[:, None] + offsets[None, :])[None, None, :, None, :]
-    kv_indices = kv_indices.expand(batch, 1, num_blocks, chunk_size, context)
-    keep5 = keep5.gather(-1, kv_indices)
+    # Static slices — no gather(-1) / i64 indices. Block b takes last-dim
+    # [b*chunk : b*chunk+context] of the padded 84-wide key axis.
+    windows = [
+        keep5[:, :, b : b + 1, :, b * chunk_size : b * chunk_size + context]
+        for b in range(num_blocks)
+    ]
+    keep5 = torch.cat(windows, dim=2)
     return (1.0 - keep5) * float(invalid)
 
 

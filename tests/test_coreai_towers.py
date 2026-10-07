@@ -18,6 +18,7 @@ from src.audio_export_patches import (  # noqa: E402
     blocked_additive_attention_mask,
     gather_seq_windows,
 )
+from src.vision_export_patches import embedding_from_int_indices  # noqa: E402
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
@@ -98,6 +99,47 @@ def test_blocked_additive_mask_shape_and_pad() -> None:
         _fail(f"first valid key of block 0 should be keep, got {float(mask[0, 0, 0, 0, AUDIO_PAST])}")
 
 
+def test_blocked_additive_mask_export_has_no_gather() -> None:
+    class _Mask(torch.nn.Module):
+        def forward(self, keep: torch.Tensor) -> torch.Tensor:
+            return blocked_additive_attention_mask(keep)
+
+    ep = torch.export.export(
+        _Mask(), (torch.ones(1, AUDIO_SOFT_TOKENS, dtype=torch.float32),), strict=False
+    )
+    targets = [str(n.target) for n in ep.graph.nodes]
+    if any("gather" in t for t in targets):
+        _fail(f"export still contains gather: {targets}")
+
+
+def test_embedding_from_int_indices_matches_embedding() -> None:
+    torch.manual_seed(0)
+    table = torch.randn(8, 4)
+    idx = torch.tensor([[0, 3, 7, 1]], dtype=torch.int16)
+    ref = torch.nn.functional.embedding(idx.to(torch.long), table)
+    got = embedding_from_int_indices(idx, table)
+    if got.shape != ref.shape:
+        _fail(str(tuple(got.shape)))
+    if not torch.allclose(got, ref, atol=1e-6):
+        _fail("int16 one-hot embed != F.embedding")
+
+
+def test_embedding_from_int_indices_export_has_no_i64() -> None:
+    class _Emb(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.table = torch.nn.Parameter(torch.randn(6, 3))
+
+        def forward(self, idx: torch.Tensor) -> torch.Tensor:
+            return embedding_from_int_indices(idx, self.table)
+
+    ep = torch.export.export(_Emb(), (torch.zeros(1, 4, dtype=torch.int16),), strict=False)
+    for node in ep.graph.nodes:
+        blob = f"{node.target} {node.meta.get('val', '')}"
+        if "embedding" in str(node.target) or "int64" in blob or "torch.long" in blob:
+            _fail(f"export still widens/embeds with i64: {blob}")
+
+
 def test_blocked_additive_mask_export_stays_float() -> None:
     class _Mask(torch.nn.Module):
         def forward(self, keep: torch.Tensor) -> torch.Tensor:
@@ -133,7 +175,10 @@ def main() -> int:
         test_gather_seq_windows_matches_unfold,
         test_gather_seq_windows_export_has_no_unfold,
         test_blocked_additive_mask_shape_and_pad,
+        test_blocked_additive_mask_export_has_no_gather,
         test_blocked_additive_mask_export_stays_float,
+        test_embedding_from_int_indices_matches_embedding,
+        test_embedding_from_int_indices_export_has_no_i64,
         test_io_specs,
     ]
     for fn in tests:

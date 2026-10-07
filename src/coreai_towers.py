@@ -48,16 +48,15 @@ class VisionSoftTokens(nn.Module):
         self, pixel_values: torch.Tensor, pixel_position_ids: torch.Tensor
     ) -> torch.Tensor:
         # Pixels may be f16 I/O (ANE-legal). Encoder stays f32 — no cast16.
-        # Pos is si16 I/O. F.embedding requires Int/Long — widen in-graph.
+        # Keep pos si16 — no i64 widen. Export patch looks up the 2-D table
+        # with a float one-hot matmul; RoPE casts si16 → float itself.
         pixel_values = pixel_values.to(dtype=torch.float32)
-        pixel_position_ids = pixel_position_ids.to(dtype=torch.long)
-        padding_positions = (pixel_position_ids == -1).all(dim=-1)
+        pos_f = pixel_position_ids.to(dtype=torch.float32)
+        keep = torch.clamp(pos_f + 1.0, 0.0, 1.0).amin(dim=-1)
+        padding = 1.0 - keep
         inputs_embeds = self.vision_tower.patch_embedder(
-            pixel_values, pixel_position_ids, padding_positions
+            pixel_values, pixel_position_ids, padding
         )
-        # ANE rejects i1 bool masks (memref …x2520xi1). 4D float additive is
-        # returned as-is by HF create_bidirectional_mask.
-        keep = (~padding_positions).to(dtype=inputs_embeds.dtype)
         attn = (keep - 1.0) * 1.0e4
         encoded = self.vision_tower.encoder(
             inputs_embeds=inputs_embeds,
