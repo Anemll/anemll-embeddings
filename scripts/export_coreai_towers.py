@@ -190,6 +190,7 @@ def _export_vision(out_dir: Path, *, convert: bool) -> dict:
     if auto.vision_tower is None or auto.embed_vision is None:
         raise RuntimeError("vision tower missing")
     wrapped = VisionSoftTokens(auto.vision_tower, auto.embed_vision).eval()
+    force_eager_attention(wrapped)
     pixels, pos = vision_example()
     with torch.no_grad():
         soft = wrapped(pixels, pos)
@@ -446,8 +447,8 @@ def main() -> int:
             "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
-            "Audio: float 5D mask + K/V windows via static slices (no gather/index_select).",
-            "Vision: f16 pos I/O (si16→f32 ane_io_cast was InvalidOutputType); pos embed is float one-hot.",
+            "Audio: float 5D mask + K/V windows via one-hot matmul (no gather/slice-stack).",
+            "Vision: f16 pos I/O; one-hot pos embed; RoPE without concat_slice.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

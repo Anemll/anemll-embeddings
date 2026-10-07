@@ -1,8 +1,12 @@
-"""Export-time vision patches: pos embed without si16→i64 gather.
+"""Export-time vision patches: pos embed + RoPE without GPU concat_slice.
 
 ``F.embedding`` requires Int/Long, so the wrapper used to widen
 ``[1,2520,2]`` si16 → i64. That i64 gather is not ANE-legal I/O.
 Look up the 2-D table with a float one-hot matmul instead.
+
+``GPU_region_0`` leftover after f16 pos I/O was ``concat_slice`` from
+RoPE ``torch.cat([h,h,w,w])`` / ``torch.split``+``cat``. Rewrite those
+as expand+reshape and last-dim matmul join.
 """
 
 from __future__ import annotations
@@ -40,9 +44,64 @@ def _position_embeddings_ane(
     return position_embeddings * keep.unsqueeze(-1)
 
 
-def apply_vision_ane_embed_patch() -> dict[str, Any]:
-    """Replace ``F.embedding`` pos lookup with float one-hot matmul."""
+def _recomposition_frequencies_ane(self, freq: torch.Tensor) -> torch.Tensor:
+    """``[h, h, w, w]`` last-dim layout via expand+reshape — no ``cat`` slices."""
+    if freq.ndim != 4 or int(freq.shape[2]) != 2:
+        freq_h, freq_w = freq[:, :, 0], freq[:, :, 1]
+        return torch.cat([freq_h, freq_h, freq_w, freq_w], dim=-1)
+    batch, seq, _, width = freq.shape
+    repeated = freq.unsqueeze(-2).expand(batch, seq, 2, 2, width)
+    return repeated.contiguous().reshape(batch, seq, 4 * width)
+
+
+_ORIG_APPLY_ROPE = None
+
+
+def _apply_multidimensional_rope_ane(
+    x: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    unsqueeze_dim: int = 2,
+) -> torch.Tensor:
+    """2-D RoPE without ``split``+``cat`` (those lowered as GPU ``concat_slice``)."""
     import transformers.models.gemma4.modeling_gemma4 as g4
 
+    ndim = int(position_ids.shape[-1])
+    channels = int(x.shape[-1])
+    per = 2 * (channels // (2 * ndim))
+    if ndim != 2 or per * ndim != channels:
+        if _ORIG_APPLY_ROPE is None:
+            raise RuntimeError(f"RoPE fallback missing ndim={ndim} channels={channels}")
+        return _ORIG_APPLY_ROPE(
+            x, cos, sin, position_ids, unsqueeze_dim=unsqueeze_dim
+        )
+    xh = x.reshape(*x.shape[:-1], 2, per)
+    ch = cos.reshape(*cos.shape[:-1], 2, per)
+    sh = sin.reshape(*sin.shape[:-1], 2, per)
+    y0 = g4.apply_rotary_pos_emb(
+        x=xh[..., 0, :], cos=ch[..., 0, :], sin=sh[..., 0, :], unsqueeze_dim=unsqueeze_dim
+    )
+    y1 = g4.apply_rotary_pos_emb(
+        x=xh[..., 1, :], cos=ch[..., 1, :], sin=sh[..., 1, :], unsqueeze_dim=unsqueeze_dim
+    )
+    eye = torch.eye(per, device=x.device, dtype=y0.dtype)
+    zeros = torch.zeros(per, per, device=x.device, dtype=y0.dtype)
+    return y0 @ torch.cat([eye, zeros], dim=1) + y1 @ torch.cat([zeros, eye], dim=1)
+
+
+def apply_vision_ane_embed_patch() -> dict[str, Any]:
+    """Pos one-hot + RoPE without gather / concat_slice."""
+    import transformers.models.gemma4.modeling_gemma4 as g4
+
+    global _ORIG_APPLY_ROPE
     g4.Gemma4VisionPatchEmbedder._position_embeddings = _position_embeddings_ane
-    return {"patched": 1, "pos_embed": "float_onehot_matmul"}
+    g4.Gemma4VisionRotaryEmbedding.recomposition_frequencies = _recomposition_frequencies_ane
+    if _ORIG_APPLY_ROPE is None:
+        _ORIG_APPLY_ROPE = g4.apply_multidimensional_rope
+    g4.apply_multidimensional_rope = _apply_multidimensional_rope_ane
+    return {
+        "patched": 1,
+        "pos_embed": "float_onehot_matmul",
+        "rope": "expand_reshape_no_concat_slice",
+    }

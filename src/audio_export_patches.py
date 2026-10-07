@@ -44,13 +44,16 @@ def gather_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     return gathered.reshape(x.shape[0], n_win, window, *x.shape[2:])
 
 
-def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
-    """Same layout as ``gather_seq_windows`` via static slices + ``stack``.
-
-    No ``index_select`` / ``gather`` — ANE rejected i64 indices on the
-    padded K/V window ``[1, 93, H, D]`` (window=24, step=12).
-    """
-    seq_len = int(x.shape[1])
+def window_onehot(
+    seq_len: int,
+    window: int,
+    step: int,
+    *,
+    device: torch.device | str,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """``[n_win, window, seq_len]`` one-hot for overlapping windows."""
+    seq_len = int(seq_len)
     window = int(window)
     step = int(step)
     if window <= 0 or step <= 0:
@@ -58,8 +61,27 @@ def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     n_win = (seq_len - window) // step + 1
     if n_win <= 0:
         raise ValueError(f"n_win={n_win} for S={seq_len} window={window} step={step}")
-    windows = [x[:, b * step : b * step + window] for b in range(n_win)]
-    return torch.stack(windows, dim=1)
+    slots = torch.arange(seq_len, device=device, dtype=dtype)
+    starts = torch.arange(n_win, device=device, dtype=dtype) * float(step)
+    offsets = torch.arange(window, device=device, dtype=dtype)
+    idx = starts.unsqueeze(1) + offsets.unsqueeze(0)
+    return torch.clamp(1.0 - (idx.unsqueeze(-1) - slots).abs(), 0, 1)
+
+
+def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
+    """Same layout as ``gather_seq_windows`` via one-hot ``matmul``.
+
+    Slice+``stack`` cleared ``index_select`` but left a GPU
+    ``reshape→permute`` / ``strided_slice`` I/O (not squeeze/expandDims).
+    """
+    seq_len = int(x.shape[1])
+    window = int(window)
+    step = int(step)
+    onehot = window_onehot(seq_len, window, step, device=x.device, dtype=x.dtype)
+    n_win = int(onehot.shape[0])
+    flat = x.reshape(x.shape[0], seq_len, -1)
+    gathered = flat.transpose(1, 2) @ onehot.reshape(-1, seq_len).transpose(0, 1)
+    return gathered.transpose(1, 2).reshape(x.shape[0], n_win, window, *x.shape[2:])
 
 
 def _extract_block_context_slices(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -124,13 +146,21 @@ def blocked_additive_attention_mask(
     keep5 = keep4.reshape(batch, 1, num_blocks, chunk_size, padded_seq)
     keep5 = F.pad(keep5, (max_past_horizon, max_future_horizon), value=0.0)
     context = chunk_size + max_past_horizon + max_future_horizon
-    # Static slices — no gather(-1) / i64 indices. Block b takes last-dim
-    # [b*chunk : b*chunk+context] of the padded 84-wide key axis.
-    windows = [
-        keep5[:, :, b : b + 1, :, b * chunk_size : b * chunk_size + context]
-        for b in range(num_blocks)
-    ]
-    keep5 = torch.cat(windows, dim=2)
+    # One-hot matmul on the key axis — no gather / slice+cat layout I/O.
+    # Block b takes last-dim [b*chunk : b*chunk+context] of the padded keys.
+    padded_keys = int(keep5.shape[-1])
+    onehot = window_onehot(
+        padded_keys, context, chunk_size, device=keep5.device, dtype=keep5.dtype
+    )
+    # keep5 [B, 1, n_blocks, chunk, K] @ onehot^T [n_blocks, K, context]
+    left = keep5.reshape(batch * num_blocks, chunk_size, padded_keys)
+    right = (
+        onehot.transpose(-1, -2)
+        .unsqueeze(0)
+        .expand(batch, -1, -1, -1)
+        .reshape(batch * num_blocks, padded_keys, context)
+    )
+    keep5 = (left @ right).reshape(batch, 1, num_blocks, chunk_size, context)
     return (1.0 - keep5) * float(invalid)
 
 
@@ -234,7 +264,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     import transformers.models.gemma4.modeling_gemma4 as g4
 
     g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
-    return {"patched": 1, "window_op": "static_slice"}
+    return {"patched": 1, "window_op": "onehot_matmul"}
 
 
 def apply_audio_ane_mask_patch() -> dict[str, Any]:

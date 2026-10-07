@@ -19,7 +19,10 @@ from src.audio_export_patches import (  # noqa: E402
     gather_seq_windows,
     slice_seq_windows,
 )
-from src.vision_export_patches import embedding_from_int_indices  # noqa: E402
+from src.vision_export_patches import (  # noqa: E402
+    _recomposition_frequencies_ane,
+    embedding_from_int_indices,
+)
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
@@ -180,6 +183,15 @@ def test_blocked_additive_mask_export_stays_float() -> None:
             _fail(f"export still contains bool/i1: {blob}")
 
 
+def test_recomposition_matches_cat() -> None:
+    torch.manual_seed(0)
+    freq = torch.randn(1, 8, 2, 4)
+    ref = torch.cat([freq[:, :, 0], freq[:, :, 0], freq[:, :, 1], freq[:, :, 1]], dim=-1)
+    got = _recomposition_frequencies_ane(None, freq)
+    if got.shape != ref.shape or not torch.equal(got, ref):
+        _fail(f"recomposition {tuple(got.shape)} != {tuple(ref.shape)}")
+
+
 def test_io_specs() -> None:
     v = tower_io_spec("vision")
     if v["outputs"]["soft_tokens"] != [1, VISION_SOFT_TOKENS, 512]:
@@ -209,6 +221,7 @@ def main() -> int:
         test_blocked_additive_mask_export_stays_float,
         test_embedding_from_int_indices_matches_embedding,
         test_embedding_from_int_indices_export_has_no_i64,
+        test_recomposition_matches_cat,
         test_io_specs,
     ]
     for fn in tests:
