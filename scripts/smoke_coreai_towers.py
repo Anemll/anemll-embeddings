@@ -307,13 +307,63 @@ def main() -> int:
         "--compute",
         choices=("cpu", "ane", "default"),
         default="cpu",
-        help="Specialization. Default cpu: ANE specialize aborted on sdpa/i1.",
+        help="Specialization. Default cpu. ANE: isolate per tower (SIGABRT).",
+    )
+    parser.add_argument(
+        "--isolated",
+        action="store_true",
+        help="Run each --tower in a child process so ANE abort cannot kill the rest.",
     )
     args = parser.parse_args()
     towers = args.tower or ["vision", "text", "audio"]
     out_dir = Path(args.artifacts) / "coreai"
-    print(f"out_dir={out_dir} towers={towers} compute={args.compute}")
+    print(f"out_dir={out_dir} towers={towers} compute={args.compute} isolated={args.isolated}")
     print(f"ANEMLL_COREAI_PYTHON={_coreai_python()} coreai_here={_have_coreai()}")
+    if args.isolated and len(towers) > 1:
+        import subprocess
+
+        rows = []
+        fail = False
+        for name in towers:
+            log = Path(f"/tmp/coreai-ane-{name}.log")
+            cmd = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--compute",
+                args.compute,
+                "--tower",
+                name,
+                "--artifacts",
+                str(args.artifacts),
+            ]
+            print(f"isolated {name}: {' '.join(cmd)}")
+            with log.open("w") as fh:
+                rc = subprocess.call(cmd, stdout=fh, stderr=fh)
+            print(f"  child_rc={rc} log={log}")
+            if rc != 0:
+                fail = True
+                rows.append(
+                    {
+                        "tower": name,
+                        "pass": False,
+                        "child_rc": rc,
+                        "error": f"isolated child exit {rc}",
+                    }
+                )
+        dest = out_dir / "towers.ane.json"
+        write_json(
+            dest,
+            {
+                "created_at_utc": utc_now(),
+                "git_sha": git_sha(REPO_ROOT),
+                "target": "coreai_ane_isolated",
+                "compute": args.compute,
+                "towers": rows,
+                "all_pass": not fail,
+            },
+        )
+        print(f"wrote {dest}")
+        return 0 if not fail else 1
     meta = asyncio.run(_run(towers, out_dir, compute=args.compute))
     dest = out_dir / "towers.smoke.json"
     write_json(dest, meta)

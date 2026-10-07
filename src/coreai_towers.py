@@ -51,9 +51,13 @@ class VisionSoftTokens(nn.Module):
         inputs_embeds = self.vision_tower.patch_embedder(
             pixel_values, pixel_position_ids, padding_positions
         )
+        # ANE rejects i1 bool masks (memref …x2520xi1). 4D float additive is
+        # returned as-is by HF create_bidirectional_mask.
+        keep = (~padding_positions).to(dtype=inputs_embeds.dtype)
+        attn = (keep - 1.0) * 1.0e4
         encoded = self.vision_tower.encoder(
             inputs_embeds=inputs_embeds,
-            attention_mask=~padding_positions,
+            attention_mask=attn[:, None, None, :],
             pixel_position_ids=pixel_position_ids,
         )
         hidden = encoded.last_hidden_state

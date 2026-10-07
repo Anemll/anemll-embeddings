@@ -16,6 +16,21 @@ def _rotate_half_chunk(x: torch.Tensor) -> torch.Tensor:
     return torch.cat((-x2, x1), dim=-1)
 
 
+def repeat_kv_index(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """GQA repeat along heads via ``index_select`` (not expand+reshape).
+
+    Core AI fuses expand/reshape GQA into ``mps_spi.sdpa`` and then aborts:
+    "grouping for the value tensor does not match the one available on the key
+    tensor". Gather materializes matching Q/K/V head counts.
+    """
+    n_rep = int(n_rep)
+    if n_rep <= 1:
+        return x
+    n_kv = int(x.shape[1])
+    idx = torch.arange(n_kv, device=x.device, dtype=torch.long).repeat_interleave(n_rep)
+    return x.index_select(1, idx).contiguous()
+
+
 def _make_eager_attention(batch: int, seq_len: int):
     def eager_attention_forward(
         module,
@@ -38,16 +53,8 @@ def _make_eager_attention(batch: int, seq_len: int):
             key_states = key
             value_states = value
         else:
-            key_states = (
-                key.unsqueeze(2)
-                .expand(batch, n_kv, n_rep, seq_len, head_dim)
-                .reshape(batch, n_kv * n_rep, seq_len, head_dim)
-            )
-            value_states = (
-                value.unsqueeze(2)
-                .expand(batch, n_kv, n_rep, seq_len, head_dim)
-                .reshape(batch, n_kv * n_rep, seq_len, head_dim)
-            )
+            key_states = repeat_kv_index(key, n_rep)
+            value_states = repeat_kv_index(value, n_rep)
         attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
         if softcap is not None:
             attn_weights = attn_weights / softcap
