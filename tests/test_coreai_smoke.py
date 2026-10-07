@@ -47,8 +47,8 @@ def test_dummy_shapes() -> None:
     e = dummy_numpy_inputs("text_embeds")
     if tuple(e["inputs_embeds"].shape) != (1, 320, 512):
         _fail(str(e["inputs_embeds"].shape))
-    if e["attention_mask"].dtype != np.int32:
-        _fail(str(e["attention_mask"].dtype))
+    if e["inputs_embeds"].dtype != np.float16 or e["attention_mask"].dtype != np.int16:
+        _fail(f"{e['inputs_embeds'].dtype} {e['attention_mask'].dtype}")
 
 
 def test_io_text_is_s128() -> None:

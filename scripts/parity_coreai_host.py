@@ -162,8 +162,8 @@ def _encode_text_embeds(
     )
     embeds, mask = pad_embeds_to_package(embeds, attention_mask, seq_len=TEXT_EMBEDS_S)
     feed = {
-        "inputs_embeds": embeds.detach().cpu().numpy().astype(np.float32, copy=False),
-        "attention_mask": mask.detach().cpu().numpy().astype(np.int32, copy=False),
+        "inputs_embeds": embeds.detach().cpu().numpy().astype(np.float16, copy=False),
+        "attention_mask": mask.detach().cpu().numpy().astype(np.int16, copy=False),
     }
     return _run_tower(
         pkg,
