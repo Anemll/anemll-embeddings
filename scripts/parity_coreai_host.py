@@ -341,6 +341,7 @@ def main() -> int:
             "Video skipped: no video .aimodel.",
             "text_s128 is S=128 ids-only int32. Interleaved 768-d uses PyTorch text tower.",
             "si16 text I/O was the 0.76 gap (3/15 SearchQuery tokens wrapped).",
+            "int32 re-export: mm_text_sq cosine 0.995 vs ST (package vs wrapper 0.995; remaining f16/cast16).",
             "Fail-closed: non-finite or cosine < 0.10. Not a T6 0.95 gate.",
             "CPU only. ANE embedding-widen / audio dummy_pool unchanged.",
             "FLOAT32 Core ML text tree untouched.",
