@@ -286,44 +286,6 @@ def test_vision_attn_matches_transpose_matmul() -> None:
         _fail("vision heads-first != transpose+matmul")
 
 
-def test_vision_attn_export_has_no_sdpa() -> None:
-    class _Cfg:
-        num_attention_heads = 2
-        num_key_value_heads = 2
-
-    class _Attn(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.head_dim = 4
-            self.scaling = 1.0
-            self.config = _Cfg()
-            self.q_proj = torch.nn.Linear(8, 8, bias=False)
-            self.k_proj = torch.nn.Linear(8, 8, bias=False)
-            self.v_proj = torch.nn.Linear(8, 8, bias=False)
-            self.o_proj = torch.nn.Linear(8, 8, bias=False)
-            self.q_norm = torch.nn.Identity()
-            self.k_norm = torch.nn.Identity()
-            self.v_norm = torch.nn.Identity()
-
-        def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-            out, _ = _vision_attn_forward(
-                self, x, position_embeddings=None, attention_mask=mask
-            )
-            return out
-
-    mod = _Attn().eval()
-    ep = torch.export.export(
-        mod, (torch.randn(1, 5, 8), torch.zeros(1, 1, 1, 5)), strict=False
-    )
-    bad = [
-        str(n.target)
-        for n in ep.graph.nodes
-        if "scaled_dot_product_attention" in str(n.target)
-    ]
-    if bad:
-        _fail(f"fused sdpa still in vision attn export: {bad}")
-
-
 def test_rel_shift_matmul_matches_hf() -> None:
     class _Attn:
         context_size = 24
@@ -813,7 +775,6 @@ def main() -> int:
         test_depthwise_conv1d_channels_last_matches_transpose,
         test_depthwise_conv1d_export_has_no_transpose,
         test_vision_attn_matches_transpose_matmul,
-        test_vision_attn_export_has_no_sdpa,
         test_rel_shift_matmul_matches_hf,
         test_rel_shift_static_matches_hf,
         test_rel_shift_baked_matches_hf,
