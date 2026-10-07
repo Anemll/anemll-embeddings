@@ -17,6 +17,8 @@ from src.coreai_smoke import (  # noqa: E402
     dummy_numpy_inputs,
     extract_devices_from_debug,
     output_is_finite,
+    parse_mpsgraph_regions,
+    percentile_ms,
     placement_from_cache_manifest,
     tower_smoke_io,
 )
@@ -102,6 +104,29 @@ def test_debug_extract() -> None:
         _fail(str(got))
 
 
+def test_percentile_ms() -> None:
+    got = percentile_ms([0.010, 0.020, 0.030, 0.040, 0.050], 50.0)
+    if abs(got - 30.0) > 1e-6:
+        _fail(str(got))
+    if abs(percentile_ms([0.010], 90.0) - 10.0) > 1e-6:
+        _fail("single")
+
+
+def test_parse_mpsgraph_regions() -> None:
+    blob = (
+        b"foo_ANE_region_0_0 #placement.region_type<ANE> "
+        b"foo_GPU_region_0 foo_GPU_region_0_nested_1 "
+        b"#placement.region_type<GPU> ane_io_cast mpsx.parallelGPURegion"
+    )
+    got = parse_mpsgraph_regions(blob)
+    if got["gpu_top_regions"] != ["foo_GPU_region_0"]:
+        _fail(str(got["gpu_top_regions"]))
+    if "ane_io_cast" not in got["named_ops_present"]:
+        _fail(str(got["named_ops_present"]))
+    if not got["has_gpu_region_type"]:
+        _fail("gpu type")
+
+
 def main() -> int:
     tests = [
         test_dummy_shapes,
@@ -112,6 +137,8 @@ def main() -> int:
         test_mid_cpu_flagged,
         test_cache_manifest_labels,
         test_debug_extract,
+        test_percentile_ms,
+        test_parse_mpsgraph_regions,
     ]
     for fn in tests:
         fn()

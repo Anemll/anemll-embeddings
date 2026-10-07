@@ -239,3 +239,45 @@ def extract_devices_from_debug(obj: Any, *, limit: int = 4000) -> list[str]:
 
     walk(obj)
     return found
+
+
+def percentile_ms(times: list[float], p: float) -> float:
+    """Linear-interpolated percentile. ``times`` are seconds; result is ms."""
+    if not times:
+        return float("nan")
+    s = sorted(times)
+    if len(s) == 1:
+        return float(s[0] * 1000.0)
+    k = (len(s) - 1) * (p / 100.0)
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    frac = k - lo
+    return float((s[lo] * (1.0 - frac) + s[hi] * frac) * 1000.0)
+
+
+def parse_mpsgraph_regions(blob: bytes) -> dict[str, Any]:
+    """Name ANE/GPU regions and nearby dialect ops from a compiled mpsgraph."""
+    import re
+
+    text = blob.decode("latin-1", errors="ignore")
+    ane = sorted(set(re.findall(r"[A-Za-z0-9_]+_ANE_region_[A-Za-z0-9_]+", text)))
+    gpu = sorted(set(re.findall(r"[A-Za-z0-9_]+_GPU_region_[A-Za-z0-9_]+", text)))
+    gpu_top = [n for n in gpu if "_nested_" not in n]
+    ops = []
+    for name in (
+        "ane_io_cast",
+        "mpsx.parallelGPURegion",
+        "cast",
+        "broadcast_to",
+        "sdpa",
+    ):
+        if name in text:
+            ops.append(name)
+    return {
+        "ane_regions": ane,
+        "gpu_regions": gpu,
+        "gpu_top_regions": gpu_top,
+        "named_ops_present": ops,
+        "has_gpu_region_type": "#placement.region_type<GPU>" in text,
+        "has_ane_region_type": "#placement.region_type<ANE>" in text,
+    }
