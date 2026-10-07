@@ -456,7 +456,7 @@ def main() -> int:
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
             "Audio: 4-D NCHW I/O; baked one-hot rel-shift (no strided_slice, no prefix-matmul).",
-            "Vision: per-head 4D SDPA island in fp16 (f32 result was InvalidOutputType).",
+            "Vision: per-head SDPA with matching K/V [B,S,D]; no GEMM transpose.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)
