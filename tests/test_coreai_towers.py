@@ -15,6 +15,7 @@ from src.audio_export_patches import (  # noqa: E402
     AUDIO_CHUNK,
     AUDIO_FUTURE,
     AUDIO_PAST,
+    _rel_shift_matmul,
     blocked_additive_attention_mask,
     gather_seq_windows,
     slice_seq_windows,
@@ -183,6 +184,27 @@ def test_blocked_additive_mask_export_stays_float() -> None:
             _fail(f"export still contains bool/i1: {blob}")
 
 
+def test_rel_shift_matmul_matches_hf() -> None:
+    class _Attn:
+        context_size = 24
+
+        def hf(self, x: torch.Tensor) -> torch.Tensor:
+            batch, heads, blocks, block, pos = x.shape
+            context = self.context_size
+            x = torch.nn.functional.pad(x, (0, context + 1 - pos))
+            x = x.view(batch, heads, blocks, block * (context + 1))
+            x = x[..., : block * context]
+            return x.view(batch, heads, blocks, block, context)
+
+    torch.manual_seed(0)
+    x = torch.randn(1, 2, 6, 12, 24)
+    attn = _Attn()
+    got = _rel_shift_matmul(attn, x)
+    ref = attn.hf(x)
+    if got.shape != ref.shape or not torch.allclose(got, ref):
+        _fail(f"rel_shift {tuple(got.shape)} != {tuple(ref.shape)}")
+
+
 def test_recomposition_matches_cat() -> None:
     torch.manual_seed(0)
     freq = torch.randn(1, 8, 2, 4)
@@ -221,6 +243,7 @@ def main() -> int:
         test_blocked_additive_mask_export_stays_float,
         test_embedding_from_int_indices_matches_embedding,
         test_embedding_from_int_indices_export_has_no_i64,
+        test_rel_shift_matmul_matches_hf,
         test_recomposition_matches_cat,
         test_io_specs,
     ]

@@ -84,6 +84,25 @@ def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     return gathered.transpose(1, 2).reshape(x.shape[0], n_win, window, *x.shape[2:])
 
 
+def _rel_shift_matmul(self, x: torch.Tensor) -> torch.Tensor:
+    """Transformer-XL rel-shift without ``view``+``strided_slice`` (GPU I/O).
+
+    HF pads last-dim to ``context+1``, flattens, keeps the first
+    ``chunk*context`` values, then views back. That lowers as
+    ``reshape->strided_slice->reshape``. Keep the prefix via matmul.
+    """
+    batch, heads, num_blocks, block_size, pos_len = x.shape
+    context = int(self.context_size)
+    x = F.pad(x, (0, context + 1 - int(pos_len)))
+    flat = x.reshape(batch, heads, num_blocks, block_size * (context + 1))
+    keep = block_size * context
+    total = block_size * (context + 1)
+    eye = torch.eye(keep, device=x.device, dtype=x.dtype)
+    zeros = torch.zeros(total - keep, keep, device=x.device, dtype=x.dtype)
+    select = torch.cat([eye, zeros], dim=0)
+    return (flat @ select).reshape(batch, heads, num_blocks, block_size, context)
+
+
 def _extract_block_context_slices(self, hidden_states: torch.Tensor) -> torch.Tensor:
     hidden_states = F.pad(
         hidden_states,
@@ -264,7 +283,8 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     import transformers.models.gemma4.modeling_gemma4 as g4
 
     g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
-    return {"patched": 1, "window_op": "onehot_matmul"}
+    g4.Gemma4AudioAttention._rel_shift = _rel_shift_matmul
+    return {"patched": 1, "window_op": "onehot_matmul", "rel_shift": "prefix_matmul"}
 
 
 def apply_audio_ane_mask_patch() -> dict[str, Any]:
