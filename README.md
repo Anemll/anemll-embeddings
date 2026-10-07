@@ -173,6 +173,9 @@ ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
 /Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_coreai_towers.py
 ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
   /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_towers.py
+/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_coreai_smoke.py
+ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
+  /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/smoke_coreai_towers.py
 ```
 
 Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `audio_s280.aimodel` (280×128 mel → 70×512; chunked attn windows via `index_select` instead of `aten.unfold`), `text_s128.aimodel` (ids/mask → 768). Audio `.pt2` save can hit TreeSpec; convert uses the live exported program. Host interleaves placeholders. Cast16 can clash on int `div`; convert retries without it.

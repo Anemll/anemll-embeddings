@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Unit checks for Core AI smoke helpers (no .aimodel, no coreai runtime)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from src.coreai_smoke import (  # noqa: E402
+    TEXT_SEQ_LEN,
+    classify_device_runs,
+    dummy_numpy_inputs,
+    extract_devices_from_debug,
+    output_is_finite,
+    placement_from_cache_manifest,
+    tower_smoke_io,
+)
+
+
+def _fail(msg: str) -> None:
+    raise AssertionError(msg)
+
+
+def test_dummy_shapes() -> None:
+    v = dummy_numpy_inputs("vision")
+    if tuple(v["pixel_values"].shape) != (1, 2520, 768):
+        _fail(str(v["pixel_values"].shape))
+    if tuple(v["pixel_position_ids"].shape) != (1, 2520, 2):
+        _fail(str(v["pixel_position_ids"].shape))
+    a = dummy_numpy_inputs("audio")
+    if tuple(a["input_features"].shape) != (1, 280, 128):
+        _fail(str(a["input_features"].shape))
+    t = dummy_numpy_inputs("text")
+    if tuple(t["input_ids"].shape) != (1, TEXT_SEQ_LEN):
+        _fail(str(t["input_ids"].shape))
+
+
+def test_io_text_is_s128() -> None:
+    spec = tower_smoke_io("text")
+    if spec["inputs"]["input_ids"] != [1, 128]:
+        _fail(str(spec))
+    if spec["outputs"]["embedding"] != [1, 768]:
+        _fail(str(spec))
+
+
+def test_finite_helper() -> None:
+    if not output_is_finite(np.zeros((1, 3), dtype=np.float16)):
+        _fail("zeros should be finite")
+    if output_is_finite(np.array([np.nan], dtype=np.float32)):
+        _fail("nan should fail")
+    if not output_is_finite(np.arange(4, dtype=np.int32)):
+        _fail("ints are finite")
+
+
+def test_begin_cpu_ok() -> None:
+    got = classify_device_runs(["CPU", "CPU", "ANE", "ANE"])
+    if not got["begin_end_switches_only"] or got["mid_graph_cpu_islands"]:
+        _fail(str(got))
+
+
+def test_end_cpu_ok() -> None:
+    got = classify_device_runs(["ANE", "ANE", "CPU"])
+    if not got["begin_end_switches_only"] or got["mid_graph_cpu_islands"]:
+        _fail(str(got))
+
+
+def test_mid_cpu_flagged() -> None:
+    got = classify_device_runs(["ANE", "CPU", "ANE"])
+    if got["begin_end_switches_only"] or not got["mid_graph_cpu_islands"]:
+        _fail(str(got))
+
+
+def test_cache_manifest_labels() -> None:
+    if placement_from_cache_manifest(b"xx mps.fullyPlacedOnANE yy") != "ANE":
+        _fail("ANE")
+    if placement_from_cache_manifest(b"_ANE_region_ gpu") != "ANE+GPU":
+        _fail("mixed")
+    if placement_from_cache_manifest(b"gpu only") != "GPU":
+        _fail("gpu")
+
+
+def test_debug_extract() -> None:
+    blob = {"ops": [{"preferred_compute_device": "NeuralEngine"}, {"device": "CPU"}]}
+    got = extract_devices_from_debug(blob)
+    if got != ["ANE", "CPU"]:
+        _fail(str(got))
+
+
+def main() -> int:
+    tests = [
+        test_dummy_shapes,
+        test_io_text_is_s128,
+        test_finite_helper,
+        test_begin_cpu_ok,
+        test_end_cpu_ok,
+        test_mid_cpu_flagged,
+        test_cache_manifest_labels,
+        test_debug_extract,
+    ]
+    for fn in tests:
+        fn()
+        print(f"OK {fn.__name__}")
+    print(f"OK: {len(tests)} coreai-smoke checks")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
