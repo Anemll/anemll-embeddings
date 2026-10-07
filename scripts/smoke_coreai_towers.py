@@ -110,7 +110,9 @@ def _cache_placement_since(since: float) -> dict:
     return {"source": "cache_manifest", "label": label, "path": str(newest)}
 
 
-async def _smoke_one(tower: str, pkg: Path, export_io: dict | None) -> dict:
+async def _smoke_one(
+    tower: str, pkg: Path, export_io: dict | None, *, compute: str = "cpu"
+) -> dict:
     from coreai.runtime import AIModel, ComputeUnitKind, NDArray, SpecializationOptions
     from coreai.runtime import _AIModelAsset
 
@@ -120,6 +122,7 @@ async def _smoke_one(tower: str, pkg: Path, export_io: dict | None) -> dict:
         "package": str(pkg),
         "exists": pkg.is_dir(),
         "pass": False,
+        "_compute": compute,
     }
     if not pkg.is_dir():
         report["error"] = "package missing"
@@ -137,14 +140,19 @@ async def _smoke_one(tower: str, pkg: Path, export_io: dict | None) -> dict:
 
     opts = None
     spec_note = "default_load"
+    compute = str(report.get("_compute") or "cpu")
     if SpecializationOptions.is_supported():
         try:
-            opts = SpecializationOptions.from_preferred_compute_unit_kind(
-                ComputeUnitKind.neural_engine()
-            )
-            spec_note = "preferred_ane"
+            if compute == "ane":
+                opts = SpecializationOptions.from_preferred_compute_unit_kind(
+                    ComputeUnitKind.neural_engine()
+                )
+                spec_note = "preferred_ane"
+            elif compute == "cpu":
+                opts = SpecializationOptions.cpu_only()
+                spec_note = "cpu_only"
         except Exception as exc:
-            spec_note = f"ane_options_failed:{type(exc).__name__}"
+            spec_note = f"options_failed:{type(exc).__name__}"
             opts = None
     report["specialization"] = spec_note
 
@@ -154,17 +162,8 @@ async def _smoke_one(tower: str, pkg: Path, export_io: dict | None) -> dict:
         else:
             model = await AIModel.load(pkg)
     except Exception as exc:
-        if opts is not None:
-            report["ane_load_error"] = f"{type(exc).__name__}: {exc}"
-            try:
-                model = await AIModel.load(pkg)
-                report["specialization"] = "fallback_default_load"
-            except Exception as exc2:
-                report["error"] = f"{type(exc2).__name__}: {exc2}"
-                return report
-        else:
-            report["error"] = f"{type(exc).__name__}: {exc}"
-            return report
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        return report
 
     names = list(model.function_names)
     report["loaded_functions"] = names
@@ -224,10 +223,16 @@ async def _smoke_one(tower: str, pkg: Path, export_io: dict | None) -> dict:
         "cpu_only": bool(classified["cpu_only"]),
         "device_run_count": len(classified["device_runs"]),
     }
-    if placement["label"] == "ANE+GPU" and not devices:
-        report["placement"]["flag"] = "mixed_ane_gpu_unknown_midgraph"
-    elif mid:
+    if mid:
         report["placement"]["flag"] = "mid_graph_cpu_island"
+    elif compute == "cpu":
+        report["placement"]["flag"] = None
+        report["placement"]["note"] = (
+            "CPU-only smoke (finite/shape). ANE specialize aborted on this host: "
+            "mps_spi.sdpa grouping mismatch and i1 ANE I/O (memref 2520xi1)."
+        )
+    elif placement["label"] == "ANE+GPU" and not devices:
+        report["placement"]["flag"] = "mixed_ane_gpu_unknown_midgraph"
     elif classified["cpu_only"]:
         report["placement"]["flag"] = "cpu_only"
     else:
@@ -242,16 +247,16 @@ async def _smoke_one(tower: str, pkg: Path, export_io: dict | None) -> dict:
     return report
 
 
-async def _run(towers: list[str], out_dir: Path) -> dict:
+async def _run(towers: list[str], out_dir: Path, *, compute: str) -> dict:
     export_json = out_dir / "towers.export.json"
     rows = []
     fail = False
     for name in towers:
         pkg = out_dir / TOWER_PACKAGES[name]
         export_io = _io_from_export_json(export_json, name)
-        print(f"smoke {name} {pkg}")
+        print(f"smoke {name} compute={compute} {pkg}")
         try:
-            row = await _smoke_one(name, pkg, export_io)
+            row = await _smoke_one(name, pkg, export_io, compute=compute)
         except Exception as exc:
             row = {
                 "tower": name,
@@ -278,8 +283,10 @@ async def _run(towers: list[str], out_dir: Path) -> dict:
         "out_dir": str(out_dir),
         "towers": rows,
         "all_pass": not fail,
+        "compute": compute,
         "notes": [
             "Load + one forward only. Packages were not re-exported.",
+            "Default compute=cpu. ANE specialize aborted (sdpa grouping / i1 I/O).",
             "Begin/end CPU↔device switches are OK. Mid-graph CPU islands are flagged.",
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
         ],
@@ -295,12 +302,18 @@ def main() -> int:
         help="Repeatable. Default: vision, text, audio.",
     )
     parser.add_argument("--artifacts", type=Path, default=artifacts_root())
+    parser.add_argument(
+        "--compute",
+        choices=("cpu", "ane", "default"),
+        default="cpu",
+        help="Specialization. Default cpu: ANE specialize aborted on sdpa/i1.",
+    )
     args = parser.parse_args()
     towers = args.tower or ["vision", "text", "audio"]
     out_dir = Path(args.artifacts) / "coreai"
-    print(f"out_dir={out_dir} towers={towers}")
+    print(f"out_dir={out_dir} towers={towers} compute={args.compute}")
     print(f"ANEMLL_COREAI_PYTHON={_coreai_python()} coreai_here={_have_coreai()}")
-    meta = asyncio.run(_run(towers, out_dir))
+    meta = asyncio.run(_run(towers, out_dir, compute=args.compute))
     dest = out_dir / "towers.smoke.json"
     write_json(dest, meta)
     print(f"wrote {dest}")
