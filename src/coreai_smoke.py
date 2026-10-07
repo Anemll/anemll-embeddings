@@ -26,15 +26,18 @@ TOWER_PACKAGES = {
     "vision": "vision_s280.aimodel",
     "audio": "audio_s280.aimodel",
     "text": "text_s128.aimodel",
+    "text_embeds": "text_embeds_s320.aimodel",
 }
 
 TOWER_ENTRIES = {
     "vision": "vision_s280",
     "audio": "audio_s280",
     "text": "text_s128",
+    "text_embeds": "text_embeds_s320",
 }
 
 TEXT_SEQ_LEN = 128
+TEXT_EMBEDS_S = 320
 
 _DTYPE_ALIASES = {
     "float16": np.float16,
@@ -74,6 +77,14 @@ def tower_smoke_io(name: str) -> dict[str, Any]:
     if name == "text":
         return {
             "inputs": {"input_ids": [1, TEXT_SEQ_LEN], "attention_mask": [1, TEXT_SEQ_LEN]},
+            "outputs": {"embedding": [1, TEXT_EMBED]},
+        }
+    if name == "text_embeds":
+        return {
+            "inputs": {
+                "inputs_embeds": [1, TEXT_EMBEDS_S, TEXT_HIDDEN],
+                "attention_mask": [1, TEXT_EMBEDS_S],
+            },
             "outputs": {"embedding": [1, TEXT_EMBED]},
         }
     raise ValueError(f"unknown tower {name!r}")
@@ -116,6 +127,13 @@ def dummy_numpy_inputs(
         ids = np.arange(1, TEXT_SEQ_LEN + 1, dtype=ids_dt)[None, :]
         mask = np.ones((1, TEXT_SEQ_LEN), dtype=mask_dt)
         return {"input_ids": ids, "attention_mask": mask}
+    if name == "text_embeds":
+        emb_dt = resolve_dtype(dtypes.get("inputs_embeds", "float32"), np.float32)
+        mask_dt = resolve_dtype(dtypes.get("attention_mask", "int32"), np.int32)
+        embeds = np.full((1, TEXT_EMBEDS_S, TEXT_HIDDEN), 0.02, dtype=emb_dt)
+        mask = np.ones((1, TEXT_EMBEDS_S), dtype=mask_dt)
+        mask[:, -8:] = 0
+        return {"inputs_embeds": embeds, "attention_mask": mask}
     raise ValueError(f"unknown tower {name!r}")
 
 

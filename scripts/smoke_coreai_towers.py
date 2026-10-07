@@ -318,7 +318,7 @@ def main() -> int:
     out_dir = Path(args.artifacts) / "coreai"
     print(f"out_dir={out_dir} towers={towers} compute={args.compute} isolated={args.isolated}")
     print(f"ANEMLL_COREAI_PYTHON={_coreai_python()} coreai_here={_have_coreai()}")
-    if args.isolated and len(towers) > 1:
+    if args.isolated:
         import subprocess
 
         rows = []
@@ -339,7 +339,26 @@ def main() -> int:
             with log.open("w") as fh:
                 rc = subprocess.call(cmd, stdout=fh, stderr=fh)
             print(f"  child_rc={rc} log={log}")
-            if rc != 0:
+            child_row = None
+            smoke_dest = out_dir / "towers.smoke.json"
+            if smoke_dest.is_file() and rc == 0:
+                try:
+                    child_meta = json.loads(smoke_dest.read_text())
+                    child_row = next(
+                        (r for r in (child_meta.get("towers") or []) if r.get("tower") == name),
+                        None,
+                    )
+                except json.JSONDecodeError:
+                    child_row = None
+            if child_row is not None:
+                child_row["child_rc"] = rc
+                rows.append(child_row)
+                if not child_row.get("pass"):
+                    fail = True
+            else:
+                tail = ""
+                if log.is_file():
+                    tail = log.read_text(errors="replace")[-4000:]
                 fail = True
                 rows.append(
                     {
@@ -347,6 +366,7 @@ def main() -> int:
                         "pass": False,
                         "child_rc": rc,
                         "error": f"isolated child exit {rc}",
+                        "log_tail": tail,
                     }
                 )
         dest = out_dir / "towers.ane.json"
