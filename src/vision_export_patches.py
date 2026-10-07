@@ -76,17 +76,16 @@ def _apply_multidimensional_rope_ane(
         return _ORIG_APPLY_ROPE(
             x, cos, sin, position_ids, unsqueeze_dim=unsqueeze_dim
         )
-    xh = x.reshape(*x.shape[:-1], 2, per)
-    ch = cos.reshape(*cos.shape[:-1], 2, per)
-    sh = sin.reshape(*sin.shape[:-1], 2, per)
+    eye = torch.eye(per, device=x.device, dtype=x.dtype)
+    zeros = torch.zeros(per, per, device=x.device, dtype=x.dtype)
+    take0 = torch.cat([eye, zeros], dim=0)
+    take1 = torch.cat([zeros, eye], dim=0)
     y0 = g4.apply_rotary_pos_emb(
-        x=xh[..., 0, :], cos=ch[..., 0, :], sin=sh[..., 0, :], unsqueeze_dim=unsqueeze_dim
+        x=x @ take0, cos=cos @ take0, sin=sin @ take0, unsqueeze_dim=unsqueeze_dim
     )
     y1 = g4.apply_rotary_pos_emb(
-        x=xh[..., 1, :], cos=ch[..., 1, :], sin=sh[..., 1, :], unsqueeze_dim=unsqueeze_dim
+        x=x @ take1, cos=cos @ take1, sin=sin @ take1, unsqueeze_dim=unsqueeze_dim
     )
-    eye = torch.eye(per, device=x.device, dtype=y0.dtype)
-    zeros = torch.zeros(per, per, device=x.device, dtype=y0.dtype)
     return y0 @ torch.cat([eye, zeros], dim=1) + y1 @ torch.cat([zeros, eye], dim=1)
 
 

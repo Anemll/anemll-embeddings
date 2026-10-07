@@ -21,6 +21,7 @@ from src.audio_export_patches import (  # noqa: E402
     slice_seq_windows,
 )
 from src.vision_export_patches import (  # noqa: E402
+    _apply_multidimensional_rope_ane,
     _recomposition_frequencies_ane,
     embedding_from_int_indices,
     rotate_half_matmul,
@@ -216,6 +217,20 @@ def test_rotate_half_matmul_matches_cat() -> None:
         _fail("rotate_half_matmul != cat((-x2, x1))")
 
 
+def test_apply_rope_matmul_matches_hf() -> None:
+    import transformers.models.gemma4.modeling_gemma4 as g4
+
+    torch.manual_seed(0)
+    x = torch.randn(1, 5, 3, 8)
+    cos = torch.randn(1, 5, 8)
+    sin = torch.randn(1, 5, 8)
+    pos = torch.zeros(1, 5, 2)
+    ref = g4.apply_multidimensional_rope(x, cos, sin, pos, unsqueeze_dim=2)
+    got = _apply_multidimensional_rope_ane(x, cos, sin, pos, unsqueeze_dim=2)
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("2-D RoPE matmul halves != HF split+cat")
+
+
 def test_recomposition_matches_cat() -> None:
     torch.manual_seed(0)
     freq = torch.randn(1, 8, 2, 4)
@@ -256,6 +271,7 @@ def main() -> int:
         test_embedding_from_int_indices_export_has_no_i64,
         test_rel_shift_matmul_matches_hf,
         test_rotate_half_matmul_matches_cat,
+        test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,
         test_io_specs,
     ]
