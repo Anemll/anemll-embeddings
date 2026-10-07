@@ -347,8 +347,9 @@ def _export_text_embeds(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     wrapper = wrapper.float().eval()
     traced = TraceableEmbeddingGemma2Embeds(wrapper, seq_len=seq_len, batch=1).eval()
     hidden = int(wrapper.hidden_size)
-    # ANE-legal I/O: f16 embeds + f16 mask. Graph widens both to f32.
-    # si16 mask left anec.not_equal_zero on GPU (wants f16/i8).
+    # ANE-legal I/O: f16 embeds + f16 mask. Graph widens embeds to f32.
+    # Mask stays f16 at I/O (anec.not_equal_zero rejects si16; f32 widen
+    # dropped the ANE region).
     embeds = torch.randn(1, seq_len, hidden, dtype=torch.float16)
     mask = torch.ones(1, seq_len, dtype=torch.float16)
     mask[:, -8:] = 0

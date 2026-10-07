@@ -120,8 +120,8 @@ class TraceableEmbeddingGemma2Embeds(TraceableEmbeddingGemma2):
     ) -> torch.Tensor:
         # Package I/O may be f16 (ANE-legal). Encoder stays f32 — do not
         # convert with cast_to_16_bit_precision (that zeroed vision).
+        # Keep mask f16 at I/O so anec.not_equal_zero sees f16, not f32.
         inputs_embeds = inputs_embeds.to(dtype=torch.float32)
-        attention_mask = attention_mask.to(dtype=torch.float32)
         masks = self._attention_mapping(attention_mask)
         out = self.text_model(
             inputs_embeds=inputs_embeds,
