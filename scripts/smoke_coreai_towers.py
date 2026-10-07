@@ -229,8 +229,7 @@ async def _smoke_one(
     elif compute == "cpu":
         report["placement"]["flag"] = None
         report["placement"]["note"] = (
-            "CPU-only smoke (finite/shape). ANE specialize aborted on this host: "
-            "mps_spi.sdpa grouping mismatch and i1 ANE I/O (memref 2520xi1)."
+            "CPU-only smoke (finite/shape). Integer I/O exported as si16."
         )
     elif placement["label"] == "ANE+GPU" and not devices:
         report["placement"]["flag"] = "mixed_ane_gpu_unknown_midgraph"
@@ -287,7 +286,7 @@ async def _run(towers: list[str], out_dir: Path, *, compute: str) -> dict:
         "compute": compute,
         "notes": [
             "Load + one forward only.",
-            "Default compute=cpu. Isolated ANE: text GPU, vision ANE+GPU, audio GPU.",
+            "Default compute=cpu. Integer I/O is si16 (ANE-legal).",
             "Begin/end CPU↔device switches are OK. Mid-graph CPU islands are flagged.",
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
         ],

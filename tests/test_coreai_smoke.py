@@ -32,12 +32,18 @@ def test_dummy_shapes() -> None:
         _fail(str(v["pixel_values"].shape))
     if tuple(v["pixel_position_ids"].shape) != (1, 2520, 2):
         _fail(str(v["pixel_position_ids"].shape))
+    if v["pixel_position_ids"].dtype != np.int16:
+        _fail(str(v["pixel_position_ids"].dtype))
     a = dummy_numpy_inputs("audio")
     if tuple(a["input_features"].shape) != (1, 280, 128):
         _fail(str(a["input_features"].shape))
     t = dummy_numpy_inputs("text")
     if tuple(t["input_ids"].shape) != (1, TEXT_SEQ_LEN):
         _fail(str(t["input_ids"].shape))
+    if t["input_ids"].dtype != np.int16 or t["attention_mask"].dtype != np.int16:
+        _fail(f"{t['input_ids'].dtype} {t['attention_mask'].dtype}")
+    if a["input_features_mask"].dtype != np.int16:
+        _fail(str(a["input_features_mask"].dtype))
 
 
 def test_io_text_is_s128() -> None:

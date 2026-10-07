@@ -300,8 +300,9 @@ def _export_text(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     wrapper = wrapper.float().eval()
     traced = TraceableEmbeddingGemma2(wrapper, seq_len=seq_len, batch=1).eval()
     ids, mask = example_trace_inputs(seq_len)
-    ids = ids.to(dtype=torch.int32)
-    mask = mask.to(dtype=torch.int32)
+    # ANE I/O rejects si32/si64; ids/mask fit si16 for this S=128 smoke vocab.
+    ids = ids.to(dtype=torch.int16)
+    mask = mask.to(dtype=torch.int16)
     with torch.no_grad():
         emb = traced(ids, mask)
     print(f"text eager embedding={tuple(emb.shape)}")

@@ -35,6 +35,8 @@ def test_vision_example_shape() -> None:
         _fail(str(pixels.shape))
     if tuple(pos.shape) != (1, VISION_PATCHES, 2):
         _fail(str(pos.shape))
+    if pos.dtype != torch.int16:
+        _fail(f"pos dtype {pos.dtype} (want int16)")
     if pos.min() < 0:
         _fail("example grid should have no pad (-1)")
 
@@ -43,8 +45,8 @@ def test_audio_example_shape() -> None:
     feat, mask = audio_example()
     if tuple(feat.shape) != (1, AUDIO_FRAMES, AUDIO_FEAT):
         _fail(str(feat.shape))
-    if tuple(mask.shape) != (1, AUDIO_FRAMES) or mask.dtype != torch.bool:
-        _fail(str(mask.shape))
+    if tuple(mask.shape) != (1, AUDIO_FRAMES) or mask.dtype != torch.int16:
+        _fail(f"{tuple(mask.shape)} {mask.dtype}")
     if int(mask.sum()) != AUDIO_FRAMES:
         _fail("expected full-valid mask")
 

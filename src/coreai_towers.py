@@ -47,6 +47,8 @@ class VisionSoftTokens(nn.Module):
     def forward(
         self, pixel_values: torch.Tensor, pixel_position_ids: torch.Tensor
     ) -> torch.Tensor:
+        # Package I/O is si16 (ANE-legal). HF embedder wants long.
+        pixel_position_ids = pixel_position_ids.to(dtype=torch.long)
         padding_positions = (pixel_position_ids == -1).all(dim=-1)
         inputs_embeds = self.vision_tower.patch_embedder(
             pixel_values, pixel_position_ids, padding_positions
@@ -83,7 +85,10 @@ class AudioSoftTokens(nn.Module):
     def forward(
         self, input_features: torch.Tensor, input_features_mask: torch.Tensor
     ) -> torch.Tensor:
-        out = self.audio_tower(input_features, input_features_mask, return_dict=True)
+        keep = input_features_mask
+        if keep.dtype != torch.bool:
+            keep = keep != 0
+        out = self.audio_tower(input_features, keep, return_dict=True)
         return self.embed_audio(out.last_hidden_state)
 
 
@@ -101,7 +106,7 @@ def vision_example(
     pixels = torch.full(
         (batch, patches, VISION_PATCH_DIM), 0.5, dtype=dtype, device=device
     )
-    return pixels, pos.to(dtype=torch.long)
+    return pixels, pos.to(dtype=torch.int16)
 
 
 def audio_example(
@@ -112,7 +117,7 @@ def audio_example(
     device: str | torch.device = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     feat = torch.zeros(batch, frames, AUDIO_FEAT, dtype=dtype, device=device)
-    mask = torch.ones(batch, frames, dtype=torch.bool, device=device)
+    mask = torch.ones(batch, frames, dtype=torch.int16, device=device)
     return feat, mask
 
 
@@ -123,6 +128,10 @@ def tower_io_spec(name: str) -> dict[str, Any]:
                 "pixel_values": [1, VISION_PATCHES, VISION_PATCH_DIM],
                 "pixel_position_ids": [1, VISION_PATCHES, 2],
             },
+            "input_dtypes": {
+                "pixel_values": "float32",
+                "pixel_position_ids": "int16",
+            },
             "outputs": {"soft_tokens": [1, VISION_SOFT_TOKENS, TEXT_HIDDEN]},
         }
     if name == "audio":
@@ -131,11 +140,16 @@ def tower_io_spec(name: str) -> dict[str, Any]:
                 "input_features": [1, AUDIO_FRAMES, AUDIO_FEAT],
                 "input_features_mask": [1, AUDIO_FRAMES],
             },
+            "input_dtypes": {
+                "input_features": "float32",
+                "input_features_mask": "int16",
+            },
             "outputs": {"soft_tokens": [1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
         }
     if name == "text":
         return {
             "inputs": {"input_ids": [1, "S"], "attention_mask": [1, "S"]},
+            "input_dtypes": {"input_ids": "int16", "attention_mask": "int16"},
             "outputs": {"embedding": [1, TEXT_EMBED]},
         }
     raise ValueError(f"unknown tower {name!r}")
