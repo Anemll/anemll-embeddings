@@ -23,6 +23,7 @@ from src.audio_export_patches import (  # noqa: E402
 from src.vision_export_patches import (  # noqa: E402
     _recomposition_frequencies_ane,
     embedding_from_int_indices,
+    rotate_half_matmul,
 )
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
@@ -205,6 +206,16 @@ def test_rel_shift_matmul_matches_hf() -> None:
         _fail(f"rel_shift {tuple(got.shape)} != {tuple(ref.shape)}")
 
 
+def test_rotate_half_matmul_matches_cat() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(2, 4, 8)
+    half = x.shape[-1] // 2
+    ref = torch.cat((-x[..., half:], x[..., :half]), dim=-1)
+    got = rotate_half_matmul(x)
+    if got.shape != ref.shape or not torch.allclose(got, ref):
+        _fail("rotate_half_matmul != cat((-x2, x1))")
+
+
 def test_recomposition_matches_cat() -> None:
     torch.manual_seed(0)
     freq = torch.randn(1, 8, 2, 4)
@@ -244,6 +255,7 @@ def main() -> int:
         test_embedding_from_int_indices_matches_embedding,
         test_embedding_from_int_indices_export_has_no_i64,
         test_rel_shift_matmul_matches_hf,
+        test_rotate_half_matmul_matches_cat,
         test_recomposition_matches_cat,
         test_io_specs,
     ]

@@ -90,6 +90,20 @@ def _apply_multidimensional_rope_ane(
     return y0 @ torch.cat([eye, zeros], dim=1) + y1 @ torch.cat([zeros, eye], dim=1)
 
 
+def rotate_half_matmul(x: torch.Tensor) -> torch.Tensor:
+    """``cat((-x2, x1))`` via a ``[D, D]`` matmul — no last-dim slice+cat."""
+    dim = int(x.shape[-1])
+    if dim % 2:
+        raise ValueError(f"rotate_half last dim {dim} is not even")
+    half = dim // 2
+    eye = torch.eye(half, device=x.device, dtype=x.dtype)
+    zeros = torch.zeros(half, half, device=x.device, dtype=x.dtype)
+    rot = torch.cat(
+        [torch.cat([zeros, eye], dim=1), torch.cat([-eye, zeros], dim=1)], dim=0
+    )
+    return x @ rot
+
+
 def apply_vision_ane_embed_patch() -> dict[str, Any]:
     """Pos one-hot + RoPE without gather / concat_slice."""
     import transformers.models.gemma4.modeling_gemma4 as g4
@@ -100,8 +114,10 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
     if _ORIG_APPLY_ROPE is None:
         _ORIG_APPLY_ROPE = g4.apply_multidimensional_rope
     g4.apply_multidimensional_rope = _apply_multidimensional_rope_ane
+    g4.rotate_half = rotate_half_matmul
     return {
         "patched": 1,
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
+        "rotate_half": "matmul",
     }
