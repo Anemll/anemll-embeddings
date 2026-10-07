@@ -135,13 +135,16 @@ def _make_eager_attention(batch: int, seq_len: int):
         n_rep = n_heads // n_kv
         if scaling is None:
             scaling = head_dim**-0.5
-        if n_rep == 1:
-            key_states = key
-            value_states = value
-        else:
-            key_states = repeat_kv_index(key, n_rep)
-            value_states = repeat_kv_index(value, n_rep)
-        attn_weights = torch.matmul(query, bake_k_layout(key_states)) * scaling
+        # GQA: fold the n_rep query heads of each KV head into the sequence
+        # axis, [B, n_kv, n_rep*S, D] (head h = kv * n_rep + r). No K/V
+        # repeat: index_select was an si32 gather_along_axis, which the ANE
+        # rejects. Q/K/V keep the same head count, so the sdpa fusion sees
+        # matching groups.
+        q_len = int(query.shape[-2])
+        query = query.reshape(batch, n_kv, n_rep * q_len, head_dim)
+        if attention_mask is not None and n_rep > 1 and int(attention_mask.shape[-2]) == q_len:
+            attention_mask = torch.cat([attention_mask] * n_rep, dim=-2)
+        attn_weights = torch.matmul(query, bake_k_layout(key)) * scaling
         if softcap is not None:
             attn_weights = attn_weights / softcap
             attn_weights = torch.tanh(attn_weights)
@@ -151,7 +154,8 @@ def _make_eager_attention(batch: int, seq_len: int):
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
         if dropout and module.training:
             attn_weights = F.dropout(attn_weights, p=float(dropout), training=True)
-        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = torch.matmul(attn_weights, value).reshape(batch, n_heads, q_len, head_dim)
+        attn_weights = attn_weights.reshape(batch, n_heads, q_len, -1)
         # [B, H, S, D] → [B, S, H, D]. One-hot, not transpose: that transpose
         # fused with the head reshape as GPU ``reshape->permute``.
         attn_output = swap_mid_dims(attn_output).contiguous()

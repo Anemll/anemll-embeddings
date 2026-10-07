@@ -24,7 +24,13 @@ AUDIO_PAST = 12  # attention_context_left - 1
 AUDIO_FUTURE = 0
 AUDIO_LEFT_WINDOW = 12
 AUDIO_RIGHT_WINDOW = 0
-AUDIO_INVALID = -1.0e9  # config.attention_invalid_logits_value
+# config.attention_invalid_logits_value is -1e9, which is -inf in fp16 (the
+# mask then makes NaN). Logits are softcapped to ±50, so -1e4 already gives
+# exp() == 0 for masked keys.
+AUDIO_INVALID = -1.0e4
+# Largest integer range fp16 holds exactly; one-hot index math must stay below it.
+FP16_EXACT_INT = 2048
+FP16_MAX = 65504.0
 
 
 def gather_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
@@ -69,7 +75,7 @@ def window_onehot(
     starts = torch.arange(n_win, device=device, dtype=dtype) * float(step)
     offsets = torch.arange(window, device=device, dtype=dtype)
     idx = starts.unsqueeze(1) + offsets.unsqueeze(0)
-    return torch.clamp(1.0 - (idx.unsqueeze(-1) - slots).abs(), 0, 1)
+    return torch.relu(1.0 - (idx.unsqueeze(-1) - slots).abs())
 
 
 def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
@@ -82,10 +88,15 @@ def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
     if x.ndim != 4:
         raise ValueError(f"swap_mid_dims rank {x.ndim} (want [N, A, B, D])")
     batch, dim_a, dim_b, last = (int(s) for s in x.shape)
+    if dim_a * dim_b > FP16_EXACT_INT:
+        # fp16 indices past 2048 are inexact (the one-hot comes out wrong after
+        # cast16) and the (A*B)^2 one-hot is huge: the conv stem's swap was
+        # 17920^2. Use a plain transpose.
+        return x.transpose(1, 2).contiguous()
     src_idx = [a * dim_b + b for b in range(dim_b) for a in range(dim_a)]
     src = torch.tensor(src_idx, device=x.device, dtype=x.dtype)
     slots = torch.arange(dim_a * dim_b, device=x.device, dtype=x.dtype)
-    onehot = torch.clamp(1.0 - (src.unsqueeze(-1) - slots).abs(), 0, 1)
+    onehot = torch.relu(1.0 - (src.unsqueeze(-1) - slots).abs())
     flat = x.reshape(batch, dim_a * dim_b, last)
     return (onehot @ flat).reshape(batch, dim_b, dim_a, last)
 
@@ -94,22 +105,16 @@ def nchw_to_nhwc(x: torch.Tensor) -> torch.Tensor:
     """``[B, C, H, W] → [B, H, W, C]`` via one-hot swaps (no ``permute``)."""
     if x.ndim != 4:
         raise ValueError(f"nchw_to_nhwc rank {x.ndim}")
-    batch, channels, height, width = (int(s) for s in x.shape)
-    mid = swap_mid_dims(x)
-    return swap_mid_dims(mid.reshape(batch * height, channels, width, 1)).reshape(
-        batch, height, width, channels
-    )
+    # A plain permute: the one-hot swaps here were (C*H)^2 and a 1024^2
+    # matrix-vector matmul the ANE rejects ("Unsupported mps.matmul").
+    return x.permute(0, 2, 3, 1).contiguous()
 
 
 def nhwc_to_nchw(x: torch.Tensor) -> torch.Tensor:
     """``[B, H, W, C] → [B, C, H, W]`` via one-hot swaps (no ``permute``)."""
     if x.ndim != 4:
         raise ValueError(f"nhwc_to_nchw rank {x.ndim}")
-    batch, height, width, channels = (int(s) for s in x.shape)
-    mid = swap_mid_dims(x.reshape(batch * height, width, channels, 1)).reshape(
-        batch, height, channels, width
-    )
-    return swap_mid_dims(mid)
+    return x.permute(0, 3, 1, 2).contiguous()
 
 
 def swap_last_two(x: torch.Tensor) -> torch.Tensor:
@@ -136,7 +141,7 @@ def stride_select(x: torch.Tensor, step: int) -> torch.Tensor:
     dtype = x.dtype if x.is_floating_point() else torch.float32
     slots = torch.arange(seq, device=x.device, dtype=dtype)
     idx = torch.arange(n_keep, device=x.device, dtype=dtype) * float(step)
-    onehot = torch.clamp(1.0 - (idx.unsqueeze(1) - slots).abs(), 0, 1)
+    onehot = torch.relu(1.0 - (idx.unsqueeze(1) - slots).abs())
     flat = x.reshape(int(x.shape[0]), seq, -1).to(dtype=dtype)
     got = onehot.reshape(1, n_keep, seq) @ flat
     return got.reshape(int(x.shape[0]), n_keep, *x.shape[2:]).to(dtype=x.dtype)
@@ -157,7 +162,7 @@ def prefix_rows(x: torch.Tensor, keep: int) -> torch.Tensor:
     dtype = x.dtype if x.is_floating_point() else torch.float32
     slots = torch.arange(seq, device=x.device, dtype=dtype)
     idx = torch.arange(keep, device=x.device, dtype=dtype)
-    onehot = torch.clamp(1.0 - (idx.unsqueeze(1) - slots).abs(), 0, 1)
+    onehot = torch.relu(1.0 - (idx.unsqueeze(1) - slots).abs())
     flat = x.reshape(int(x.shape[0]), seq, -1).to(dtype=dtype)
     got = onehot.reshape(1, keep, seq) @ flat
     return got.reshape(int(x.shape[0]), keep, *x.shape[2:]).to(dtype=x.dtype)
@@ -196,6 +201,33 @@ def bind_glu_half_weights(module: torch.nn.Module) -> int:
             )
         bound += 1
     return bound
+
+
+def bind_fp16_audio_constants(module: torch.nn.Module) -> dict[str, int]:
+    """Make the audio tower's fixed constants fp16-legal before export.
+
+    * ``gradient_clipping`` is 1e10 (not representable in fp16), so cast16
+      kept those clamps in f32 and the ANE refused them. Activations stay far
+      below 65504, so clamping at the fp16 max is the same no-op.
+    * The rel-pos sinusoid depends only on ``context_size``; bake it as a
+      buffer so ``relative_k_proj`` reads a constant, not GPU sin/cos.
+    """
+    import transformers.models.gemma4.modeling_gemma4 as g4
+
+    clipped = 0
+    baked = 0
+    for mod in module.modules():
+        if hasattr(mod, "gradient_clipping"):
+            mod.gradient_clipping = min(float(mod.gradient_clipping), FP16_MAX)
+            clipped += 1
+        if isinstance(mod, g4.Gemma4AudioRelPositionalEncoding):
+            mod._buffers.pop("_pos_embed_const", None)
+            probe = torch.zeros(1, dtype=torch.float32)
+            with torch.no_grad():
+                pos = _rel_pos_forward(mod, probe).detach().clone()
+            mod.register_buffer("_pos_embed_const", pos, persistent=False)
+            baked += 1
+    return {"gradient_clipping": clipped, "rel_pos": baked}
 
 
 def glu_from_bound_halves(mod: Any, x: torch.Tensor) -> torch.Tensor:
@@ -350,7 +382,7 @@ def rel_shift_onehot(
     valid = torch.clamp(float(pos_len) - col, 0, 1)
     src_idx = row * float(pos_len) + col
     dest = torch.arange(src, device=device, dtype=dtype)
-    return torch.clamp(1.0 - (src_idx.unsqueeze(1) - dest).abs(), 0, 1) * valid.unsqueeze(1)
+    return torch.relu(1.0 - (src_idx.unsqueeze(1) - dest).abs()) * valid.unsqueeze(1)
 
 
 def _rel_shift_baked(self, x: torch.Tensor) -> torch.Tensor:
@@ -464,7 +496,7 @@ def blocked_additive_attention_mask(
     )
     offsets = torch.arange(context, device=keep4.device, dtype=keep4.dtype)
     idx = starts.unsqueeze(1) + offsets.unsqueeze(0)
-    onehot_kt = torch.clamp(1.0 - (slots.view(1, -1, 1) - idx.unsqueeze(1)).abs(), 0, 1)
+    onehot_kt = torch.relu(1.0 - (slots.view(1, -1, 1) - idx.unsqueeze(1)).abs())
     right = onehot_kt.unsqueeze(0).expand(batch, -1, -1, -1).reshape(
         batch * num_blocks, padded_keys, context
     )
@@ -571,6 +603,9 @@ def _rel_pos_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
     ``Incompatible element type for ANE`` leftover (not fp16/si8/si16).
     It is mid-graph, not package I/O — do not I/O-cast it.
     """
+    const = getattr(self, "_pos_embed_const", None)
+    if const is not None:
+        return const.to(dtype=hidden_states.dtype)
     n_pos = int(self.context_size) // 2 + 1
     dtype = hidden_states.dtype
     position_ids = rel_pos_ids_float(n_pos, device=hidden_states.device, dtype=dtype)
@@ -626,7 +661,8 @@ def _audio_model_forward(
         max_future_horizon=int(self.config.attention_context_right),
         left_window=int(self.config.attention_context_left) - 1,
         right_window=int(self.config.attention_context_right),
-        invalid=float(self.config.attention_invalid_logits_value),
+        # Not config.attention_invalid_logits_value (-1e9): see AUDIO_INVALID.
+        invalid=AUDIO_INVALID,
     )
     for encoder_layer in self.layers[: self.config.num_hidden_layers]:
         hidden_states = encoder_layer(
@@ -656,6 +692,25 @@ def _subsample_conv_forward(
     return self.input_proj_linear(hidden_states), mask
 
 
+def layer_norm_fp16_safe(x: torch.Tensor, norm: nn.LayerNorm) -> torch.Tensor:
+    """Last-dim ``nn.LayerNorm`` computed on ``x / max|x|``.
+
+    The conv stem output is large enough that the variance overflows fp16.
+    LayerNorm is scale-invariant, so with ``inv = 1 / max|x|`` and eps as
+    ``eps * inv²`` this is exact; zero rows stay zero (max clamped to 1e-3).
+    """
+    inv = torch.reciprocal(x.abs().amax(-1, keepdim=True).clamp_min(1e-3))
+    xs = x * inv
+    centered = xs - xs.mean(-1, keepdim=True)
+    var = (centered * centered).mean(-1, keepdim=True)
+    out = centered * torch.rsqrt(var + norm.eps * inv * inv)
+    if norm.weight is not None:
+        out = out * norm.weight
+    if norm.bias is not None:
+        out = out + norm.bias
+    return out
+
+
 def _subsample_layer_forward(
     self, hidden_states: torch.Tensor, mask: torch.Tensor | None = None
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
@@ -664,7 +719,7 @@ def _subsample_layer_forward(
         mask = mask.to(device=hidden_states.device)
         hidden_states = hidden_states * mask[:, None, :, None]
     hidden_states = self.conv(hidden_states.to(self.conv.weight.dtype))
-    hidden_states = self.act(self.norm(nchw_to_nhwc(hidden_states)))
+    hidden_states = self.act(layer_norm_fp16_safe(nchw_to_nhwc(hidden_states), self.norm))
     hidden_states = nhwc_to_nchw(hidden_states)
     if mask is not None:
         mask = stride_select(mask, 2)

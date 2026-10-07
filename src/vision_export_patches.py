@@ -16,6 +16,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+# Longest image side in patches for 280 soft tokens with a 3×3 pooler.
+VISION_MAX_SIDE = 280 * 3
 
 
 def embedding_from_int_indices(idx: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
@@ -28,14 +30,18 @@ def embedding_from_int_indices(idx: torch.Tensor, table: torch.Tensor) -> torch.
     dtype = table.dtype
     slots = torch.arange(vocab, device=idx.device, dtype=dtype)
     idx_f = idx.to(dtype=dtype).clamp(min=0)
-    onehot = torch.clamp(1.0 - (idx_f.unsqueeze(-1) - slots).abs(), 0, 1)
+    # relu, not clamp(0, 1): 1 - |d| <= 1 anyway, and on the ANE (fp16) a
+    # clamp feeding only this matmul gave wrong sums (x_emb absmax 95 vs 0.35).
+    onehot = torch.relu(1.0 - (idx_f.unsqueeze(-1) - slots).abs())
     return onehot @ table
 
 
 def _position_embeddings_ane(
     self, pixel_position_ids: torch.Tensor, padding_positions: torch.Tensor
 ) -> torch.Tensor:
-    table = self.position_embedding_table
+    # The processor caps a side at (2520 // 3²) · 3 = 840 patches, so rows
+    # past 840 are never hit. The full 10240-row one-hot placed on the GPU.
+    table = self.position_embedding_table[:, :VISION_MAX_SIDE]
     x_emb = embedding_from_int_indices(pixel_position_ids[..., 0], table[0])
     y_emb = embedding_from_int_indices(pixel_position_ids[..., 1], table[1])
     position_embeddings = x_emb + y_emb
@@ -160,6 +166,13 @@ def _vision_attn_forward(
     mask = attention_mask
     if mask is not None and mask.ndim == 3:
         mask = mask.reshape(int(mask.shape[0]), 1, int(mask.shape[-2]), int(mask.shape[-1]))
+    if batch != 1:
+        raise ValueError(f"vision attention export is batch 1, got {batch}")
+    # MPSGraph fuses this into sdpa. With 4-D heads it saw K as 1x1xSxD
+    # and Q/V as SxD, and the ANE refuses sdpa unless K and V match.
+    # Keep Q, K and V all [S, D].
+    if mask is not None:
+        mask = mask.reshape(-1, seq_len)
     kv_heads = n_kv
     for head in range(n_heads):
         take_q = _head_take(
@@ -168,10 +181,10 @@ def _vision_attn_forward(
         take_kv = _head_take(
             kv_heads, head_dim, head % kv_heads, device=key_flat.device, dtype=key_flat.dtype
         )
-        qh = (query_flat @ take_q).reshape(batch, 1, seq_len, head_dim)
-        kh = (key_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
-        vh = (value_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
-        scores = torch.matmul(qh, kh.transpose(-1, -2)) * scale
+        qh = (query_flat @ take_q).reshape(seq_len, head_dim)
+        kh = (key_flat @ take_kv).reshape(seq_len, head_dim)
+        vh = (value_flat @ take_kv).reshape(seq_len, head_dim)
+        scores = torch.matmul(qh, kh.transpose(0, 1)) * scale
         if mask is not None:
             scores = scores + mask
         out_h = torch.matmul(torch.softmax(scores, dim=-1), vh).reshape(batch, seq_len, head_dim)
@@ -180,6 +193,35 @@ def _vision_attn_forward(
         attn_output = attn_output + F.pad(out_h, (left, right))
     attn_output = self.o_proj(attn_output)
     return attn_output, attn_weights
+
+
+def _rms_norm_fp16_safe(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    """``x * (mean(x²) + eps)^-½`` computed on ``x / max|x|`` (forge ``rms_robust``).
+
+    Vision activations reach ~900, so ``x²`` overflows fp16 (65504) and the
+    norm returns 0. Squares of ``x / m`` stay in [0, 1]; ``eps / m²`` keeps
+    eps exact, and zero rows stay zero (``m`` is clamped to 1e-3).
+    """
+    # reciprocal + multiply, not divide: the ANE rejects a divide whose
+    # operands have different ranks (seen as 320x512 / 1x320x1 in text_embeds).
+    inv = torch.reciprocal(hidden_states.abs().amax(-1, keepdim=True).clamp_min(1e-3))
+    xs = hidden_states * inv
+    return xs * torch.rsqrt((xs * xs).mean(-1, keepdim=True) + self.eps * inv * inv)
+
+
+def apply_fp16_safe_rms_norm_patch() -> list[str]:
+    """Swap ``_norm`` on every Gemma RMSNorm class an export can reach.
+
+    ``embed_vision`` / ``embed_audio`` use the EmbeddingGemma2 class, the
+    towers use Gemma4's; both have the same ``_norm``.
+    """
+    import transformers.models.embedding_gemma2.modeling_embedding_gemma2 as eg2
+    import transformers.models.gemma4.modeling_gemma4 as g4
+
+    classes = (g4.Gemma4RMSNorm, eg2.EmbeddingGemma2RMSNorm)
+    for cls in classes:
+        cls._norm = _rms_norm_fp16_safe
+    return [cls.__name__ for cls in classes]
 
 
 def apply_vision_ane_embed_patch() -> dict[str, Any]:
@@ -194,7 +236,9 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
     g4.apply_multidimensional_rope = _apply_multidimensional_rope_ane
     g4.rotate_half = rotate_half_matmul
     g4.Gemma4VisionAttention.forward = _vision_attn_forward
+    norms = apply_fp16_safe_rms_norm_patch()
     return {
+        "rms_norm": f"max_scaled_fp16_safe:{','.join(norms)}",
         "patched": 1,
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",

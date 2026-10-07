@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.audio_export_patches import (  # noqa: E402
     apply_audio_export_patches,
+    bind_fp16_audio_constants,
     bind_glu_half_weights,
 )
 from src.vision_export_patches import apply_vision_ane_embed_patch  # noqa: E402
@@ -240,6 +241,7 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
     wrapped = AudioSoftTokens(auto.audio_tower, auto.embed_audio).eval()
     n_glu = bind_glu_half_weights(wrapped)
     print(f"audio glu halves bound={n_glu}")
+    print(f"audio fp16 constants={bind_fp16_audio_constants(wrapped)}")
     feat, mask = audio_example()
     with torch.no_grad():
         soft = wrapped(feat, mask)
