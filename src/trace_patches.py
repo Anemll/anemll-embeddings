@@ -6,7 +6,10 @@ coremltools 9.0 cannot const-fold ``int(non_scalar_tensor)`` from
 Preferred-ANE on ``text_embeds_s320`` names ``GPU_region_0`` outputs
 ``reshape->permute`` (head ``view`` + ``transpose(1, 2)``) and
 ``strided_slice->reshape`` (PLE ``[:, :, layer, :]``). Head layout uses
-``swap_mid_dims``. Each PLE layer is a size-24 one-hot matmul.
+``swap_mid_dims``. Each PLE layer is a size-24 one-hot matmul. K's last-two
+transpose is a factored one-hot (``320×256`` and ``320×512``). The two
+``broadcasting_divide`` ops are the mask mean and the L2 norm, not a static
+scale, so they stay.
 """
 
 from __future__ import annotations
@@ -15,12 +18,49 @@ import transformers.models.embedding_gemma2.modeling_embedding_gemma2 as eg2
 import torch
 import torch.nn.functional as F
 
-from src.audio_export_patches import swap_mid_dims
+from src.audio_export_patches import swap_last_two, swap_mid_dims
 
 
 def _rotate_half_chunk(x: torch.Tensor) -> torch.Tensor:
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)
+
+
+def _factor_transpose_last(
+    x: torch.Tensor, s_factors: tuple[int, int], d_factors: tuple[int, int]
+) -> torch.Tensor:
+    """``[..., S, D] → [..., D, S]`` by four small one-hot swaps.
+
+    ``S = s1*s0`` and ``D = d1*d0``. Each swap's one-hot is ``(a*b)²`` for
+    factors of 16–32, not ``(S*D)²``.
+    """
+    s1, s0 = s_factors
+    d1, d0 = d_factors
+    lead = x.shape[:-2]
+    n = 1
+    for size in lead:
+        n *= int(size)
+    t = x.reshape(n, s1, s0, d1, d0)
+    t = swap_mid_dims(t.reshape(n * s1, s0, d1, d0)).reshape(n, s1, d1, s0, d0)
+    t = swap_mid_dims(t.reshape(n, s1, d1, s0 * d0)).reshape(n, d1, s1, s0, d0)
+    t = swap_mid_dims(t.reshape(n * d1 * s1, s0, d0, 1)).reshape(n, d1, s1, d0, s0)
+    t = swap_mid_dims(t.reshape(n * d1, s1, d0, s0)).reshape(n, d1, d0, s1, s0)
+    return t.reshape(*lead, d1 * d0, s1 * s0)
+
+
+def bake_k_layout(key: torch.Tensor) -> torch.Tensor:
+    """``[B, H, S, D] → [B, H, D, S]`` with no ``transpose``.
+
+    Live activation transposes were 20× ``1x4x320x256`` and 4× ``1x4x320x512``.
+    A single ``(S*D)²`` one-hot does not fit; factor those two shapes.
+    """
+    seq = int(key.shape[-2])
+    dim = int(key.shape[-1])
+    if seq == 320 and dim == 256:
+        return _factor_transpose_last(key, (20, 16), (16, 16))
+    if seq == 320 and dim == 512:
+        return _factor_transpose_last(key, (20, 16), (32, 16))
+    return swap_last_two(key)
 
 
 def repeat_kv_index(x: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -62,7 +102,7 @@ def _make_eager_attention(batch: int, seq_len: int):
         else:
             key_states = repeat_kv_index(key, n_rep)
             value_states = repeat_kv_index(value, n_rep)
-        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+        attn_weights = torch.matmul(query, bake_k_layout(key_states)) * scaling
         if softcap is not None:
             attn_weights = attn_weights / softcap
             attn_weights = torch.tanh(attn_weights)
@@ -96,7 +136,6 @@ def _make_attention_forward(batch: int, seq_len: int):
         n_kv = int(self.k_proj.out_features) // head_dim
         # Heads-last view, then one-hot swap to [B, H, S, D]. Do not
         # ``transpose(1, 2)`` — that pair is GPU ``reshape->permute``.
-        # K's last-two transpose stays: a [320, 256] one-hot does not fit.
         query_states = swap_mid_dims(
             self.q_proj(hidden_states).reshape(batch, seq_len, n_heads, head_dim)
         )

@@ -37,6 +37,7 @@ from src.audio_export_patches import (  # noqa: E402
 from src.trace_patches import (  # noqa: E402
     _make_attention_forward,
     _take_ple_layer,
+    bake_k_layout,
 )
 from src.vision_export_patches import (  # noqa: E402
     _apply_multidimensional_rope_ane,
@@ -636,6 +637,31 @@ def test_text_attn_swap_matches_transpose() -> None:
         _fail("text swap_mid attn != transpose+matmul")
 
 
+def test_bake_k_layout_matches_transpose() -> None:
+    torch.manual_seed(0)
+    for shape in ((1, 4, 320, 256), (1, 4, 320, 512), (1, 2, 5, 4)):
+        x = torch.randn(*shape)
+        got = bake_k_layout(x)
+        ref = x.transpose(-1, -2)
+        if got.shape != ref.shape or not torch.equal(got, ref):
+            _fail(f"bake_k_layout != transpose {shape}")
+
+
+def test_bake_k_layout_export_has_no_transpose() -> None:
+    class _M(torch.nn.Module):
+        def forward(self, key: torch.Tensor) -> torch.Tensor:
+            return bake_k_layout(key)
+
+    ep = torch.export.export(_M().eval(), (torch.randn(1, 4, 320, 256),), strict=False)
+    bad = [
+        str(n.target)
+        for n in ep.graph.nodes
+        if "transpose" in str(n.target) or "permute" in str(n.target)
+    ]
+    if bad:
+        _fail(f"transpose still in baked K export: {bad}")
+
+
 def test_text_attn_export_has_no_head_transpose() -> None:
     class _Attn(torch.nn.Module):
         def __init__(self) -> None:
@@ -735,6 +761,8 @@ def main() -> int:
         test_take_ple_layer_matches_index,
         test_take_ple_layer_export_has_no_slice,
         test_text_attn_swap_matches_transpose,
+        test_bake_k_layout_matches_transpose,
+        test_bake_k_layout_export_has_no_transpose,
         test_text_attn_export_has_no_head_transpose,
         test_io_specs,
     ]
