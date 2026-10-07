@@ -32,6 +32,7 @@ from src.vision_export_patches import apply_vision_ane_embed_patch  # noqa: E402
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
+    AUDIO_SOFT_TOKENS,
     AudioSoftTokens,
     VISION_SOFT_TOKENS,
     VisionSoftTokens,
@@ -238,6 +239,8 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
     with torch.no_grad():
         soft = wrapped(feat, mask)
     print(f"audio eager soft_tokens={tuple(soft.shape)} (subsampled from {AUDIO_FRAMES}x{AUDIO_FEAT})")
+    if tuple(soft.shape) != (1, 1, AUDIO_SOFT_TOKENS, 512):
+        raise RuntimeError(f"unexpected audio out {tuple(soft.shape)}")
     ep_path = out_dir / "audio_s280.pt2"
     ep, save_err = _export_program(wrapped, (feat, mask), ep_path)
     if save_err and ep_path.is_file():
@@ -447,7 +450,7 @@ def main() -> int:
             "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
-            "Audio: one-hot K/V windows; heads-first 4D attn (no 5D permute).",
+            "Audio: 4-D NCHW I/O (expandDims); attn stays 4-D (no 5-D permute).",
             "Vision: f16 pos I/O; one-hot pos embed; RoPE without concat_slice.",
         ],
     }

@@ -17,8 +17,11 @@ from src.coreai_host import (  # noqa: E402
     IMAGE_SLOTS,
     has_caption_words,
     uses_text_package,
+    adapt_audio_features_nchw,
+    adapt_audio_mask_nchw,
     adapt_vision_pixels,
     adapt_vision_position_ids,
+    audio_soft_from_nchw,
     crop_audio_soft_to_src,
     crop_vision_soft_to_valid,
     expand_media_placeholders,
@@ -145,6 +148,24 @@ def test_pad_embeds() -> None:
         _fail("S must fit mm_mix 288")
 
 
+def test_audio_nchw_adapt() -> None:
+    feat = np.ones((1, 99, 128), dtype=np.float32)
+    mask = np.ones((1, 99), dtype=np.float32)
+    nchw = adapt_audio_features_nchw(feat)
+    nmask = adapt_audio_mask_nchw(mask)
+    if nchw.shape != (1, 1, 99, 128) or nchw.dtype != np.float16:
+        _fail(str(nchw.shape))
+    if nmask.shape != (1, 1, 99, 1) or nmask.dtype != np.float16:
+        _fail(str(nmask.shape))
+    soft = np.arange(70 * 3, dtype=np.float32).reshape(1, 1, 70, 3)
+    got = audio_soft_from_nchw(soft)
+    if got.shape != (1, 70, 3) or not np.array_equal(got, soft[:, 0]):
+        _fail(str(got.shape))
+    cropped = crop_audio_soft_to_src(soft, 99)
+    if cropped.shape != (1, 25, 3):
+        _fail(str(cropped.shape))
+
+
 def test_audio_pad() -> None:
     feat = np.ones((1, 99, 128), dtype=np.float32)
     x, m = pad_audio_to_package(feat)
@@ -164,6 +185,7 @@ def main() -> int:
         test_crop_trailing_vision_pads,
         test_crop_audio_ceil_frames,
         test_pad_embeds,
+        test_audio_nchw_adapt,
         test_audio_pad,
     ]
     for fn in tests:

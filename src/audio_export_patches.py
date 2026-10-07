@@ -2,9 +2,9 @@
 
 * ``unfold`` → ``index_select`` (convert rejects ``aten.unfold.default``).
 * HF ``create_bidirectional_mask`` + ``_convert_4d_mask_to_blocked_5d`` emit
-  ``i1`` (``memref<1x1x6x12x84xi1>``, ``memref<1x1x1x1x70xi1>``). ANE cannot
-  reshape i1, so preferred-ANE falls through to GPU. Build a float additive
-  5D blocked mask instead and add it (no ``masked_fill`` / ``logical_not``).
+  ``i1``. ANE cannot reshape i1, so preferred-ANE falls through to GPU.
+  Build a float additive 4-D blocked mask instead (no ``masked_fill`` /
+  ``logical_not`` / 5-D ``permute``). Package I/O is 4-D NCHW expandDims.
 """
 
 from __future__ import annotations
@@ -69,10 +69,11 @@ def window_onehot(
 
 
 def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
-    """``[N, A, B, D] → [N, B, A, D]`` via one-hot matmul (no 5-D permute).
+    """``[N, A, B, D] → [N, B, A, D]`` via left one-hot matmul (no transpose).
 
     Audio leftover ``GPU_region_0`` was ``permute(0,3,1,2,4)`` on
     ``[B, n, c, H, D] ↔ [B, H, n, c, D]``. Swap heads/seq in 4-D instead.
+    Left-multiply so Core AI does not insert ``reshape→transpose``.
     """
     if x.ndim != 4:
         raise ValueError(f"swap_mid_dims rank {x.ndim} (want [N, A, B, D])")
@@ -82,8 +83,7 @@ def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
     slots = torch.arange(dim_a * dim_b, device=x.device, dtype=x.dtype)
     onehot = torch.clamp(1.0 - (src.unsqueeze(-1) - slots).abs(), 0, 1)
     flat = x.reshape(batch, dim_a * dim_b, last)
-    out = flat.transpose(1, 2) @ onehot.transpose(0, 1)
-    return out.transpose(1, 2).reshape(batch, dim_b, dim_a, last)
+    return (onehot @ flat).reshape(batch, dim_b, dim_a, last)
 
 
 def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
@@ -98,8 +98,8 @@ def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     onehot = window_onehot(seq_len, window, step, device=x.device, dtype=x.dtype)
     n_win = int(onehot.shape[0])
     flat = x.reshape(x.shape[0], seq_len, -1)
-    gathered = flat.transpose(1, 2) @ onehot.reshape(-1, seq_len).transpose(0, 1)
-    return gathered.transpose(1, 2).reshape(x.shape[0], n_win, window, *x.shape[2:])
+    gathered = onehot.reshape(-1, seq_len) @ flat
+    return gathered.reshape(x.shape[0], n_win, window, *x.shape[2:])
 
 
 def _rel_shift_matmul(self, x: torch.Tensor) -> torch.Tensor:
@@ -157,10 +157,10 @@ def blocked_additive_attention_mask(
     right_window: int = AUDIO_RIGHT_WINDOW,
     invalid: float = AUDIO_INVALID,
 ) -> torch.Tensor:
-    """2D keep ``[B, S]`` → 5D additive ``[B, 1, n_blocks, chunk, context]``.
+    """2D keep ``[B, S]`` → 4D additive ``[B, n_blocks, chunk, context]``.
 
     Matches HF ``create_bidirectional_mask`` (key pad + sliding window) then
-    ``_convert_4d_mask_to_blocked_5d``, but stays float so ANE can reshape.
+    ``_convert_4d_mask_to_blocked_5d``, but stays float 4-D (no 5-D permute).
     """
     if keep.ndim != 2:
         raise ValueError(f"keep rank {keep.ndim} (want [B, S])")
@@ -180,25 +180,25 @@ def blocked_additive_attention_mask(
     padded_seq = num_blocks * chunk_size
     pad_amount = padded_seq - seq_len
     keep4 = F.pad(keep4, (0, pad_amount, 0, pad_amount), value=0.0)
-    keep5 = keep4.reshape(batch, 1, num_blocks, chunk_size, padded_seq)
-    keep5 = F.pad(keep5, (max_past_horizon, max_future_horizon), value=0.0)
+    keep4 = keep4.reshape(batch, num_blocks, chunk_size, padded_seq)
+    keep4 = F.pad(keep4, (max_past_horizon, max_future_horizon), value=0.0)
     context = chunk_size + max_past_horizon + max_future_horizon
-    # One-hot matmul on the key axis — no gather / slice+cat layout I/O.
-    # Block b takes last-dim [b*chunk : b*chunk+context] of the padded keys.
-    padded_keys = int(keep5.shape[-1])
-    onehot = window_onehot(
-        padded_keys, context, chunk_size, device=keep5.device, dtype=keep5.dtype
+    # One-hot matmul on the key axis — no gather / 5-D layout I/O.
+    padded_keys = int(keep4.shape[-1])
+    left = keep4.reshape(batch * num_blocks, chunk_size, padded_keys)
+    # [n, K, ctx] one-hot so left @ right needs no activation transpose.
+    slots = torch.arange(padded_keys, device=keep4.device, dtype=keep4.dtype)
+    starts = torch.arange(num_blocks, device=keep4.device, dtype=keep4.dtype) * float(
+        chunk_size
     )
-    # keep5 [B, 1, n_blocks, chunk, K] @ onehot^T [n_blocks, K, context]
-    left = keep5.reshape(batch * num_blocks, chunk_size, padded_keys)
-    right = (
-        onehot.transpose(-1, -2)
-        .unsqueeze(0)
-        .expand(batch, -1, -1, -1)
-        .reshape(batch * num_blocks, padded_keys, context)
+    offsets = torch.arange(context, device=keep4.device, dtype=keep4.dtype)
+    idx = starts.unsqueeze(1) + offsets.unsqueeze(0)
+    onehot_kt = torch.clamp(1.0 - (slots.view(1, -1, 1) - idx.unsqueeze(1)).abs(), 0, 1)
+    right = onehot_kt.unsqueeze(0).expand(batch, -1, -1, -1).reshape(
+        batch * num_blocks, padded_keys, context
     )
-    keep5 = (left @ right).reshape(batch, 1, num_blocks, chunk_size, context)
-    return (1.0 - keep5) * float(invalid)
+    keep4 = (left @ right).reshape(batch, num_blocks, chunk_size, context)
+    return (1.0 - keep4) * float(invalid)
 
 
 def _audio_attn_forward(
@@ -221,7 +221,8 @@ def _audio_attn_forward(
     query_states = query_states * self.q_scale * F.softplus(self.per_dim_scale)
     key_states = key_states * self.k_scale
 
-    # Heads-first 4-D: [B, S, H, D] → [B, H, S, D] without permute(0,3,1,2,4).
+    # Heads-first 4-D only: [B, S, H, D] → [B, H, S, D] → [BH, n, c, D].
+    # Never materialize [B, H, n, c, D] (that 5-D reshape became permute).
     query_states = swap_mid_dims(query_states)
     key_states = swap_mid_dims(key_states)
     value_states = swap_mid_dims(value_states)
@@ -229,7 +230,7 @@ def _audio_attn_forward(
     num_blocks = (seq_length + chunk - 1) // chunk
     q_pad = num_blocks * chunk - seq_length
     query_states = F.pad(query_states, (0, 0, 0, q_pad))
-    query_states = query_states.reshape(batch_size, num_heads, num_blocks, chunk, head_dim)
+    q4 = query_states.reshape(batch_size * num_heads, num_blocks, chunk, head_dim)
 
     key_states = F.pad(
         key_states,
@@ -240,27 +241,30 @@ def _audio_attn_forward(
         (0, 0, self.max_past_horizon, self.max_future_horizon + chunk - 1),
     )
     pad_len = int(key_states.shape[2])
-    key_states = slice_seq_windows(
+    k4 = slice_seq_windows(
         key_states.reshape(batch_size * num_heads, pad_len, head_dim), context, chunk
-    ).reshape(batch_size, num_heads, num_blocks, context, head_dim)
-    value_states = slice_seq_windows(
+    )
+    v4 = slice_seq_windows(
         value_states.reshape(batch_size * num_heads, pad_len, head_dim), context, chunk
-    ).reshape(batch_size, num_heads, num_blocks, context, head_dim)
-
-    q4 = query_states.reshape(batch_size * num_heads, num_blocks, chunk, head_dim)
-    k4 = key_states.reshape(batch_size * num_heads, num_blocks, context, head_dim)
-    v4 = value_states.reshape(batch_size * num_heads, num_blocks, context, head_dim)
+    )
     matrix_ac = q4 @ k4.transpose(-1, -2)
-    matrix_ac = matrix_ac.reshape(batch_size, num_heads, num_blocks, chunk, context)
 
     relative_key_states = self.relative_k_proj(position_embeddings)
     relative_key_states = relative_key_states.view(-1, num_heads, head_dim)
-    relative_key_states = relative_key_states.to(dtype=query_states.dtype)
+    relative_key_states = relative_key_states.to(dtype=q4.dtype)
     relative_key_states = swap_mid_dims(relative_key_states.unsqueeze(0)).squeeze(0)
-    queries_flat = query_states.reshape(batch_size, num_heads, num_blocks * chunk, head_dim)
-    matrix_bd = queries_flat @ relative_key_states.transpose(-1, -2)
-    matrix_bd = matrix_bd.reshape(batch_size, num_heads, num_blocks, chunk, -1)
-    matrix_bd = self._rel_shift(matrix_bd)
+    rel_bh = relative_key_states.reshape(1, num_heads, -1, head_dim).expand(
+        batch_size, -1, -1, -1
+    ).reshape(batch_size * num_heads, -1, head_dim)
+    matrix_bd = q4.reshape(batch_size * num_heads, num_blocks * chunk, head_dim) @ (
+        rel_bh.transpose(-1, -2)
+    )
+    # HF _rel_shift is 5-D. Singleton head dim is expandDims, not a head/seq swap.
+    # Do not replace _rel_shift (prefix-matmul dropped cosine).
+    matrix_bd = self._rel_shift(
+        matrix_bd.reshape(batch_size * num_heads, 1, num_blocks, chunk, -1)
+    )
+    matrix_bd = matrix_bd.reshape(batch_size * num_heads, num_blocks, chunk, context)
 
     attn_weights = matrix_ac + matrix_bd
     attn_weights = attn_weights / self.softcap
@@ -268,13 +272,18 @@ def _audio_attn_forward(
     attn_weights = attn_weights * self.softcap
 
     if attention_mask is not None:
-        # Float additive 5D (ANE-legal). Do not logical_not / masked_fill i1.
-        attn_weights = attn_weights + attention_mask.to(dtype=attn_weights.dtype)
+        mask = attention_mask.to(dtype=attn_weights.dtype)
+        if mask.ndim == 5:
+            mask = mask.reshape(batch_size, num_blocks, chunk, context)
+        attn_weights = attn_weights.reshape(
+            batch_size, num_heads, num_blocks * chunk, context
+        ) + mask.reshape(batch_size, 1, num_blocks * chunk, context)
+        attn_weights = attn_weights.reshape(
+            batch_size * num_heads, num_blocks, chunk, context
+        )
 
-    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(value_states.dtype)
-    attn_output = attn_weights.reshape(
-        batch_size * num_heads, num_blocks, chunk, context
-    ) @ v4
+    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(v4.dtype)
+    attn_output = attn_weights @ v4
     attn_output = attn_output.reshape(batch_size, num_heads, num_blocks * chunk, head_dim)
     attn_output = swap_mid_dims(attn_output).reshape(
         batch_size, num_blocks * chunk, num_heads * head_dim
@@ -327,12 +336,34 @@ def _audio_model_forward(
     return g4.Gemma4AudioModelOutput(last_hidden_state=hidden_states, attention_mask=None)
 
 
+def _subsample_conv_forward(
+    self,
+    input_features: torch.Tensor,
+    input_features_mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Accept 4-D NCHW ``[B, 1, T, C]`` so package I/O is expandDims, not permute."""
+    hidden_states = input_features
+    if hidden_states.ndim == 3:
+        hidden_states = hidden_states.unsqueeze(1)
+    hidden_states, mask = self.layer0(hidden_states, input_features_mask)
+    hidden_states, mask = self.layer1(hidden_states, mask)
+    batch_size, _, seq_len, _ = hidden_states.shape
+    hidden_states = hidden_states.permute(0, 2, 3, 1).contiguous().reshape(batch_size, seq_len, -1)
+    return self.input_proj_linear(hidden_states), mask
+
+
 def apply_audio_unfold_patch() -> dict[str, int]:
     """Monkey-patch ``Gemma4AudioAttention._extract_block_context`` for export."""
     import transformers.models.gemma4.modeling_gemma4 as g4
 
     g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
-    return {"patched": 1, "window_op": "onehot_matmul", "attn_layout": "heads_first_4d"}
+    g4.Gemma4AudioSubSampleConvProjection.forward = _subsample_conv_forward
+    return {
+        "patched": 1,
+        "window_op": "onehot_matmul",
+        "attn_layout": "heads_first_4d_no5d",
+        "io": "nchw_expanddims",
+    }
 
 
 def apply_audio_ane_mask_patch() -> dict[str, Any]:
@@ -343,7 +374,7 @@ def apply_audio_ane_mask_patch() -> dict[str, Any]:
     g4.Gemma4AudioModel.forward = _audio_model_forward
     return {
         "patched": 1,
-        "mask": "float_blocked_additive_5d",
+        "mask": "float_blocked_additive_4d",
         "chunk": AUDIO_CHUNK,
         "context": AUDIO_CHUNK + AUDIO_PAST + AUDIO_FUTURE,
     }

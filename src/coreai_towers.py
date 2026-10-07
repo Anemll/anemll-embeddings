@@ -87,14 +87,14 @@ class AudioSoftTokens(nn.Module):
     def forward(
         self, input_features: torch.Tensor, input_features_mask: torch.Tensor
     ) -> torch.Tensor:
-        # f16 I/O is ANE-legal. Keep mask numeric. Export patches replace HF
-        # i1 blocked attention (1x1x6x12x84xi1 / 1x1x1x1x70xi1) with float
-        # additive 5D so preferred-ANE is not GPU-gated.
+        # 4-D NCHW I/O so ANE I/O is expandDims (not layout_conversion_permute).
+        # features [B, 1, T, C], mask [B, 1, T, 1], out [B, 1, T', 512].
         input_features = input_features.to(dtype=torch.float32)
         keep = input_features_mask.to(dtype=input_features.dtype)
+        keep = keep.reshape(input_features.shape[0], input_features.shape[2])
         out = self.audio_tower(input_features, keep, return_dict=True)
-        # f16 out matches vision: f32 soft_tokens was ANE InvalidOutputType.
-        return self.embed_audio(out.last_hidden_state).to(dtype=torch.float16)
+        hidden = self.embed_audio(out.last_hidden_state).to(dtype=torch.float16)
+        return hidden.reshape(hidden.shape[0], 1, hidden.shape[1], hidden.shape[2])
 
 
 def vision_example(
@@ -121,10 +121,10 @@ def audio_example(
     dtype: torch.dtype = torch.float32,
     device: str | torch.device = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    feat = torch.zeros(batch, frames, AUDIO_FEAT, dtype=torch.float16, device=device)
+    feat = torch.zeros(batch, 1, frames, AUDIO_FEAT, dtype=torch.float16, device=device)
     # Trailing zeros so the mask is not a const-all-ones live-out (dummy_pool).
-    mask = torch.ones(batch, frames, dtype=torch.float16, device=device)
-    mask[:, -8:] = 0
+    mask = torch.ones(batch, 1, frames, 1, dtype=torch.float16, device=device)
+    mask[:, :, -8:, :] = 0
     return feat, mask
 
 
@@ -145,14 +145,14 @@ def tower_io_spec(name: str) -> dict[str, Any]:
     if name == "audio":
         return {
             "inputs": {
-                "input_features": [1, AUDIO_FRAMES, AUDIO_FEAT],
-                "input_features_mask": [1, AUDIO_FRAMES],
+                "input_features": [1, 1, AUDIO_FRAMES, AUDIO_FEAT],
+                "input_features_mask": [1, 1, AUDIO_FRAMES, 1],
             },
             "input_dtypes": {
                 "input_features": "float16",
                 "input_features_mask": "float16",
             },
-            "outputs": {"soft_tokens": [1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
+            "outputs": {"soft_tokens": [1, 1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
             "output_dtypes": {"soft_tokens": "float16"},
         }
     if name == "text":

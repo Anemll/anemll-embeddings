@@ -69,10 +69,10 @@ def tower_smoke_io(name: str) -> dict[str, Any]:
     if name == "audio":
         return {
             "inputs": {
-                "input_features": [1, AUDIO_FRAMES, AUDIO_FEAT],
-                "input_features_mask": [1, AUDIO_FRAMES],
+                "input_features": [1, 1, AUDIO_FRAMES, AUDIO_FEAT],
+                "input_features_mask": [1, 1, AUDIO_FRAMES, 1],
             },
-            "outputs": {"soft_tokens": [1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
+            "outputs": {"soft_tokens": [1, 1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
         }
     if name == "text":
         return {
@@ -120,9 +120,9 @@ def dummy_numpy_inputs(
     if name == "audio":
         feat_dt = resolve_dtype(dtypes.get("input_features", "float16"), np.float16)
         mask_dt = resolve_dtype(dtypes.get("input_features_mask", "float16"), np.float16)
-        feat = np.zeros((1, AUDIO_FRAMES, AUDIO_FEAT), dtype=feat_dt)
-        mask = np.ones((1, AUDIO_FRAMES), dtype=mask_dt)
-        mask[:, -8:] = 0
+        feat = np.zeros((1, 1, AUDIO_FRAMES, AUDIO_FEAT), dtype=feat_dt)
+        mask = np.ones((1, 1, AUDIO_FRAMES, 1), dtype=mask_dt)
+        mask[:, :, -8:, :] = 0
         return {"input_features": feat, "input_features_mask": mask}
     if name == "text":
         ids_dt = resolve_dtype(dtypes.get("input_ids", "int32"), np.int32)

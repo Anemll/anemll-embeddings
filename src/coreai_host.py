@@ -134,11 +134,43 @@ def hf_audio_slots_from_frames(n_frames: int, *, subsample: int = 4) -> int:
     return (n + step - 1) // step
 
 
+def adapt_audio_features_nchw(feat: np.ndarray | torch.Tensor) -> np.ndarray:
+    """``[B, T, C]`` → 4-D NCHW ``[B, 1, T, C]`` (ANE I/O expandDims)."""
+    arr = np.asarray(feat)
+    if arr.ndim == 2:
+        arr = arr[None, ...]
+    if arr.ndim == 4 and arr.shape[1] == 1:
+        return arr.astype(np.float16, copy=False)
+    if arr.ndim != 3 or arr.shape[-1] != AUDIO_FEAT:
+        raise ValueError(f"audio feat shape {arr.shape}")
+    return arr[:, None, :, :].astype(np.float16, copy=False)
+
+
+def adapt_audio_mask_nchw(mask: np.ndarray | torch.Tensor) -> np.ndarray:
+    """``[B, T]`` → 4-D NCHW ``[B, 1, T, 1]``."""
+    arr = np.asarray(mask)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.ndim == 4 and arr.shape[1] == 1 and arr.shape[-1] == 1:
+        return arr.astype(np.float16, copy=False)
+    if arr.ndim != 2:
+        raise ValueError(f"audio mask shape {arr.shape}")
+    return arr[:, None, :, None].astype(np.float16, copy=False)
+
+
+def audio_soft_from_nchw(soft: np.ndarray | torch.Tensor) -> np.ndarray:
+    """Package ``[B, 1, T, H]`` → host ``[B, T, H]``."""
+    arr = np.asarray(soft)
+    if arr.ndim == 4:
+        return np.ascontiguousarray(arr[:, 0])
+    return arr
+
+
 def crop_audio_soft_to_src(
     soft: np.ndarray | torch.Tensor,
     n_src_frames: int,
 ) -> np.ndarray:
-    arr = np.asarray(soft)
+    arr = audio_soft_from_nchw(soft)
     keep = hf_audio_slots_from_frames(n_src_frames)
     if arr.shape[1] < keep:
         raise ValueError(f"audio soft {arr.shape} shorter than {keep}")

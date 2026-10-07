@@ -29,6 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.coreai_host import (  # noqa: E402
+    adapt_audio_features_nchw,
+    adapt_audio_mask_nchw,
     adapt_vision_pixels,
     adapt_vision_position_ids,
     crop_audio_soft_to_src,
@@ -241,8 +243,8 @@ def main() -> int:
             out_dir / "audio_s280.aimodel",
             "audio_s280",
             {
-                "input_features": feat.astype(np.float16, copy=False),
-                "input_features_mask": amask.astype(np.float16, copy=False),
+                "input_features": adapt_audio_features_nchw(feat),
+                "input_features_mask": adapt_audio_mask_nchw(amask),
             },
             out_dir / f"parity_{Path(name).stem}_audio.npy",
         )

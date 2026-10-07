@@ -24,6 +24,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.coreai_host import (  # noqa: E402
     AUDIO_SLOTS,
     IMAGE_SLOTS,
+    adapt_audio_features_nchw,
+    adapt_audio_mask_nchw,
+    audio_soft_from_nchw,
     adapt_vision_pixels,
     adapt_vision_position_ids,
     encode_interleaved,
@@ -143,11 +146,12 @@ def main() -> int:
         out_dir / "audio_s280.aimodel",
         "audio_s280",
         {
-            "input_features": feat.astype(np.float16, copy=False),
-            "input_features_mask": amask.astype(np.float16, copy=False),
+            "input_features": adapt_audio_features_nchw(feat),
+            "input_features_mask": adapt_audio_mask_nchw(amask),
         },
         audio_npy,
     )
+    audio_soft = audio_soft_from_nchw(audio_soft)
     print(f"vision_soft={vision_soft.shape} audio_soft={audio_soft.shape}")
     vis_abs = float(np.nanmax(np.abs(vision_soft))) if vision_soft.size else 0.0
     aud_finite = bool(np.isfinite(audio_soft).all())

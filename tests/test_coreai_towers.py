@@ -58,9 +58,9 @@ def test_vision_example_shape() -> None:
 
 def test_audio_example_shape() -> None:
     feat, mask = audio_example()
-    if tuple(feat.shape) != (1, AUDIO_FRAMES, AUDIO_FEAT):
+    if tuple(feat.shape) != (1, 1, AUDIO_FRAMES, AUDIO_FEAT):
         _fail(str(feat.shape))
-    if tuple(mask.shape) != (1, AUDIO_FRAMES) or mask.dtype != torch.float16:
+    if tuple(mask.shape) != (1, 1, AUDIO_FRAMES, 1) or mask.dtype != torch.float16:
         _fail(f"{tuple(mask.shape)} {mask.dtype}")
     if int((mask != 0).sum()) != AUDIO_FRAMES - 8:
         _fail("expected trailing-zero mask (avoid dummy_pool const-all-ones)")
@@ -120,16 +120,16 @@ def test_blocked_additive_mask_shape_and_pad() -> None:
     mask = blocked_additive_attention_mask(keep)
     n_blocks = (AUDIO_SOFT_TOKENS + AUDIO_CHUNK - 1) // AUDIO_CHUNK
     context = AUDIO_CHUNK + AUDIO_PAST + AUDIO_FUTURE
-    if tuple(mask.shape) != (1, 1, n_blocks, AUDIO_CHUNK, context):
+    if tuple(mask.shape) != (1, n_blocks, AUDIO_CHUNK, context):
         _fail(str(tuple(mask.shape)))
     if mask.dtype != torch.float32:
         _fail(f"dtype {mask.dtype}")
     # Last 8 keys of seq 70 land in the final block's current-chunk columns.
     # Those positions must be masked (large negative), earlier keys not.
-    if not bool((mask[0, 0, -1, :, AUDIO_PAST:] < -1.0e6).any()):
+    if not bool((mask[0, -1, :, AUDIO_PAST:] < -1.0e6).any()):
         _fail("expected padded keys to be invalid in last block")
-    if float(mask[0, 0, 0, 0, AUDIO_PAST]) < -1.0:
-        _fail(f"first valid key of block 0 should be keep, got {float(mask[0, 0, 0, 0, AUDIO_PAST])}")
+    if float(mask[0, 0, 0, AUDIO_PAST]) < -1.0:
+        _fail(f"first valid key of block 0 should be keep, got {float(mask[0, 0, 0, AUDIO_PAST])}")
 
 
 def test_blocked_additive_mask_export_has_no_gather() -> None:
@@ -280,7 +280,7 @@ def test_io_specs() -> None:
         _fail("vision out dtype")
     if v.get("input_dtypes", {}).get("pixel_position_ids") != "float16":
         _fail("vision pos dtype")
-    if tower_io_spec("audio")["outputs"]["soft_tokens"] != [1, AUDIO_SOFT_TOKENS, 512]:
+    if tower_io_spec("audio")["outputs"]["soft_tokens"] != [1, 1, AUDIO_SOFT_TOKENS, 512]:
         _fail("audio tokens")
     if tower_io_spec("audio").get("output_dtypes", {}).get("soft_tokens") != "float16":
         _fail("audio out dtype")
