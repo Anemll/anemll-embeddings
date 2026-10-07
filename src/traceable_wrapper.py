@@ -133,5 +133,4 @@ class TraceableEmbeddingGemma2Embeds(TraceableEmbeddingGemma2):
         emb = self.projection(pooled)
         if self.normalize:
             emb = F.normalize(emb, p=2, dim=-1)
-        # f16 output is ANE-legal I/O (leftover GPU_region_0 was I/O/layout).
-        return emb.to(dtype=torch.float16)
+        return emb
