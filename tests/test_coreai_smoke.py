@@ -36,6 +36,8 @@ def test_dummy_shapes() -> None:
         _fail(str(v["pixel_position_ids"].shape))
     if v["pixel_position_ids"].dtype != np.int16:
         _fail(str(v["pixel_position_ids"].dtype))
+    if v["pixel_values"].dtype != np.float16:
+        _fail(str(v["pixel_values"].dtype))
     a = dummy_numpy_inputs("audio")
     if tuple(a["input_features"].shape) != (1, 280, 128):
         _fail(str(a["input_features"].shape))
@@ -44,7 +46,7 @@ def test_dummy_shapes() -> None:
         _fail(str(t["input_ids"].shape))
     if t["input_ids"].dtype != np.int32 or t["attention_mask"].dtype != np.int32:
         _fail(f"{t['input_ids'].dtype} {t['attention_mask'].dtype}")
-    if a["input_features_mask"].dtype != np.int16:
+    if a["input_features_mask"].dtype != np.float16:
         _fail(str(a["input_features_mask"].dtype))
     e = dummy_numpy_inputs("text_embeds")
     if tuple(e["inputs_embeds"].shape) != (1, 320, 512):

@@ -252,6 +252,7 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
                     entry="audio_s280",
                     inputs=["input_features", "input_features_mask"],
                     outputs=["soft_tokens"],
+                    no_cast16=True,
                 )
             else:
                 print("audio .pt2 save failed; converting live ExportedProgram")
@@ -262,6 +263,7 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
                         entry="audio_s280",
                         inputs=["input_features", "input_features_mask"],
                         outputs=["soft_tokens"],
+                        no_cast16=True,
                     )
                 except Exception as exc:
                     print(f"in-process convert failed with cast16: {type(exc).__name__}: {exc}")
@@ -438,9 +440,9 @@ def main() -> int:
         "notes": [
             "Separate packages; host interleaves media placeholders.",
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
-            "PyTorch export is FP32; Core AI convert casts to 16-bit except vision (cast16 zeros it).",
-            "Text I/O is int32 (vocab 262144 overflows si16). Vision/audio integer I/O stays si16.",
-            "text_embeds_s320: f16 embeds + f16 mask I/O; convert --no-cast16 (graph stays f32).",
+            "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
+            "Text ids I/O is int32 (vocab 262144 overflows si16).",
+            "ANE-legal float I/O: vision pixels f16, audio feat+mask f16, text_embeds f16 in/out.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

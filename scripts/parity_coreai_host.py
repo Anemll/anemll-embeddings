@@ -219,7 +219,7 @@ def main() -> int:
         raw = _run_tower(
             out_dir / "vision_s280.aimodel",
             "vision_s280",
-            {"pixel_values": pixels.astype(np.float32, copy=False), "pixel_position_ids": pos},
+            {"pixel_values": pixels.astype(np.float16, copy=False), "pixel_position_ids": pos},
             out_dir / f"parity_{Path(name).stem}_vision.npy",
         )
         cropped = crop_vision_soft_to_valid(raw, pos)
@@ -240,7 +240,10 @@ def main() -> int:
         raw = _run_tower(
             out_dir / "audio_s280.aimodel",
             "audio_s280",
-            {"input_features": feat.astype(np.float16, copy=False), "input_features_mask": amask},
+            {
+                "input_features": feat.astype(np.float16, copy=False),
+                "input_features_mask": amask.astype(np.float16, copy=False),
+            },
             out_dir / f"parity_{Path(name).stem}_audio.npy",
         )
         cropped = crop_audio_soft_to_src(raw, n_src)

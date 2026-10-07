@@ -45,10 +45,10 @@ def test_audio_example_shape() -> None:
     feat, mask = audio_example()
     if tuple(feat.shape) != (1, AUDIO_FRAMES, AUDIO_FEAT):
         _fail(str(feat.shape))
-    if tuple(mask.shape) != (1, AUDIO_FRAMES) or mask.dtype != torch.int16:
+    if tuple(mask.shape) != (1, AUDIO_FRAMES) or mask.dtype != torch.float16:
         _fail(f"{tuple(mask.shape)} {mask.dtype}")
-    if int(mask.sum()) != AUDIO_FRAMES:
-        _fail("expected full-valid mask")
+    if int((mask != 0).sum()) != AUDIO_FRAMES - 8:
+        _fail("expected trailing-zero mask (avoid dummy_pool const-all-ones)")
 
 
 def test_gather_seq_windows_matches_unfold() -> None:

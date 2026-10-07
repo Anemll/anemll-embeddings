@@ -94,7 +94,7 @@ def adapt_vision_pixels(pixels: np.ndarray | torch.Tensor) -> np.ndarray:
     arr = np.asarray(pixels)
     if arr.shape != (1, VISION_PATCHES, VISION_PATCH_DIM):
         raise ValueError(f"pixels shape {arr.shape}")
-    return arr.astype(np.float32, copy=False)
+    return arr.astype(np.float16, copy=False)
 
 
 def hf_image_slots_from_positions(

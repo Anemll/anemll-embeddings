@@ -105,7 +105,7 @@ def test_vision_pos_si16() -> None:
     if got.dtype != np.int16 or got.shape != (1, 2520, 2):
         _fail(str(got.dtype))
     pix = adapt_vision_pixels(np.zeros((1, 2520, 768), dtype=np.float64))
-    if pix.dtype != np.float32:
+    if pix.dtype != np.float16:
         _fail(str(pix.dtype))
 
 

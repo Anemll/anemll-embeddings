@@ -47,7 +47,9 @@ class VisionSoftTokens(nn.Module):
     def forward(
         self, pixel_values: torch.Tensor, pixel_position_ids: torch.Tensor
     ) -> torch.Tensor:
-        # I/O is si16. F.embedding requires Int/Long — cannot keep si16 in-graph.
+        # Pixels may be f16 I/O (ANE-legal). Encoder stays f32 — no cast16.
+        # Pos is si16 I/O. F.embedding requires Int/Long — widen in-graph.
+        pixel_values = pixel_values.to(dtype=torch.float32)
         pixel_position_ids = pixel_position_ids.to(dtype=torch.long)
         padding_positions = (pixel_position_ids == -1).all(dim=-1)
         inputs_embeds = self.vision_tower.patch_embedder(
@@ -85,9 +87,10 @@ class AudioSoftTokens(nn.Module):
     def forward(
         self, input_features: torch.Tensor, input_features_mask: torch.Tensor
     ) -> torch.Tensor:
-        keep = input_features_mask
-        if keep.dtype != torch.bool:
-            keep = keep != 0
+        # f16 I/O is ANE-legal. Keep mask numeric — bool i1 was rejected and
+        # an all-1s const mask live-out tripped ANEC dummy_pool.
+        input_features = input_features.to(dtype=torch.float32)
+        keep = input_features_mask.to(dtype=input_features.dtype)
         out = self.audio_tower(input_features, keep, return_dict=True)
         return self.embed_audio(out.last_hidden_state)
 
@@ -104,7 +107,7 @@ def vision_example(
     ys = torch.arange(patches, device=device) // 70
     pos = torch.stack((xs, ys), dim=-1).unsqueeze(0).expand(batch, -1, -1).contiguous()
     pixels = torch.full(
-        (batch, patches, VISION_PATCH_DIM), 0.5, dtype=dtype, device=device
+        (batch, patches, VISION_PATCH_DIM), 0.5, dtype=torch.float16, device=device
     )
     return pixels, pos.to(dtype=torch.int16)
 
@@ -116,8 +119,10 @@ def audio_example(
     dtype: torch.dtype = torch.float32,
     device: str | torch.device = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    feat = torch.zeros(batch, frames, AUDIO_FEAT, dtype=dtype, device=device)
-    mask = torch.ones(batch, frames, dtype=torch.int16, device=device)
+    feat = torch.zeros(batch, frames, AUDIO_FEAT, dtype=torch.float16, device=device)
+    # Trailing zeros so the mask is not a const-all-ones live-out (dummy_pool).
+    mask = torch.ones(batch, frames, dtype=torch.float16, device=device)
+    mask[:, -8:] = 0
     return feat, mask
 
 
@@ -129,7 +134,7 @@ def tower_io_spec(name: str) -> dict[str, Any]:
                 "pixel_position_ids": [1, VISION_PATCHES, 2],
             },
             "input_dtypes": {
-                "pixel_values": "float32",
+                "pixel_values": "float16",
                 "pixel_position_ids": "int16",
             },
             "outputs": {"soft_tokens": [1, VISION_SOFT_TOKENS, TEXT_HIDDEN]},
@@ -141,8 +146,8 @@ def tower_io_spec(name: str) -> dict[str, Any]:
                 "input_features_mask": [1, AUDIO_FRAMES],
             },
             "input_dtypes": {
-                "input_features": "float32",
-                "input_features_mask": "int16",
+                "input_features": "float16",
+                "input_features_mask": "float16",
             },
             "outputs": {"soft_tokens": [1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
         }

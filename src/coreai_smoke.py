@@ -107,7 +107,7 @@ def dummy_numpy_inputs(
     dtypes = dtypes or {}
     if name == "vision":
         pos_dt = resolve_dtype(dtypes.get("pixel_position_ids", "int16"), np.int16)
-        pix_dt = resolve_dtype(dtypes.get("pixel_values", "float32"), np.float32)
+        pix_dt = resolve_dtype(dtypes.get("pixel_values", "float16"), np.float16)
         xs = np.arange(VISION_PATCHES, dtype=pos_dt) % np.array(70, dtype=pos_dt)
         ys = np.arange(VISION_PATCHES, dtype=pos_dt) // np.array(70, dtype=pos_dt)
         pos = np.stack((xs, ys), axis=-1)[None, ...].copy()
@@ -117,9 +117,10 @@ def dummy_numpy_inputs(
         return {"pixel_values": pixels, "pixel_position_ids": pos}
     if name == "audio":
         feat_dt = resolve_dtype(dtypes.get("input_features", "float16"), np.float16)
-        mask_dt = resolve_dtype(dtypes.get("input_features_mask", "int16"), np.int16)
+        mask_dt = resolve_dtype(dtypes.get("input_features_mask", "float16"), np.float16)
         feat = np.zeros((1, AUDIO_FRAMES, AUDIO_FEAT), dtype=feat_dt)
         mask = np.ones((1, AUDIO_FRAMES), dtype=mask_dt)
+        mask[:, -8:] = 0
         return {"input_features": feat, "input_features_mask": mask}
     if name == "text":
         ids_dt = resolve_dtype(dtypes.get("input_ids", "int32"), np.int32)
