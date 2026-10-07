@@ -16,7 +16,6 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from .audio_export_patches import swap_last_two
 
 
 def embedding_from_int_indices(idx: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
@@ -166,7 +165,9 @@ def _vision_attn_forward(
         qh = query_flat @ take_q
         kh = key_flat @ take_kv
         vh = value_flat @ take_kv
-        weights = (qh @ swap_last_two(kh)) * scale
+        # Last-2 GEMM transpose is ANE-legal; one-hot swap_last_two on
+        # [1,2520,64] is a 161k² matrix (SIGKILL).
+        weights = (qh @ kh.transpose(-1, -2)) * scale
         if attention_mask is not None:
             mask = attention_mask
             if mask.ndim == 4 and int(mask.shape[1]) == 1:
