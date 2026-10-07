@@ -211,8 +211,21 @@ def main() -> int:
         print(f"ERROR: missing {pkg}")
         return 1
     rows = asyncio.run(_run(pkg, warmup=args.warmup, iters=args.iters))
-    ane_place = (rows.get("ane") or {}).get("placement") or {}
-    regions = ane_place.get("regions") or {}
+    mixed = None
+    for spec in sorted(
+        CACHE.glob("*/*/*/*/model.aimodelx/**/specialized_model_0.mpsgraph"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ):
+        try:
+            regs = parse_mpsgraph_regions(spec.read_bytes())
+        except OSError:
+            continue
+        if regs.get("ane_regions") and regs.get("gpu_top_regions"):
+            mixed = {"path": str(spec), "regions": regs}
+            break
+    gpu_place = (rows.get("gpu") or {}).get("placement") or {}
+    regions = (mixed or {}).get("regions") or gpu_place.get("regions") or {}
     gpu_top = regions.get("gpu_top_regions") or []
     report = {
         "created_at_utc": utc_now(),
@@ -225,6 +238,8 @@ def main() -> int:
         "units": rows,
         "gpu_island": {
             "named": gpu_top[0] if gpu_top else None,
+            "source": (mixed or {}).get("path") or gpu_place.get("mpsgraph"),
+            "kind": "preferred_ane_mixed" if mixed else "preferred_gpu",
             "regions": regions,
             "note": (
                 "Dump names GPU_region_0 (mpsx.parallelGPURegion) plus nested "
