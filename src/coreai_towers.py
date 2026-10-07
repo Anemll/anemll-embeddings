@@ -73,7 +73,8 @@ class VisionSoftTokens(nn.Module):
         hidden = hidden.to(dtype=inputs_embeds.dtype)
         scale = float(self.vision_tower.pooler.root_hidden_size)
         hidden = hidden * scale
-        return self.embed_vision(hidden)
+        # f16 out is ANE-legal I/O (f32 soft_tokens was InvalidOutputType).
+        return self.embed_vision(hidden).to(dtype=torch.float16)
 
 
 class AudioSoftTokens(nn.Module):
@@ -93,7 +94,8 @@ class AudioSoftTokens(nn.Module):
         input_features = input_features.to(dtype=torch.float32)
         keep = input_features_mask.to(dtype=input_features.dtype)
         out = self.audio_tower(input_features, keep, return_dict=True)
-        return self.embed_audio(out.last_hidden_state)
+        # f16 out matches vision: f32 soft_tokens was ANE InvalidOutputType.
+        return self.embed_audio(out.last_hidden_state).to(dtype=torch.float16)
 
 
 def vision_example(
@@ -139,6 +141,7 @@ def tower_io_spec(name: str) -> dict[str, Any]:
                 "pixel_position_ids": "int16",
             },
             "outputs": {"soft_tokens": [1, VISION_SOFT_TOKENS, TEXT_HIDDEN]},
+            "output_dtypes": {"soft_tokens": "float16"},
         }
     if name == "audio":
         return {
@@ -151,6 +154,7 @@ def tower_io_spec(name: str) -> dict[str, Any]:
                 "input_features_mask": "float16",
             },
             "outputs": {"soft_tokens": [1, AUDIO_SOFT_TOKENS, TEXT_HIDDEN]},
+            "output_dtypes": {"soft_tokens": "float16"},
         }
     if name == "text":
         return {

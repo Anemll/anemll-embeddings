@@ -442,8 +442,8 @@ def main() -> int:
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
             "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
-            "ANE-legal float I/O: vision pixels f16, audio feat+mask f16. text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
-            "Audio: float additive 5D blocked mask (no HF i1 create_bidirectional_mask / blocked_5d).",
+            "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
+            "Audio: float additive 5D blocked mask (no HF i1). Preferred-ANE is ANE+GPU after that; leftover is f32 out I/O.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

@@ -116,8 +116,12 @@ def test_io_specs() -> None:
     v = tower_io_spec("vision")
     if v["outputs"]["soft_tokens"] != [1, VISION_SOFT_TOKENS, 512]:
         _fail(str(v))
+    if v.get("output_dtypes", {}).get("soft_tokens") != "float16":
+        _fail("vision out dtype")
     if tower_io_spec("audio")["outputs"]["soft_tokens"] != [1, AUDIO_SOFT_TOKENS, 512]:
         _fail("audio tokens")
+    if tower_io_spec("audio").get("output_dtypes", {}).get("soft_tokens") != "float16":
+        _fail("audio out dtype")
     if tower_io_spec("text")["outputs"]["embedding"] != [1, 768]:
         _fail("text embed")
 
