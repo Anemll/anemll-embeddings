@@ -351,6 +351,8 @@ def main() -> int:
             "That matches HF slot counts; package graphs stay 280/70 (no re-export).",
             "Video skipped: no video .aimodel.",
             "Caption/mix 768-d uses text_s128 (unexpanded). Media-only interleaves via PT text.",
+            "Unexpanded vs ST: mm_image_caption 0.825 (PT interleave was 0.947; wrapper 0.850).",
+            "Unexpanded vs ST: mm_mix 0.785 (PT interleave was 0.855; wrapper 0.751).",
             "si16 text I/O was the 0.76 gap (3/15 SearchQuery tokens wrapped).",
             "int32 re-export: mm_text_sq cosine 0.995 vs ST (package vs wrapper 0.995; remaining f16/cast16).",
             "Fail-closed: non-finite or cosine < 0.10. Not a T6 0.95 gate.",
