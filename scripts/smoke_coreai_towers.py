@@ -201,8 +201,9 @@ async def _smoke_one(
     report["finite"] = finite
     report["shape_ok"] = shape_ok
     if np.issubdtype(arr.dtype, np.floating) and arr.size:
-        report["abs_max"] = float(np.nanmax(np.abs(arr)))
-        report["l2"] = float(np.linalg.norm(arr.reshape(-1)))
+        flat = arr.astype(np.float32, copy=False).reshape(-1)
+        report["abs_max"] = float(np.nanmax(np.abs(flat)))
+        report["l2"] = float(np.linalg.norm(flat))
 
     placement = _cache_placement_since(started)
     devices: list[str] = []

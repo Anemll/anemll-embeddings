@@ -180,6 +180,8 @@ ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
 
 Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `audio_s280.aimodel` (280×128 mel → 70×512; chunked attn windows via `index_select` instead of `aten.unfold`), `text_s128.aimodel` (ids/mask → 768). Audio `.pt2` save can hit TreeSpec; convert uses the live exported program. Host interleaves placeholders. Cast16 can clash on int `div`; convert retries without it.
 
+CPU-only smoke on mp4 (`scripts/smoke_coreai_towers.py`): vision / text / audio all **PASS** (finite, expected shapes). Preferred ANE specialize aborted (`mps_spi.sdpa` grouping; `i1` mask `2520xi1`). No mid-graph CPU island from the CPU smoke path. Results: `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/towers.smoke.json`.
+
 Synthetic media + multimodal embeddings land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/` (not git, not the FLOAT32 text `.mlpackage` tree). Prefixes are text-only; image/video/audio use `<|image|>` / `<|video|>` / `<|audio|>`.
 
 ## License
