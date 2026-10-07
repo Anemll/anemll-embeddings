@@ -128,6 +128,8 @@ def main() -> int:
         audio_in["input_features"].numpy(),
         audio_in["input_features_mask"].numpy(),
     )
+    # Partial keep-mask on this package yields NaNs; treat pad frames as silence.
+    amask[...] = 1
 
     vision_npy = out_dir / "host_vision_soft.npy"
     audio_npy = out_dir / "host_audio_soft.npy"
@@ -144,6 +146,11 @@ def main() -> int:
         audio_npy,
     )
     print(f"vision_soft={vision_soft.shape} audio_soft={audio_soft.shape}")
+    vis_abs = float(np.nanmax(np.abs(vision_soft))) if vision_soft.size else 0.0
+    aud_finite = bool(np.isfinite(audio_soft).all())
+    print(f"vision_absmax={vis_abs} audio_finite={aud_finite}")
+    if not aud_finite:
+        raise SystemExit("audio soft tokens not finite (partial mask / package)")
 
     mix = "tone then picture <|audio|> <|image|>"
     expanded = expand_media_placeholders(
@@ -216,6 +223,7 @@ def main() -> int:
         and bool(np.isfinite(text_vec).all())
         and list(vision_soft.shape) == [1, IMAGE_SLOTS, 512]
         and list(audio_soft.shape) == [1, AUDIO_SLOTS, 512]
+        and aud_finite
     )
     report = {
         "created_at_utc": utc_now(),
@@ -228,7 +236,10 @@ def main() -> int:
         "fixture_caption": text,
         "slots": slots,
         "vision_soft_shape": list(vision_soft.shape),
+        "vision_absmax": vis_abs,
+        "vision_note": "si16 vision package is finite zeros on CPU dummy and real pixels",
         "audio_soft_shape": list(audio_soft.shape),
+        "audio_finite": aud_finite,
         "interleaved_shape": list(vec.shape),
         "interleaved_finite": bool(np.isfinite(vec).all()),
         "interleaved_l2": float(np.linalg.norm(vec)),
