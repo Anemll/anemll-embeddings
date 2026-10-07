@@ -21,6 +21,8 @@ from src.audio_export_patches import (  # noqa: E402
     blocked_additive_attention_mask,
     depthwise_conv1d_channels_last,
     gather_seq_windows,
+    glu_from_linear_halves,
+    glu_split_last,
     nchw_to_nhwc,
     nhwc_to_nchw,
     rel_pos_ids_float,
@@ -352,6 +354,40 @@ def test_rel_shift_baked_export_has_no_slice() -> None:
         _fail(f"slice/pad still in baked rel-shift export: {targets}")
 
 
+def test_glu_split_last_matches_glu() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(1, 70, 2048)
+    got = glu_split_last(x)
+    ref = torch.nn.functional.glu(x, dim=-1)
+    if got.shape != ref.shape or not torch.allclose(got, ref):
+        _fail("glu_split_last != F.glu")
+
+
+def test_glu_from_linear_halves_matches_linear_glu() -> None:
+    torch.manual_seed(0)
+    lin = torch.nn.Linear(16, 32)
+    x = torch.randn(1, 70, 16)
+    got = glu_from_linear_halves(lin, x)
+    ref = torch.nn.functional.glu(lin(x), dim=-1)
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("glu_from_linear_halves != linear then F.glu")
+
+
+def test_glu_from_linear_halves_export_has_no_activation_slice() -> None:
+    class _Glu(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lin = torch.nn.Linear(8, 16)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return glu_from_linear_halves(self.lin, x)
+
+    ep = torch.export.export(_Glu(), (torch.randn(1, 4, 8),), strict=False)
+    targets = [str(n.target) for n in ep.graph.nodes]
+    if any("slice" in t and "linear" not in t for t in targets):
+        _fail(f"activation slice still in halves GLU export: {targets}")
+
+
 def test_rotate_half_matmul_matches_cat() -> None:
     torch.manual_seed(0)
     x = torch.randn(2, 4, 8)
@@ -483,6 +519,9 @@ def main() -> int:
         test_rel_shift_static_matches_hf,
         test_rel_shift_baked_matches_hf,
         test_rel_shift_baked_export_has_no_slice,
+        test_glu_split_last_matches_glu,
+        test_glu_from_linear_halves_matches_linear_glu,
+        test_glu_from_linear_halves_export_has_no_activation_slice,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,
