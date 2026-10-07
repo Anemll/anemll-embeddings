@@ -5,9 +5,10 @@ The HF processor expands ``<|image|>`` from *valid* patches (256 on the
 64² fixture) and audio from duration (25 for 1 s). This host uses the
 **package** slot counts so scatter lines up with exported graphs.
 
-``text_s128.aimodel`` is ids-only and S=128 — a real image (280 slots)
-cannot fit. The interleaved 768-d vector uses the PyTorch text tower
-with ``inputs_embeds``. ANE specialize stays a follow-up.
+``text_s128.aimodel`` is ids-only and S=128 — expanded image slots (256)
+cannot fit. Caption / mix 768-d uses the text package on the **unexpanded**
+prompt (single media placeholders). Media-only rows still interleave via
+the PyTorch text tower + ``inputs_embeds``. ANE specialize stays a follow-up.
 """
 
 from __future__ import annotations
@@ -29,6 +30,38 @@ from .coreai_towers import (
 
 IMAGE_SLOTS = VISION_SOFT_TOKENS
 AUDIO_SLOTS = AUDIO_SOFT_TOKENS
+TEXT_PACKAGE_S = 128
+
+
+def has_caption_words(
+    text: str,
+    *,
+    image_token: str = "<|image|>",
+    audio_token: str = "<|audio|>",
+    video_token: str = "<|video|>",
+) -> bool:
+    """True when the prompt has words besides media placeholders."""
+    out = text or ""
+    for tok in (image_token, audio_token, video_token):
+        if tok:
+            out = out.replace(tok, " ")
+    return bool(out.split())
+
+
+def uses_text_package(
+    text: str,
+    *,
+    image_token: str = "<|image|>",
+    audio_token: str = "<|audio|>",
+    video_token: str = "<|video|>",
+) -> bool:
+    """Caption / mix / text-only → ``text_s128``. Media-only stays interleaved."""
+    return has_caption_words(
+        text,
+        image_token=image_token,
+        audio_token=audio_token,
+        video_token=video_token,
+    )
 
 
 def expand_media_placeholders(

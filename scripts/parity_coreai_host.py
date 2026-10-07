@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Cosine parity: Core AI host path vs ST multimodal fixtures (6×768).
 
-Driveable: text via text_s128; image / audio / mix via towers + PyTorch text.
-Video is skipped (no video package). Crops package 280/70 soft tokens to HF
-256/25 when pads are a trailing suffix (small host fix, no re-export).
+Driveable: text / caption / mix via text_s128 (unexpanded ids, S=128);
+image-only / audio-only via towers + PyTorch text interleave. Video skipped.
+Crops package 280/70 soft tokens to HF 256/25 when pads are a trailing suffix.
 
 Fail-closed: non-finite or cosine below ABSURD (0.10) with no documented
-limit. Documented: package slots 280/70 vs HF 256/25; text_s128 vs ST
-~0.76 (package, not prefix — wrapper/ST vs fixture ~1.0).
+limit. Documented: package slots 280/70 vs HF 256/25; text_s128 cannot hold
+expanded image/audio slots (caption/mix stay unexpanded).
 
 Does not touch the FLOAT32 Core ML tree. ANE is out of scope.
 """
@@ -37,6 +37,7 @@ from src.coreai_host import (  # noqa: E402
     expand_media_placeholders,
     pad_audio_to_package,
     slot_report,
+    uses_text_package,
 )
 from src.coreai_smoke import dummy_numpy_inputs  # noqa: E402
 from src.embed_wrapper import EmbeddingGemma2Wrapper, tokenize_with_st_prompt  # noqa: E402
@@ -231,7 +232,11 @@ def main() -> int:
                 print("  skip: no video package")
                 rows.append(row)
                 continue
-            if kind == "text":
+            if kind == "text" or uses_text_package(
+                text,
+                image_token=tok.image_token,
+                audio_token=tok.audio_token,
+            ):
                 pred = _encode_text_s128(
                     st=st,
                     tok=tok,
@@ -242,6 +247,7 @@ def main() -> int:
                     case_id=case_id,
                 )
                 row["path"] = "text_s128"
+                row["unexpanded"] = kind != "text"
                 batch = tokenize_with_st_prompt(
                     st, text, item.get("prompt_name"), max_length=TEXT_S
                 )
@@ -255,6 +261,7 @@ def main() -> int:
                     wrap = wrapper(ids, mask).detach().cpu().numpy().reshape(-1)
                 row["wrapper_cosine_vs_ref"] = cosine(wrap, ref_vec)
                 row["package_cosine_vs_wrapper"] = cosine(pred, wrap)
+                row["n_tokens"] = int(mask.sum())
             else:
                 img_name = (item.get("image") or [None])[0]
                 aud_name = item.get("audio")
@@ -332,6 +339,10 @@ def main() -> int:
             "vision_slots": "package 280 vs HF 256 (host crops trailing pad groups)",
             "audio_slots": "package 70 vs HF 25 (host crops ceil(frames/4); 99→25)",
             "text_ids": "int32 I/O; si16 wraps vocab 262144 (SearchQuery 236787)",
+            "caption_mix": (
+                "text_s128 on unexpanded caption/mix (S=128 ids-only cannot hold "
+                "256/25 expanded slots). Media-only still PT-interleaves."
+            ),
             "audio_mask": "all-1s silence pad required for finite audio (keep-mask NaNs)",
         },
         "cases": rows,
@@ -339,7 +350,7 @@ def main() -> int:
             "Host crops vision 280→256 (trailing pad groups) and audio 70→25 (ceil frames/4).",
             "That matches HF slot counts; package graphs stay 280/70 (no re-export).",
             "Video skipped: no video .aimodel.",
-            "text_s128 is S=128 ids-only int32. Interleaved 768-d uses PyTorch text tower.",
+            "Caption/mix 768-d uses text_s128 (unexpanded). Media-only interleaves via PT text.",
             "si16 text I/O was the 0.76 gap (3/15 SearchQuery tokens wrapped).",
             "int32 re-export: mm_text_sq cosine 0.995 vs ST (package vs wrapper 0.995; remaining f16/cast16).",
             "Fail-closed: non-finite or cosine < 0.10. Not a T6 0.95 gate.",

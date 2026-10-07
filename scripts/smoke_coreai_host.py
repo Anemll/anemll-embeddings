@@ -212,8 +212,8 @@ def main() -> int:
     print(f"interleaved {vec.shape} finite={bool(np.isfinite(vec).all())} l2={float(np.linalg.norm(vec)):.4f}")
     print(f"vs zero-soft L2={interleave_moves:.4f} vision-only Δ={vision_moves:.4f}")
 
-    # text_s128 on caption only (package cannot hold 280 image slots).
-    caption = "Green sky glow."
+    # Caption/mix 768-d: text_s128 on the unexpanded fixture prompt (S=128).
+    caption = text
     cap = tok(caption, return_tensors="pt")
     cap_ids, cap_mask = pad_to_seq_len(cap["input_ids"], cap["attention_mask"], TEXT_S, pad_token_id=pad_id)
     text_feed = dummy_numpy_inputs("text")
@@ -261,11 +261,11 @@ def main() -> int:
         "vision_only_zero_soft_l2_delta": vision_moves,
         "text_s128_shape": list(text_vec.shape),
         "text_s128_finite": bool(np.isfinite(text_vec).all()),
-        "text_s128_note": "ids-only S=128; cannot hold 280 image slots",
+        "text_s128_note": "caption/mix 768-d uses text_s128 on unexpanded prompt",
         "limits": [
             "CPU only. ANE follow-up: embedding Int/Long widen; audio dummy_pool.",
             "Host expands 280 image / 70 audio slots (package), not HF 256 / 25.",
-            "Interleaved 768-d uses PyTorch text tower + inputs_embeds.",
+            "Caption/mix 768-d uses text_s128 (unexpanded). Media-only interleaves via PT.",
             "Vision convert skips cast16 (that pass emitted all-zero soft tokens).",
             "FLOAT32 Core ML text tree untouched. Vision re-converted only.",
         ],

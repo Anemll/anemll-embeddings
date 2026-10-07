@@ -15,6 +15,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.coreai_host import (  # noqa: E402
     AUDIO_FRAMES,
     IMAGE_SLOTS,
+    has_caption_words,
+    uses_text_package,
     adapt_vision_pixels,
     adapt_vision_position_ids,
     crop_audio_soft_to_src,
@@ -30,6 +32,19 @@ from src.coreai_host import (  # noqa: E402
 
 def _fail(msg: str) -> None:
     raise AssertionError(msg)
+
+
+def test_caption_routing() -> None:
+    if not uses_text_package("title: aurora | text: Green sky glow. <|image|>"):
+        _fail("caption+image should use text_s128")
+    if not uses_text_package("tone then picture <|audio|> <|image|>"):
+        _fail("mix caption should use text_s128")
+    if uses_text_package("<|image|>"):
+        _fail("image-only should interleave")
+    if uses_text_package("<|audio|>"):
+        _fail("audio-only should interleave")
+    if has_caption_words("<|image|> <|audio|>"):
+        _fail("media-only is not a caption")
 
 
 def test_expand_counts() -> None:
@@ -121,6 +136,7 @@ def test_audio_pad() -> None:
 
 def main() -> int:
     tests = [
+        test_caption_routing,
         test_expand_counts,
         test_scatter_matches_slots,
         test_scatter_count_mismatch,
