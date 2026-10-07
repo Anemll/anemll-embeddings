@@ -11,16 +11,16 @@ from typing import Any
 
 import numpy as np
 
-from src.coreai_towers import (
-    AUDIO_FEAT,
-    AUDIO_FRAMES,
-    AUDIO_SOFT_TOKENS,
-    TEXT_EMBED,
-    TEXT_HIDDEN,
-    VISION_PATCH_DIM,
-    VISION_PATCHES,
-    VISION_SOFT_TOKENS,
-)
+# Keep these in sync with ``src/coreai_towers.py`` (no ``src`` package import —
+# Core AI venv has no sentence-transformers, and ``src/__init__.py`` pulls it).
+VISION_PATCHES = 2520
+VISION_PATCH_DIM = 768
+VISION_SOFT_TOKENS = 280
+AUDIO_FRAMES = 280
+AUDIO_FEAT = 128
+AUDIO_SOFT_TOKENS = 70
+TEXT_HIDDEN = 512
+TEXT_EMBED = 768
 
 TOWER_PACKAGES = {
     "vision": "vision_s280.aimodel",

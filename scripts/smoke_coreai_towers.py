@@ -19,20 +19,6 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
-
-from src.coreai_smoke import (  # noqa: E402
-    TOWER_ENTRIES,
-    TOWER_PACKAGES,
-    classify_device_runs,
-    dummy_numpy_inputs,
-    extract_devices_from_debug,
-    output_is_finite,
-    placement_from_cache_manifest,
-    tower_smoke_io,
-)
-from src.export_utils import artifacts_root, git_sha, utc_now, write_json  # noqa: E402
-
 DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 CACHE = Path.home() / "Library/Caches/coreai-cache"
 
@@ -61,6 +47,23 @@ def _reexec_if_needed() -> None:
         )
     print(f"re-exec {py} (coreai runtime)")
     os.execv(str(py), [str(py), *sys.argv])
+
+
+# Re-exec before importing ``src.*`` — Core AI venv has no sentence-transformers,
+# and ``src/__init__.py`` imports the text loader.
+_reexec_if_needed()
+sys.path.insert(0, str(REPO_ROOT / "src"))
+from coreai_smoke import (  # noqa: E402
+    TOWER_ENTRIES,
+    TOWER_PACKAGES,
+    classify_device_runs,
+    dummy_numpy_inputs,
+    extract_devices_from_debug,
+    output_is_finite,
+    placement_from_cache_manifest,
+    tower_smoke_io,
+)
+from export_utils import artifacts_root, git_sha, utc_now, write_json  # noqa: E402
 
 
 def _io_from_export_json(path: Path, tower: str) -> dict | None:
@@ -284,7 +287,6 @@ async def _run(towers: list[str], out_dir: Path) -> dict:
 
 
 def main() -> int:
-    _reexec_if_needed()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--tower",
