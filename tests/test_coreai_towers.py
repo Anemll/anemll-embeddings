@@ -17,9 +17,11 @@ from src.audio_export_patches import (  # noqa: E402
     AUDIO_PAST,
     _rel_shift_matmul,
     blocked_additive_attention_mask,
+    depthwise_conv1d_channels_last,
     gather_seq_windows,
     nchw_to_nhwc,
     nhwc_to_nchw,
+    rel_pos_ids_float,
     slice_seq_windows,
     swap_last_two,
     swap_mid_dims,
@@ -324,6 +326,63 @@ def test_recomposition_matches_cat() -> None:
         _fail(f"recomposition {tuple(got.shape)} != {tuple(ref.shape)}")
 
 
+def test_rel_pos_ids_float_matches_int64() -> None:
+    n_pos = 13
+    ref = torch.arange(n_pos - 1, -1, -1, dtype=torch.int64).to(torch.float32)
+    got = rel_pos_ids_float(n_pos, device="cpu", dtype=torch.float32)
+    if got.dtype != torch.float32:
+        _fail(f"dtype {got.dtype}")
+    if not torch.equal(got, ref):
+        _fail(f"{got} != {ref}")
+
+
+def test_rel_pos_ids_export_has_no_i64() -> None:
+    class _Pos(torch.nn.Module):
+        def forward(self, hidden: torch.Tensor) -> torch.Tensor:
+            ids = rel_pos_ids_float(13, device=hidden.device, dtype=hidden.dtype)
+            return ids[..., None] * hidden[:1, :1, :1]
+
+    ep = torch.export.export(_Pos(), (torch.randn(1, 4, 8),), strict=False)
+    for node in ep.graph.nodes:
+        val = node.meta.get("val")
+        dt = getattr(val, "dtype", None)
+        if dt in (torch.int64, torch.int32) or (dt is not None and "int64" in str(dt)):
+            _fail(f"export still has integer ids: {node.name} {dt}")
+
+
+def test_depthwise_conv1d_channels_last_matches_transpose() -> None:
+    torch.manual_seed(0)
+    channels, kernel, seq = 8, 5, 16
+    conv = torch.nn.Conv1d(channels, channels, kernel, groups=channels, bias=False)
+    conv.left_pad = kernel - 1
+    x = torch.randn(2, seq, channels)
+    padded = torch.nn.functional.pad(x.transpose(1, 2), (conv.left_pad, 0))
+    ref = conv(padded).transpose(1, 2)
+    got = depthwise_conv1d_channels_last(conv, x)
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("channels-last depthwise != transpose+conv1d")
+
+
+def test_depthwise_conv1d_export_has_no_transpose() -> None:
+    class _Dw(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.conv = torch.nn.Conv1d(4, 4, 5, groups=4, bias=False)
+            self.conv.left_pad = 4
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return depthwise_conv1d_channels_last(self.conv, x)
+
+    ep = torch.export.export(_Dw(), (torch.randn(1, 16, 4),), strict=False)
+    bad = [
+        str(n.target)
+        for n in ep.graph.nodes
+        if "permute" in str(n.target) or "transpose" in str(n.target)
+    ]
+    if bad:
+        _fail(f"export still permutes: {bad}")
+
+
 def test_io_specs() -> None:
     v = tower_io_spec("vision")
     if v["outputs"]["soft_tokens"] != [1, VISION_SOFT_TOKENS, 512]:
@@ -356,6 +415,10 @@ def main() -> int:
         test_swap_mid_dims_matches_permute,
         test_swap_mid_dims_export_has_no_5d_permute,
         test_nchw_nhwc_matches_permute,
+        test_rel_pos_ids_float_matches_int64,
+        test_rel_pos_ids_export_has_no_i64,
+        test_depthwise_conv1d_channels_last_matches_transpose,
+        test_depthwise_conv1d_export_has_no_transpose,
         test_vision_attn_matches_transpose_matmul,
         test_rel_shift_matmul_matches_hf,
         test_rotate_half_matmul_matches_cat,

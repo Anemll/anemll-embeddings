@@ -5,6 +5,10 @@
   ``i1``. ANE cannot reshape i1, so preferred-ANE falls through to GPU.
   Build a float additive 4-D blocked mask instead (no ``masked_fill`` /
   ``logical_not`` / 5-D ``permute``). Package I/O is 4-D NCHW expandDims.
+* Rel-pos ``position_ids`` is mid-graph int64 ``arange`` (not package I/O).
+  ANE rejects that type. Keep it in the hidden float dtype.
+* LightConv1d ``transpose(1,2)`` on ``[1,70,1024]`` is the leftover
+  ``reshape→permute``. Depthwise conv stays channels-last.
 """
 
 from __future__ import annotations
@@ -116,6 +120,32 @@ def swap_last_two(x: torch.Tensor) -> torch.Tensor:
     dim_a, dim_b = int(x.shape[-2]), int(x.shape[-1])
     flat = x.reshape(int(x.numel() // (dim_a * dim_b)), dim_a, dim_b, 1)
     return swap_mid_dims(flat).reshape(*lead, dim_b, dim_a)
+
+
+def depthwise_conv1d_channels_last(conv: Any, x: torch.Tensor) -> torch.Tensor:
+    """Causal depthwise ``conv1d`` on ``[B, S, C]`` without ``transpose(1, 2)``.
+
+    HF ``Gemma4AudioLightConv1d`` does ``conv(x.transpose(1, 2)).transpose(1, 2)``
+    on ``[1, 70, 1024]``. That is the leftover ``reshape→permute``. Window the
+    sequence dim with a one-hot and multiply the depthwise taps in place.
+    """
+    left_pad = int(conv.left_pad)
+    kernel = conv.kernel_size
+    kernel_size = int(kernel[0] if isinstance(kernel, tuple) else kernel)
+    padded = F.pad(x, (0, 0, left_pad, 0))
+    windows = slice_seq_windows(padded, kernel_size, 1)
+    # weight is [C, 1, K]; taps must be [1, 1, K, C] = weight[c,0,k].
+    taps = swap_last_two(conv.weight[:, 0, :]).reshape(1, 1, kernel_size, -1)
+    out = (windows * taps).sum(dim=2)
+    if conv.bias is not None:
+        out = out + conv.bias.reshape(1, 1, -1)
+    return out
+
+
+def rel_pos_ids_float(n_pos: int, *, device: torch.device | str, dtype: torch.dtype) -> torch.Tensor:
+    """``arange(n_pos-1, -1, -1)`` in ``dtype`` — no mid-graph int64."""
+    n_pos = int(n_pos)
+    return torch.arange(n_pos - 1, -1, -1, device=device, dtype=dtype)
 
 
 def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
@@ -327,6 +357,37 @@ def _audio_attn_forward(
     return attn_output, attn_weights
 
 
+def _rel_pos_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    """Sinusoidal rel-pos with float ``position_ids`` (ANE-legal mid-graph).
+
+    HF ``torch.arange(..., device=)`` is int64. That tensor is the
+    ``Incompatible element type for ANE`` leftover (not fp16/si8/si16).
+    It is mid-graph, not package I/O — do not I/O-cast it.
+    """
+    n_pos = int(self.context_size) // 2 + 1
+    dtype = hidden_states.dtype
+    position_ids = rel_pos_ids_float(n_pos, device=hidden_states.device, dtype=dtype)
+    position_ids = position_ids[..., None]
+    scaled_time = position_ids * self.inv_timescales.to(device=hidden_states.device, dtype=dtype)
+    pos_embed = torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=-1)
+    return pos_embed.to(dtype=dtype)
+
+
+def _light_conv1d_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    residual = hidden_states
+    hidden_states = self.pre_layer_norm(hidden_states)
+    hidden_states = self.linear_start(hidden_states)
+    hidden_states = F.glu(hidden_states, dim=-1)
+    hidden_states = depthwise_conv1d_channels_last(self.depthwise_conv1d, hidden_states)
+    gradient_clipping = min(self.gradient_clipping, torch.finfo(hidden_states.dtype).max)
+    hidden_states = torch.clamp(hidden_states, -gradient_clipping, gradient_clipping)
+    hidden_states = self.conv_norm(hidden_states)
+    hidden_states = self.act_fn(hidden_states)
+    hidden_states = self.linear_end(hidden_states)
+    hidden_states = hidden_states + residual
+    return hidden_states
+
+
 def _audio_model_forward(
     self,
     input_features: torch.Tensor,
@@ -408,6 +469,8 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
     g4.Gemma4AudioSubSampleConvProjection.forward = _subsample_conv_forward
     g4.Gemma4AudioSubSampleConvProjectionLayer.forward = _subsample_layer_forward
+    g4.Gemma4AudioLightConv1d.forward = _light_conv1d_forward
+    g4.Gemma4AudioRelPositionalEncoding.forward = _rel_pos_forward
     return {
         "patched": 1,
         "window_op": "onehot_matmul",
@@ -415,6 +478,8 @@ def apply_audio_unfold_patch() -> dict[str, int]:
         "io": "nchw_expanddims",
         "subsample": "nchw_ln_no_permute",
         "value_dtype": "hidden_no_float_cast",
+        "rel_pos": "float_arange",
+        "lconv1d": "channels_last_onehot",
     }
 
 
