@@ -122,6 +122,97 @@ def swap_last_two(x: torch.Tensor) -> torch.Tensor:
     return swap_mid_dims(flat).reshape(*lead, dim_b, dim_a)
 
 
+def stride_select(x: torch.Tensor, step: int) -> torch.Tensor:
+    """``x[:, ::step]`` via one-hot matmul — no ``aten.slice``.
+
+    Exact on dim 1. Used for the audio subsample mask ``(1,280)→(1,70)``.
+    That slice was in the FX graph and never became a MIL use-site.
+    """
+    step = int(step)
+    if step <= 0:
+        raise ValueError(f"stride_select step {step}")
+    seq = int(x.shape[1])
+    n_keep = seq // step
+    dtype = x.dtype if x.is_floating_point() else torch.float32
+    slots = torch.arange(seq, device=x.device, dtype=dtype)
+    idx = torch.arange(n_keep, device=x.device, dtype=dtype) * float(step)
+    onehot = torch.clamp(1.0 - (idx.unsqueeze(1) - slots).abs(), 0, 1)
+    flat = x.reshape(int(x.shape[0]), seq, -1).to(dtype=dtype)
+    got = onehot.reshape(1, n_keep, seq) @ flat
+    return got.reshape(int(x.shape[0]), n_keep, *x.shape[2:]).to(dtype=x.dtype)
+
+
+def prefix_rows(x: torch.Tensor, keep: int) -> torch.Tensor:
+    """``x[:, :keep]`` via one-hot matmul — no ``aten.slice``.
+
+    Audio attention unpad is ``[1,72,1024] → [1,70,1024]`` (block pad 72,
+    real seq 70). That slice was in FX and never became a MIL use-site.
+    """
+    seq = int(x.shape[1])
+    keep = int(keep)
+    if keep == seq:
+        return x
+    if keep < 0 or keep > seq:
+        raise ValueError(f"prefix_rows keep {keep} seq {seq}")
+    dtype = x.dtype if x.is_floating_point() else torch.float32
+    slots = torch.arange(seq, device=x.device, dtype=dtype)
+    idx = torch.arange(keep, device=x.device, dtype=dtype)
+    onehot = torch.clamp(1.0 - (idx.unsqueeze(1) - slots).abs(), 0, 1)
+    flat = x.reshape(int(x.shape[0]), seq, -1).to(dtype=dtype)
+    got = onehot.reshape(1, keep, seq) @ flat
+    return got.reshape(int(x.shape[0]), keep, *x.shape[2:]).to(dtype=x.dtype)
+
+
+def bind_glu_half_weights(module: torch.nn.Module) -> int:
+    """Split LightConv GLU weights once, outside the traced graph.
+
+    ``torch.split`` on ``linear_start.weight`` stayed in FX as
+    ``aten.split`` and constant-folded out of MIL. Bind the halves as
+    buffers so export has two parameters and no split op.
+    """
+    bound = 0
+    for mod in module.modules():
+        start = getattr(mod, "linear_start", None)
+        if start is None or getattr(mod, "_glu_w_lo", None) is not None:
+            continue
+        inner = getattr(start, "linear", start)
+        weight = getattr(inner, "weight", None)
+        if weight is None:
+            continue
+        half = int(weight.shape[0]) // 2
+        mod.register_buffer(
+            "_glu_w_lo", weight.detach()[:half].contiguous(), persistent=False
+        )
+        mod.register_buffer(
+            "_glu_w_hi", weight.detach()[half:].contiguous(), persistent=False
+        )
+        bias = getattr(inner, "bias", None)
+        if bias is not None:
+            mod.register_buffer(
+                "_glu_b_lo", bias.detach()[:half].contiguous(), persistent=False
+            )
+            mod.register_buffer(
+                "_glu_b_hi", bias.detach()[half:].contiguous(), persistent=False
+            )
+        bound += 1
+    return bound
+
+
+def glu_from_bound_halves(mod: Any, x: torch.Tensor) -> torch.Tensor:
+    """GLU from buffers written by ``bind_glu_half_weights``."""
+    linear = mod.linear_start
+    if getattr(linear, "use_clipped_linears", False):
+        x = torch.clamp(x, linear.input_min, linear.input_max)
+    b_lo = getattr(mod, "_glu_b_lo", None)
+    b_hi = getattr(mod, "_glu_b_hi", None)
+    lo = F.linear(x, mod._glu_w_lo, b_lo)
+    hi = F.linear(x, mod._glu_w_hi, b_hi)
+    if getattr(linear, "use_clipped_linears", False):
+        lo = torch.clamp(lo, linear.output_min, linear.output_max)
+        hi = torch.clamp(hi, linear.output_min, linear.output_max)
+    return lo * torch.sigmoid(hi)
+
+
 def glu_split_last(x: torch.Tensor) -> torch.Tensor:
     """``F.glu(x, dim=-1)`` via ``torch.split`` — first half × sigmoid(second).
 
@@ -468,7 +559,7 @@ def _audio_attn_forward(
     attn_output = swap_mid_dims(attn_output).reshape(
         batch_size, num_blocks * chunk, num_heads * head_dim
     )
-    attn_output = attn_output[:, :seq_length].contiguous()
+    attn_output = prefix_rows(attn_output, seq_length).contiguous()
     attn_output = self.post(attn_output.to(hidden_states.dtype))
     return attn_output, attn_weights
 
@@ -492,7 +583,10 @@ def _rel_pos_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
 def _light_conv1d_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
     residual = hidden_states
     hidden_states = self.pre_layer_norm(hidden_states)
-    hidden_states = glu_from_linear_halves(self.linear_start, hidden_states)
+    if getattr(self, "_glu_w_lo", None) is not None:
+        hidden_states = glu_from_bound_halves(self, hidden_states)
+    else:
+        hidden_states = glu_from_linear_halves(self.linear_start, hidden_states)
     hidden_states = depthwise_conv1d_channels_last(self.depthwise_conv1d, hidden_states)
     gradient_clipping = min(self.gradient_clipping, torch.finfo(hidden_states.dtype).max)
     hidden_states = torch.clamp(hidden_states, -gradient_clipping, gradient_clipping)
@@ -573,7 +667,7 @@ def _subsample_layer_forward(
     hidden_states = self.act(self.norm(nchw_to_nhwc(hidden_states)))
     hidden_states = nhwc_to_nchw(hidden_states)
     if mask is not None:
-        mask = mask[:, ::2]
+        mask = stride_select(mask, 2)
     return hidden_states, mask
 
 
@@ -596,7 +690,9 @@ def apply_audio_unfold_patch() -> dict[str, int]:
         "value_dtype": "hidden_no_float_cast",
         "rel_pos": "float_arange",
         "lconv1d": "channels_last_onehot",
-        "glu": "linear_halves",
+        "glu": "bound_halves",
+        "mask_stride": "onehot_stride2",
+        "attn_unpad": "onehot_prefix",
         "rel_shift": "baked_onehot",
     }
 

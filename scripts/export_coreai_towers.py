@@ -27,7 +27,10 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.audio_export_patches import apply_audio_export_patches  # noqa: E402
+from src.audio_export_patches import (  # noqa: E402
+    apply_audio_export_patches,
+    bind_glu_half_weights,
+)
 from src.vision_export_patches import apply_vision_ane_embed_patch  # noqa: E402
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
@@ -235,6 +238,8 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
     if auto.audio_tower is None or auto.embed_audio is None:
         raise RuntimeError("audio tower missing")
     wrapped = AudioSoftTokens(auto.audio_tower, auto.embed_audio).eval()
+    n_glu = bind_glu_half_weights(wrapped)
+    print(f"audio glu halves bound={n_glu}")
     feat, mask = audio_example()
     with torch.no_grad():
         soft = wrapped(feat, mask)

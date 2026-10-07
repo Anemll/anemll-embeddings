@@ -21,8 +21,12 @@ from src.audio_export_patches import (  # noqa: E402
     blocked_additive_attention_mask,
     depthwise_conv1d_channels_last,
     gather_seq_windows,
+    bind_glu_half_weights,
+    glu_from_bound_halves,
     glu_from_linear_halves,
     glu_split_last,
+    prefix_rows,
+    stride_select,
     nchw_to_nhwc,
     nhwc_to_nchw,
     rel_pos_ids_float,
@@ -354,6 +358,74 @@ def test_rel_shift_baked_export_has_no_slice() -> None:
         _fail(f"slice/pad still in baked rel-shift export: {targets}")
 
 
+def test_stride_select_matches_slice() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(1, 280)
+    got = stride_select(x, 2)
+    ref = x[:, ::2]
+    if got.shape != ref.shape or not torch.allclose(got, ref):
+        _fail("stride_select != [:, ::2]")
+    got2 = stride_select(got, 2)
+    ref2 = ref[:, ::2]
+    if got2.shape != (1, 70) or not torch.allclose(got2, ref2):
+        _fail("stride_select twice != (1,70)")
+
+
+def test_stride_select_export_has_no_slice() -> None:
+    class _S(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return stride_select(stride_select(x, 2), 2)
+
+    ep = torch.export.export(_S(), (torch.randn(1, 280),), strict=False)
+    bad = [str(n.target) for n in ep.graph.nodes if "slice" in str(n.target)]
+    if bad:
+        _fail(f"slice still in stride_select export: {bad}")
+
+
+def test_prefix_rows_matches_slice() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(1, 72, 16)
+    got = prefix_rows(x, 70)
+    ref = x[:, :70]
+    if got.shape != ref.shape or not torch.allclose(got, ref):
+        _fail("prefix_rows != [:, :70]")
+
+
+def test_prefix_rows_export_has_no_slice() -> None:
+    class _P(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return prefix_rows(x, 5)
+
+    ep = torch.export.export(_P(), (torch.randn(1, 8, 4),), strict=False)
+    bad = [str(n.target) for n in ep.graph.nodes if "slice" in str(n.target)]
+    if bad:
+        _fail(f"slice still in prefix_rows export: {bad}")
+
+
+def test_bound_glu_halves_export_has_no_split() -> None:
+    class _M(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.linear_start = torch.nn.Linear(8, 16, bias=False)
+            self.pre_layer_norm = torch.nn.Identity()
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return glu_from_bound_halves(self, x)
+
+    mod = _M()
+    if bind_glu_half_weights(mod) != 1:
+        _fail("bind_glu_half_weights")
+    x = torch.randn(1, 4, 8)
+    got = mod(x)
+    ref = torch.nn.functional.glu(mod.linear_start(x), dim=-1)
+    if not torch.allclose(got, ref, atol=1e-5):
+        _fail("bound halves != linear then F.glu")
+    ep = torch.export.export(mod, (x,), strict=False)
+    bad = [str(n.target) for n in ep.graph.nodes if "split" in str(n.target) or "slice" in str(n.target)]
+    if bad:
+        _fail(f"split/slice still in bound GLU export: {bad}")
+
+
 def test_glu_split_last_matches_glu() -> None:
     torch.manual_seed(0)
     x = torch.randn(1, 70, 2048)
@@ -546,6 +618,11 @@ def main() -> int:
         test_rel_shift_static_matches_hf,
         test_rel_shift_baked_matches_hf,
         test_rel_shift_baked_export_has_no_slice,
+        test_stride_select_matches_slice,
+        test_stride_select_export_has_no_slice,
+        test_prefix_rows_matches_slice,
+        test_prefix_rows_export_has_no_slice,
+        test_bound_glu_halves_export_has_no_split,
         test_glu_split_last_matches_glu,
         test_glu_from_linear_halves_matches_linear_glu,
         test_glu_from_linear_halves_export_has_no_activation_slice,
