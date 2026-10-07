@@ -126,13 +126,12 @@ def _vision_attn_forward(
     position_ids: torch.Tensor | None = None,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-head attention — Q/K/V same shape into ``sdpa``, no GEMM transpose.
+    """Per-head attention as 4D SDPA ``[B, 1, S, D]``.
 
-    Leftover ``GPU_region_0`` unnamed ``op`` after heads-first take was
-    ``kh.transpose(-1,-2)`` on ``[1,2520,64]`` (and ``take.T``). Core AI
-    fused that to SDPA and rejected ``Key and value must be the same shape``
-    (K became ``[1,64,2520]``, V stayed ``[1,2520,64]``). Feed matching
-    ``[B,S,D]`` triples into SDPA; scatter the head with ``F.pad``.
+    Pre-specialize MIL names the GPU-region op ``scaled_dot_product_attention``
+    (``sdpa_idyqjhwl``) with bare ``InvalidOutputType``. The live call was 3D
+    ``[B, S, D]`` after squeezing the mask to ``[B, 1, S]``. Bake the standard
+    4D layout (head axis explicit) and keep the 4D mask ``[B, 1, 1, S]``.
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
@@ -156,9 +155,11 @@ def _vision_attn_forward(
     hidden = n_heads * head_dim
     attn_output = query_flat.new_zeros(batch, seq_len, hidden)
     attn_weights = query_flat.new_zeros(batch, seq_len, seq_len)
+    # 4D mask ``[B, 1, 1, S]`` / ``[B, 1, S, S]`` matches 4D SDPA. Do not
+    # squeeze to 3D (that was the layout beside bare InvalidOutputType).
     mask = attention_mask
-    if mask is not None and mask.ndim == 4 and int(mask.shape[1]) == 1:
-        mask = mask[:, 0]
+    if mask is not None and mask.ndim == 3:
+        mask = mask.reshape(int(mask.shape[0]), 1, int(mask.shape[-2]), int(mask.shape[-1]))
     kv_heads = n_kv
     for head in range(n_heads):
         take_q = _head_take(
@@ -167,13 +168,12 @@ def _vision_attn_forward(
         take_kv = _head_take(
             kv_heads, head_dim, head % kv_heads, device=key_flat.device, dtype=key_flat.dtype
         )
-        qh = query_flat @ take_q
-        kh = key_flat @ take_kv
-        vh = value_flat @ take_kv
+        qh = (query_flat @ take_q).reshape(batch, 1, seq_len, head_dim)
+        kh = (key_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
+        vh = (value_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
         out_h = F.scaled_dot_product_attention(
             qh, kh, vh, attn_mask=mask, dropout_p=0.0, scale=scale
-        )
-        attn_weights = qh.new_zeros(batch, seq_len, seq_len)
+        ).reshape(batch, seq_len, head_dim)
         left = head * head_dim
         right = hidden - left - head_dim
         attn_output = attn_output + F.pad(out_h, (left, right))
@@ -198,5 +198,5 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
         "rotate_half": "matmul",
-        "attn": "per_head_sdpa_same_kv_shape",
+        "attn": "per_head_sdpa_4d",
     }
