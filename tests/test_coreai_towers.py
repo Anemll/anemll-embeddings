@@ -388,6 +388,33 @@ def test_glu_from_linear_halves_export_has_no_activation_slice() -> None:
         _fail(f"activation slice still in halves GLU export: {targets}")
 
 
+def test_glu_from_linear_halves_matches_clippable() -> None:
+    """Gemma4ClippableLinear has no ``.weight``; clips wrap an inner Linear."""
+
+    class _Clippable(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.use_clipped_linears = True
+            self.linear = torch.nn.Linear(16, 32, bias=False)
+            self.input_min = torch.tensor(-2.0)
+            self.input_max = torch.tensor(2.0)
+            self.output_min = torch.tensor(-4.0)
+            self.output_max = torch.tensor(4.0)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            x = torch.clamp(x, self.input_min, self.input_max)
+            y = self.linear(x)
+            return torch.clamp(y, self.output_min, self.output_max)
+
+    torch.manual_seed(1)
+    lin = _Clippable()
+    x = torch.randn(1, 70, 16) * 3
+    got = glu_from_linear_halves(lin, x)
+    ref = torch.nn.functional.glu(lin(x), dim=-1)
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("glu_from_linear_halves != clipped linear then F.glu")
+
+
 def test_rotate_half_matmul_matches_cat() -> None:
     torch.manual_seed(0)
     x = torch.randn(2, 4, 8)
@@ -522,6 +549,7 @@ def main() -> int:
         test_glu_split_last_matches_glu,
         test_glu_from_linear_halves_matches_linear_glu,
         test_glu_from_linear_halves_export_has_no_activation_slice,
+        test_glu_from_linear_halves_matches_clippable,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,

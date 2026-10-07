@@ -134,26 +134,43 @@ def glu_split_last(x: torch.Tensor) -> torch.Tensor:
     return lo * torch.sigmoid(hi)
 
 
+def _inner_linear(linear: Any) -> Any:
+    """``Gemma4ClippableLinear`` stores ``nn.Linear`` at ``.linear`` (no ``.weight``)."""
+    inner = getattr(linear, "linear", None)
+    if inner is not None and hasattr(inner, "weight"):
+        return inner
+    return linear
+
+
 def glu_from_linear_halves(linear: Any, x: torch.Tensor) -> torch.Tensor:
     """``linear`` then GLU as two half-width GEMMs — no ``[1,70,2048]`` slice.
 
     Live leftover ``reshape→strided_slice`` was ``F.glu`` on the 2048-wide
     ``linear_start`` (affine ``d0*143360 + d1*2048 + d2 + 1024``). Split the
-    weight into two half-width tensors and write two GEMMs. Numerically the
-    same as full linear then first×sigmoid(second) in f32.
+    inner weight into two half-width tensors and write two GEMMs. Keep the
+    ClippableLinear input/output clamps so this matches ``linear`` then
+    first×sigmoid(second) in f32. Do not retry a constant half-take.
     """
-    out_f = int(linear.weight.shape[0])
+    if getattr(linear, "use_clipped_linears", False):
+        x = torch.clamp(x, linear.input_min, linear.input_max)
+    inner = _inner_linear(linear)
+    weight = inner.weight
+    bias = getattr(inner, "bias", None)
+    out_f = int(weight.shape[0])
     if out_f % 2:
         raise ValueError(f"glu_from_linear_halves out {out_f} (want even)")
     half = out_f // 2
-    w_lo, w_hi = torch.split(linear.weight, half, dim=0)
-    if linear.bias is None:
+    w_lo, w_hi = torch.split(weight, half, dim=0)
+    if bias is None:
         lo = F.linear(x, w_lo)
         hi = F.linear(x, w_hi)
     else:
-        b_lo, b_hi = torch.split(linear.bias, half, dim=0)
+        b_lo, b_hi = torch.split(bias, half, dim=0)
         lo = F.linear(x, w_lo, b_lo)
         hi = F.linear(x, w_hi, b_hi)
+    if getattr(linear, "use_clipped_linears", False):
+        lo = torch.clamp(lo, linear.output_min, linear.output_max)
+        hi = torch.clamp(hi, linear.output_min, linear.output_max)
     return lo * torch.sigmoid(hi)
 
 
