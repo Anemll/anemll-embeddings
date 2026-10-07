@@ -377,7 +377,7 @@ def main() -> int:
         "notes": [
             "Separate packages; host interleaves media placeholders.",
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
-            "PyTorch export is FP32; Core AI convert casts to 16-bit.",
+            "PyTorch export is FP32; Core AI convert casts to 16-bit except vision (cast16 zeros it).",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)
