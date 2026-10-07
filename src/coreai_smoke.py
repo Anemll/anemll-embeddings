@@ -129,7 +129,7 @@ def dummy_numpy_inputs(
         return {"input_ids": ids, "attention_mask": mask}
     if name == "text_embeds":
         emb_dt = resolve_dtype(dtypes.get("inputs_embeds", "float16"), np.float16)
-        mask_dt = resolve_dtype(dtypes.get("attention_mask", "int16"), np.int16)
+        mask_dt = resolve_dtype(dtypes.get("attention_mask", "float16"), np.float16)
         embeds = np.full((1, TEXT_EMBEDS_S, TEXT_HIDDEN), 0.02, dtype=emb_dt)
         mask = np.ones((1, TEXT_EMBEDS_S), dtype=mask_dt)
         mask[:, -8:] = 0

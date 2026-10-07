@@ -347,9 +347,10 @@ def _export_text_embeds(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     wrapper = wrapper.float().eval()
     traced = TraceableEmbeddingGemma2Embeds(wrapper, seq_len=seq_len, batch=1).eval()
     hidden = int(wrapper.hidden_size)
-    # ANE-legal I/O: f16 embeds + si16 mask. Graph widens embeds to f32.
+    # ANE-legal I/O: f16 embeds + f16 mask. Graph widens both to f32.
+    # si16 mask left anec.not_equal_zero on GPU (wants f16/i8).
     embeds = torch.randn(1, seq_len, hidden, dtype=torch.float16)
-    mask = torch.ones(1, seq_len, dtype=torch.int16)
+    mask = torch.ones(1, seq_len, dtype=torch.float16)
     mask[:, -8:] = 0
     with torch.no_grad():
         emb = traced(embeds, mask)
@@ -438,7 +439,7 @@ def main() -> int:
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
             "PyTorch export is FP32; Core AI convert casts to 16-bit except vision (cast16 zeros it).",
             "Text I/O is int32 (vocab 262144 overflows si16). Vision/audio integer I/O stays si16.",
-            "text_embeds_s320: f16 embeds I/O + si16 mask; convert --no-cast16 (graph stays f32).",
+            "text_embeds_s320: f16 embeds + f16 mask I/O; convert --no-cast16 (graph stays f32).",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)
