@@ -195,12 +195,14 @@ def _export_vision(out_dir: Path, *, convert: bool) -> dict:
     aimodel = out_dir / "vision_s280.aimodel"
     rc = 0
     if convert:
+        # cast16 zeros this graph (eager/.pt2 absmax ~5.1 → aimodel 0).
         rc = _convert(
             ep_path,
             aimodel,
             entry="vision_s280",
             inputs=["pixel_values", "pixel_position_ids"],
             outputs=["soft_tokens"],
+            no_cast16=True,
         )
     return {
         "tower": "vision",

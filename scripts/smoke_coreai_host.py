@@ -136,7 +136,7 @@ def main() -> int:
     vision_soft = _run_tower(
         out_dir / "vision_s280.aimodel",
         "vision_s280",
-        {"pixel_values": pixels.astype(np.float16, copy=False), "pixel_position_ids": pos},
+        {"pixel_values": pixels.astype(np.float32, copy=False), "pixel_position_ids": pos},
         vision_npy,
     )
     audio_soft = _run_tower(
@@ -194,11 +194,23 @@ def main() -> int:
             image_soft=torch.zeros_like(img_t),
             audio_soft=torch.zeros_like(aud_t),
         )
+        emb_vis = encode_interleaved(
+            wrapper,
+            ids,
+            mask,
+            image_token_id=image_id,
+            audio_token_id=audio_id,
+            pad_token_id=pad_id,
+            image_soft=img_t,
+            audio_soft=torch.zeros_like(aud_t),
+        )
     vec = emb.detach().cpu().numpy().reshape(-1)
     zero = emb_zero.detach().cpu().numpy().reshape(-1)
+    vis_only = emb_vis.detach().cpu().numpy().reshape(-1)
     interleave_moves = float(np.linalg.norm(vec - zero))
+    vision_moves = float(np.linalg.norm(vis_only - zero))
     print(f"interleaved {vec.shape} finite={bool(np.isfinite(vec).all())} l2={float(np.linalg.norm(vec)):.4f}")
-    print(f"vs zero-soft L2={interleave_moves:.4f}")
+    print(f"vs zero-soft L2={interleave_moves:.4f} vision-only Δ={vision_moves:.4f}")
 
     # text_s128 on caption only (package cannot hold 280 image slots).
     caption = "Green sky glow."
@@ -219,6 +231,8 @@ def main() -> int:
         vec.shape == (768,)
         and bool(np.isfinite(vec).all())
         and interleave_moves > 1e-3
+        and vision_moves > 1e-3
+        and vis_abs > 1e-3
         and text_vec.shape == (768,)
         and bool(np.isfinite(text_vec).all())
         and list(vision_soft.shape) == [1, IMAGE_SLOTS, 512]
@@ -237,13 +251,14 @@ def main() -> int:
         "slots": slots,
         "vision_soft_shape": list(vision_soft.shape),
         "vision_absmax": vis_abs,
-        "vision_note": "si16 vision package is finite zeros on CPU dummy and real pixels",
+        "vision_note": "cast16 zeroed the graph; convert uses --no-cast16 (f32 pixels)",
         "audio_soft_shape": list(audio_soft.shape),
         "audio_finite": aud_finite,
         "interleaved_shape": list(vec.shape),
         "interleaved_finite": bool(np.isfinite(vec).all()),
         "interleaved_l2": float(np.linalg.norm(vec)),
         "zero_soft_l2_delta": interleave_moves,
+        "vision_only_zero_soft_l2_delta": vision_moves,
         "text_s128_shape": list(text_vec.shape),
         "text_s128_finite": bool(np.isfinite(text_vec).all()),
         "text_s128_note": "ids-only S=128; cannot hold 280 image slots",
@@ -251,7 +266,8 @@ def main() -> int:
             "CPU only. ANE follow-up: embedding Int/Long widen; audio dummy_pool.",
             "Host expands 280 image / 70 audio slots (package), not HF 256 / 25.",
             "Interleaved 768-d uses PyTorch text tower + inputs_embeds.",
-            "FLOAT32 Core ML text tree untouched. No re-export.",
+            "Vision convert skips cast16 (that pass emitted all-zero soft tokens).",
+            "FLOAT32 Core ML text tree untouched. Vision re-converted only.",
         ],
     }
     dest = out_dir / "host.smoke.json"
