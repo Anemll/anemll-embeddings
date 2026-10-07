@@ -17,7 +17,11 @@ from src.coreai_host import (  # noqa: E402
     IMAGE_SLOTS,
     adapt_vision_pixels,
     adapt_vision_position_ids,
+    crop_audio_soft_to_src,
+    crop_vision_soft_to_valid,
     expand_media_placeholders,
+    hf_audio_slots_from_frames,
+    hf_image_slots_from_positions,
     pad_audio_to_package,
     placeholder_masks,
     scatter_soft_tokens,
@@ -86,6 +90,26 @@ def test_vision_pos_si16() -> None:
         _fail(str(pix.dtype))
 
 
+def test_crop_trailing_vision_pads() -> None:
+    pos = np.zeros((1, 2520, 2), dtype=np.int16)
+    pos[:, 2304:] = -1
+    if hf_image_slots_from_positions(pos) != 256:
+        _fail("256 valid groups")
+    soft = np.arange(280 * 2, dtype=np.float32).reshape(1, 280, 2)
+    got = crop_vision_soft_to_valid(soft, pos)
+    if got.shape != (1, 256, 2) or not np.array_equal(got, soft[:, :256]):
+        _fail(str(got.shape))
+
+
+def test_crop_audio_ceil_frames() -> None:
+    if hf_audio_slots_from_frames(99) != 25:
+        _fail("99 frames → 25 tokens")
+    soft = np.ones((1, 70, 3), dtype=np.float32)
+    got = crop_audio_soft_to_src(soft, 99)
+    if got.shape != (1, 25, 3):
+        _fail(str(got.shape))
+
+
 def test_audio_pad() -> None:
     feat = np.ones((1, 99, 128), dtype=np.float32)
     x, m = pad_audio_to_package(feat)
@@ -101,6 +125,8 @@ def main() -> int:
         test_scatter_matches_slots,
         test_scatter_count_mismatch,
         test_vision_pos_si16,
+        test_crop_trailing_vision_pads,
+        test_crop_audio_ceil_frames,
         test_audio_pad,
     ]
     for fn in tests:

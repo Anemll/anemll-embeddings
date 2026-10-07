@@ -41,9 +41,9 @@ def expand_media_placeholders(
 ) -> str:
     """Replace each media token with ``slots`` copies (package contract)."""
     out = text
-    if image_token:
+    if image_token and int(image_slots) > 0:
         out = out.replace(image_token, image_token * int(image_slots))
-    if audio_token:
+    if audio_token and int(audio_slots) > 0:
         out = out.replace(audio_token, audio_token * int(audio_slots))
     return out
 
@@ -61,6 +61,54 @@ def adapt_vision_pixels(pixels: np.ndarray | torch.Tensor) -> np.ndarray:
     if arr.shape != (1, VISION_PATCHES, VISION_PATCH_DIM):
         raise ValueError(f"pixels shape {arr.shape}")
     return arr.astype(np.float32, copy=False)
+
+
+def hf_image_slots_from_positions(
+    pos: np.ndarray | torch.Tensor,
+    *,
+    group: int = 9,
+) -> int:
+    """Valid-patch groups (HF pooler). Pads must be a trailing suffix."""
+    arr = np.asarray(pos)
+    if arr.ndim == 3:
+        arr = arr[0]
+    valid = (arr != -1).all(axis=-1)
+    n_valid = int(valid.sum())
+    if n_valid % int(group) != 0:
+        raise ValueError(f"valid patches {n_valid} not divisible by {group}")
+    if not bool(valid[:n_valid].all()) or bool(valid[n_valid:].any()):
+        raise ValueError("vision pads are not a trailing suffix; cannot crop")
+    return n_valid // int(group)
+
+
+def crop_vision_soft_to_valid(
+    soft: np.ndarray | torch.Tensor,
+    pos: np.ndarray | torch.Tensor,
+) -> np.ndarray:
+    """Drop trailing pad-pooled groups so slots match HF (256 on the 64² fixture)."""
+    arr = np.asarray(soft)
+    keep = hf_image_slots_from_positions(pos)
+    if arr.shape[1] < keep:
+        raise ValueError(f"soft tokens {arr.shape} shorter than {keep} valid groups")
+    return arr[:, :keep]
+
+
+def hf_audio_slots_from_frames(n_frames: int, *, subsample: int = 4) -> int:
+    """``ceil(frames / 4)`` — matches 99 mel frames → 25 tokens on the 1 s wav."""
+    n = int(n_frames)
+    step = int(subsample)
+    return (n + step - 1) // step
+
+
+def crop_audio_soft_to_src(
+    soft: np.ndarray | torch.Tensor,
+    n_src_frames: int,
+) -> np.ndarray:
+    arr = np.asarray(soft)
+    keep = hf_audio_slots_from_frames(n_src_frames)
+    if arr.shape[1] < keep:
+        raise ValueError(f"audio soft {arr.shape} shorter than {keep}")
+    return arr[:, :keep]
 
 
 def pad_audio_to_package(
