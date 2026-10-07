@@ -126,12 +126,12 @@ def _vision_attn_forward(
     position_ids: torch.Tensor | None = None,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-head attention as 4D SDPA ``[B, 1, S, D]``.
+    """Per-head 4D attention as matmul + softmax + matmul, all f32.
 
-    Pre-specialize MIL names the GPU-region op ``scaled_dot_product_attention``
-    (``sdpa_idyqjhwl``) with bare ``InvalidOutputType``. The live call was 3D
-    ``[B, S, D]`` after squeezing the mask to ``[B, 1, S]``. Bake the standard
-    4D layout (head axis explicit) and keep the 4D mask ``[B, 1, 1, S]``.
+    Fused ``scaled_dot_product_attention`` is the GPU region
+    (``1x1x2520x64xf32`` q/k/v/out, mask ``1x1x1x2520xf32``). Keep that
+    layout and do not cast the island to fp16. Explicit ops stay in the
+    main graph instead of an ``sdpa`` composite.
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
@@ -171,9 +171,10 @@ def _vision_attn_forward(
         qh = (query_flat @ take_q).reshape(batch, 1, seq_len, head_dim)
         kh = (key_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
         vh = (value_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
-        out_h = F.scaled_dot_product_attention(
-            qh, kh, vh, attn_mask=mask, dropout_p=0.0, scale=scale
-        ).reshape(batch, seq_len, head_dim)
+        scores = torch.matmul(qh, kh.transpose(-1, -2)) * scale
+        if mask is not None:
+            scores = scores + mask
+        out_h = torch.matmul(torch.softmax(scores, dim=-1), vh).reshape(batch, seq_len, head_dim)
         left = head * head_dim
         right = hidden - left - head_dim
         attn_output = attn_output + F.pad(out_h, (left, right))
@@ -198,5 +199,5 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
         "rotate_half": "matmul",
-        "attn": "per_head_sdpa_4d",
+        "attn": "per_head_matmul_softmax_f32",
     }
