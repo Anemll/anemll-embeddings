@@ -286,8 +286,8 @@ async def _run(towers: list[str], out_dir: Path, *, compute: str) -> dict:
         "all_pass": not fail,
         "compute": compute,
         "notes": [
-            "Load + one forward only. Packages were not re-exported.",
-            "Default compute=cpu. ANE specialize aborted (sdpa grouping / i1 I/O).",
+            "Load + one forward only.",
+            "Default compute=cpu. Isolated ANE: text GPU, vision ANE+GPU, audio GPU.",
             "Begin/end CPU↔device switches are OK. Mid-graph CPU islands are flagged.",
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
         ],
