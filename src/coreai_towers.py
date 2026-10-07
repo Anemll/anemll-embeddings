@@ -87,8 +87,9 @@ class AudioSoftTokens(nn.Module):
     def forward(
         self, input_features: torch.Tensor, input_features_mask: torch.Tensor
     ) -> torch.Tensor:
-        # f16 I/O is ANE-legal. Keep mask numeric — bool i1 was rejected and
-        # an all-1s const mask live-out tripped ANEC dummy_pool.
+        # f16 I/O is ANE-legal. Keep mask numeric. Export patches replace HF
+        # i1 blocked attention (1x1x6x12x84xi1 / 1x1x1x1x70xi1) with float
+        # additive 5D so preferred-ANE is not GPU-gated.
         input_features = input_features.to(dtype=torch.float32)
         keep = input_features_mask.to(dtype=input_features.dtype)
         out = self.audio_tower(input_features, keep, return_dict=True)

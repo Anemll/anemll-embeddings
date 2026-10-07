@@ -27,7 +27,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.audio_export_patches import apply_audio_unfold_patch  # noqa: E402
+from src.audio_export_patches import apply_audio_export_patches  # noqa: E402
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
@@ -221,8 +221,8 @@ def _export_vision(out_dir: Path, *, convert: bool) -> dict:
 
 def _export_audio(out_dir: Path, *, convert: bool) -> dict:
     print("Loading audio+text ST (vision off) on CPU FP32 …")
-    unfold_patch = apply_audio_unfold_patch()
-    print(f"audio unfold patch={unfold_patch}")
+    unfold_patch = apply_audio_export_patches()
+    print(f"audio export patches={unfold_patch}")
     st, load_meta = load_multimodal_sentence_transformer(
         dtype=torch.float32, device="cpu", vision=False, audio=True
     )
@@ -442,7 +442,8 @@ def main() -> int:
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
             "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
-            "ANE-legal float I/O: vision pixels f16, audio feat+mask f16, text_embeds f16 in/out.",
+            "ANE-legal float I/O: vision pixels f16, audio feat+mask f16. text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
+            "Audio: float additive 5D blocked mask (no HF i1 create_bidirectional_mask / blocked_5d).",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

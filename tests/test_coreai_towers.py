@@ -11,7 +11,13 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.audio_export_patches import gather_seq_windows  # noqa: E402
+from src.audio_export_patches import (  # noqa: E402
+    AUDIO_CHUNK,
+    AUDIO_FUTURE,
+    AUDIO_PAST,
+    blocked_additive_attention_mask,
+    gather_seq_windows,
+)
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
@@ -74,6 +80,38 @@ def test_gather_seq_windows_export_has_no_unfold() -> None:
         _fail(f"export still contains unfold: {targets}")
 
 
+def test_blocked_additive_mask_shape_and_pad() -> None:
+    keep = torch.ones(1, AUDIO_SOFT_TOKENS, dtype=torch.float32)
+    keep[:, -8:] = 0
+    mask = blocked_additive_attention_mask(keep)
+    n_blocks = (AUDIO_SOFT_TOKENS + AUDIO_CHUNK - 1) // AUDIO_CHUNK
+    context = AUDIO_CHUNK + AUDIO_PAST + AUDIO_FUTURE
+    if tuple(mask.shape) != (1, 1, n_blocks, AUDIO_CHUNK, context):
+        _fail(str(tuple(mask.shape)))
+    if mask.dtype != torch.float32:
+        _fail(f"dtype {mask.dtype}")
+    # Last 8 keys of seq 70 land in the final block's current-chunk columns.
+    # Those positions must be masked (large negative), earlier keys not.
+    if not bool((mask[0, 0, -1, :, AUDIO_PAST:] < -1.0e6).any()):
+        _fail("expected padded keys to be invalid in last block")
+    if float(mask[0, 0, 0, 0, AUDIO_PAST]) < -1.0:
+        _fail(f"first valid key of block 0 should be keep, got {float(mask[0, 0, 0, 0, AUDIO_PAST])}")
+
+
+def test_blocked_additive_mask_export_stays_float() -> None:
+    class _Mask(torch.nn.Module):
+        def forward(self, keep: torch.Tensor) -> torch.Tensor:
+            return blocked_additive_attention_mask(keep)
+
+    ep = torch.export.export(
+        _Mask(), (torch.ones(1, AUDIO_SOFT_TOKENS, dtype=torch.float32),), strict=False
+    )
+    for node in ep.graph.nodes:
+        blob = f"{node.target} {node.meta.get('val', '')}"
+        if "i1" in blob or "torch.bool" in blob:
+            _fail(f"export still contains bool/i1: {blob}")
+
+
 def test_io_specs() -> None:
     v = tower_io_spec("vision")
     if v["outputs"]["soft_tokens"] != [1, VISION_SOFT_TOKENS, 512]:
@@ -90,6 +128,8 @@ def main() -> int:
         test_audio_example_shape,
         test_gather_seq_windows_matches_unfold,
         test_gather_seq_windows_export_has_no_unfold,
+        test_blocked_additive_mask_shape_and_pad,
+        test_blocked_additive_mask_export_stays_float,
         test_io_specs,
     ]
     for fn in tests:
