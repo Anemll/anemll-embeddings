@@ -169,14 +169,12 @@ def _rel_shift_static(self, x: torch.Tensor) -> torch.Tensor:
 
     HF views last-2 as ``chunk*(context+1)`` then ``strided_slice`` the prefix.
     That is the leftover ``reshape→strided_slice→reshape``. Prefix-matmul
-    dropped cosine — do not retry it. Run the island in f16 so ANE I/O is
-    legal (mid-graph f32 ``value`` was ``Incompatible element type``).
+    dropped cosine — do not retry it. Stay in the incoming dtype: an f16
+    edge cast drifted mm_audio 0.87080 → 0.87085 and split the graph.
     """
     _batch, _heads, _blocks, block_size, pos_len = x.shape
     context = int(self.context_size)
     block_size = int(block_size)
-    src_dtype = x.dtype
-    x = x.to(dtype=torch.float16)
     x = F.pad(x, (0, context + 1 - int(pos_len)))
     rows = []
     for i in range(block_size):
@@ -186,7 +184,7 @@ def _rel_shift_static(self, x: torch.Tensor) -> torch.Tensor:
             prev = x[..., i - 1, (context + 1 - i) :]
             cur = x[..., i, : (context - i)]
             rows.append(torch.cat([prev, cur], dim=-1))
-    return torch.stack(rows, dim=-2).to(dtype=src_dtype)
+    return torch.stack(rows, dim=-2)
 
 
 def _rel_shift_matmul(self, x: torch.Tensor) -> torch.Tensor:
@@ -505,7 +503,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
         "value_dtype": "hidden_no_float_cast",
         "rel_pos": "float_arange",
         "lconv1d": "channels_last_onehot",
-        "rel_shift": "static_pad_slice_f16",
+        "rel_shift": "static_pad_slice",
     }
 
 

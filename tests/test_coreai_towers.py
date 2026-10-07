@@ -312,7 +312,7 @@ def test_rel_shift_static_matches_hf() -> None:
         x = torch.randn(*shape)
         got = _rel_shift_static(attn, x)
         ref = attn.hf(x)
-        if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-3):
+        if got.shape != ref.shape or not torch.allclose(got, ref):
             _fail(f"static rel_shift {shape} {tuple(got.shape)} != {tuple(ref.shape)}")
 
 
