@@ -19,6 +19,7 @@ from src.audio_export_patches import (  # noqa: E402
     blocked_additive_attention_mask,
     gather_seq_windows,
     slice_seq_windows,
+    swap_mid_dims,
 )
 from src.vision_export_patches import (  # noqa: E402
     _apply_multidimensional_rope_ane,
@@ -186,6 +187,37 @@ def test_blocked_additive_mask_export_stays_float() -> None:
             _fail(f"export still contains bool/i1: {blob}")
 
 
+def test_swap_mid_dims_matches_permute() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(2, 70, 8, 16)
+    ref = x.permute(0, 2, 1, 3)
+    got = swap_mid_dims(x)
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("swap_mid_dims != permute(0,2,1,3)")
+    q = torch.randn(1, 6, 12, 8, 16)
+    k = torch.randn(1, 6, 24, 8, 16)
+    ref_ac = q.permute(0, 3, 1, 2, 4) @ k.permute(0, 3, 1, 4, 2)
+    q4 = swap_mid_dims(q.reshape(6, 12, 8, 16))
+    k4 = swap_mid_dims(k.reshape(6, 24, 8, 16))
+    got_ac = (q4 @ k4.transpose(-1, -2)).reshape(1, 6, 8, 12, 24).permute(0, 2, 1, 3, 4)
+    if not torch.allclose(got_ac, ref_ac, atol=1e-5):
+        _fail("heads-first 4D matmul != 5D permute matmul")
+
+
+def test_swap_mid_dims_export_has_no_5d_permute() -> None:
+    class _Swap(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return swap_mid_dims(x)
+
+    ep = torch.export.export(_Swap(), (torch.randn(1, 70, 8, 16),), strict=False)
+    blob = " ".join(str(n.target) for n in ep.graph.nodes)
+    if "permute" in blob or "transpose" in blob and "5" in blob:
+        # 3-D transpose for the matmul is OK; reject aten.permute of 5-D.
+        perms = [str(n.target) for n in ep.graph.nodes if "permute" in str(n.target)]
+        if perms:
+            _fail(f"export still permutes: {perms}")
+
+
 def test_rel_shift_matmul_matches_hf() -> None:
     class _Attn:
         context_size = 24
@@ -269,6 +301,8 @@ def main() -> int:
         test_blocked_additive_mask_export_stays_float,
         test_embedding_from_int_indices_matches_embedding,
         test_embedding_from_int_indices_export_has_no_i64,
+        test_swap_mid_dims_matches_permute,
+        test_swap_mid_dims_export_has_no_5d_permute,
         test_rel_shift_matmul_matches_hf,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,

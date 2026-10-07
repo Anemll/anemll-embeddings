@@ -68,6 +68,24 @@ def window_onehot(
     return torch.clamp(1.0 - (idx.unsqueeze(-1) - slots).abs(), 0, 1)
 
 
+def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
+    """``[N, A, B, D] → [N, B, A, D]`` via one-hot matmul (no 5-D permute).
+
+    Audio leftover ``GPU_region_0`` was ``permute(0,3,1,2,4)`` on
+    ``[B, n, c, H, D] ↔ [B, H, n, c, D]``. Swap heads/seq in 4-D instead.
+    """
+    if x.ndim != 4:
+        raise ValueError(f"swap_mid_dims rank {x.ndim} (want [N, A, B, D])")
+    batch, dim_a, dim_b, last = (int(s) for s in x.shape)
+    src_idx = [a * dim_b + b for b in range(dim_b) for a in range(dim_a)]
+    src = torch.tensor(src_idx, device=x.device, dtype=x.dtype)
+    slots = torch.arange(dim_a * dim_b, device=x.device, dtype=x.dtype)
+    onehot = torch.clamp(1.0 - (src.unsqueeze(-1) - slots).abs(), 0, 1)
+    flat = x.reshape(batch, dim_a * dim_b, last)
+    out = flat.transpose(1, 2) @ onehot.transpose(0, 1)
+    return out.transpose(1, 2).reshape(batch, dim_b, dim_a, last)
+
+
 def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     """Same layout as ``gather_seq_windows`` via one-hot ``matmul``.
 
@@ -190,7 +208,11 @@ def _audio_attn_forward(
     attention_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_size, seq_length, _ = hidden_states.shape
-    hidden_shape = (batch_size, seq_length, self.num_heads, self.head_dim)
+    num_heads = int(self.num_heads)
+    head_dim = int(self.head_dim)
+    chunk = int(self.chunk_size)
+    context = int(self.context_size)
+    hidden_shape = (batch_size, seq_length, num_heads, head_dim)
 
     query_states = self.q_proj(hidden_states).float().view(hidden_shape)
     key_states = self.k_proj(hidden_states).float().view(hidden_shape)
@@ -199,21 +221,45 @@ def _audio_attn_forward(
     query_states = query_states * self.q_scale * F.softplus(self.per_dim_scale)
     key_states = key_states * self.k_scale
 
-    query_states = self._convert_to_block(query_states)
-    key_states = self._extract_block_context(key_states)
-    value_states = self._extract_block_context(value_states)
-    num_blocks = query_states.shape[1]
+    # Heads-first 4-D: [B, S, H, D] → [B, H, S, D] without permute(0,3,1,2,4).
+    query_states = swap_mid_dims(query_states)
+    key_states = swap_mid_dims(key_states)
+    value_states = swap_mid_dims(value_states)
+
+    num_blocks = (seq_length + chunk - 1) // chunk
+    q_pad = num_blocks * chunk - seq_length
+    query_states = F.pad(query_states, (0, 0, 0, q_pad))
+    query_states = query_states.reshape(batch_size, num_heads, num_blocks, chunk, head_dim)
+
+    key_states = F.pad(
+        key_states,
+        (0, 0, self.max_past_horizon, self.max_future_horizon + chunk - 1),
+    )
+    value_states = F.pad(
+        value_states,
+        (0, 0, self.max_past_horizon, self.max_future_horizon + chunk - 1),
+    )
+    pad_len = int(key_states.shape[2])
+    key_states = slice_seq_windows(
+        key_states.reshape(batch_size * num_heads, pad_len, head_dim), context, chunk
+    ).reshape(batch_size, num_heads, num_blocks, context, head_dim)
+    value_states = slice_seq_windows(
+        value_states.reshape(batch_size * num_heads, pad_len, head_dim), context, chunk
+    ).reshape(batch_size, num_heads, num_blocks, context, head_dim)
+
+    q4 = query_states.reshape(batch_size * num_heads, num_blocks, chunk, head_dim)
+    k4 = key_states.reshape(batch_size * num_heads, num_blocks, context, head_dim)
+    v4 = value_states.reshape(batch_size * num_heads, num_blocks, context, head_dim)
+    matrix_ac = q4 @ k4.transpose(-1, -2)
+    matrix_ac = matrix_ac.reshape(batch_size, num_heads, num_blocks, chunk, context)
 
     relative_key_states = self.relative_k_proj(position_embeddings)
-    relative_key_states = relative_key_states.view(-1, self.num_heads, self.head_dim)
+    relative_key_states = relative_key_states.view(-1, num_heads, head_dim)
     relative_key_states = relative_key_states.to(dtype=query_states.dtype)
-
-    queries = query_states.permute(0, 3, 1, 2, 4)
-    matrix_ac = queries @ key_states.permute(0, 3, 1, 4, 2)
-
-    queries_flat = queries.reshape(batch_size, self.num_heads, -1, self.head_dim)
-    matrix_bd = queries_flat @ relative_key_states.permute(1, 2, 0)
-    matrix_bd = matrix_bd.reshape(batch_size, self.num_heads, num_blocks, self.chunk_size, -1)
+    relative_key_states = swap_mid_dims(relative_key_states.unsqueeze(0)).squeeze(0)
+    queries_flat = query_states.reshape(batch_size, num_heads, num_blocks * chunk, head_dim)
+    matrix_bd = queries_flat @ relative_key_states.transpose(-1, -2)
+    matrix_bd = matrix_bd.reshape(batch_size, num_heads, num_blocks, chunk, -1)
     matrix_bd = self._rel_shift(matrix_bd)
 
     attn_weights = matrix_ac + matrix_bd
@@ -226,9 +272,12 @@ def _audio_attn_forward(
         attn_weights = attn_weights + attention_mask.to(dtype=attn_weights.dtype)
 
     attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(value_states.dtype)
-    attn_output = attn_weights @ value_states.permute(0, 3, 1, 2, 4)
-    attn_output = attn_output.permute(0, 2, 3, 1, 4).reshape(
-        batch_size, num_blocks * self.chunk_size, -1
+    attn_output = attn_weights.reshape(
+        batch_size * num_heads, num_blocks, chunk, context
+    ) @ v4
+    attn_output = attn_output.reshape(batch_size, num_heads, num_blocks * chunk, head_dim)
+    attn_output = swap_mid_dims(attn_output).reshape(
+        batch_size, num_blocks * chunk, num_heads * head_dim
     )
     attn_output = attn_output[:, :seq_length].contiguous()
     attn_output = self.post(attn_output.to(hidden_states.dtype))
@@ -283,7 +332,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     import transformers.models.gemma4.modeling_gemma4 as g4
 
     g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
-    return {"patched": 1, "window_op": "onehot_matmul"}
+    return {"patched": 1, "window_op": "onehot_matmul", "attn_layout": "heads_first_4d"}
 
 
 def apply_audio_ane_mask_patch() -> dict[str, Any]:
