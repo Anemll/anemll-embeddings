@@ -57,8 +57,8 @@ PROMPTS = REPO_ROOT / "tests" / "fixtures" / "multimodal_prompts.json"
 TEXT_S = 128
 # Fail-closed floor. T6-style 0.95 is not the Core AI text-package contract.
 ABSURD_COSINE = 0.10
-# Observed text_s128 vs ST on SearchQuery (package, not prefix).
-TEXT_PACKAGE_VS_ST = 0.76
+# si16 I/O wrapped vocab 262144 (SearchQuery 236787 → -25357). Text I/O is int32.
+TEXT_IDS_DTYPE = "int32"
 
 
 def _coreai_python() -> Path:
@@ -120,8 +120,8 @@ def _encode_text_s128(
         batch["input_ids"], batch["attention_mask"], TEXT_S, pad_token_id=pad_id
     )
     feed = dummy_numpy_inputs("text")
-    feed["input_ids"] = ids.numpy().astype(np.int16)
-    feed["attention_mask"] = mask.numpy().astype(np.int16)
+    feed["input_ids"] = ids.numpy().astype(np.int32)
+    feed["attention_mask"] = mask.numpy().astype(np.int32)
     return _run_tower(
         out_dir / "text_s128.aimodel",
         "text_s128",
@@ -134,6 +134,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, default=artifacts_root())
     parser.add_argument("--model", type=Path, default=None)
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=None,
+        help="Case id to run (repeatable). Default: all fixture rows.",
+    )
     args = parser.parse_args()
 
     fixtures = Path(args.artifacts) / "fixtures"
@@ -199,10 +205,13 @@ def main() -> int:
         print(f"  audio {name} raw={list(raw.shape)} crop={list(cropped.shape)} frames={n_src}")
         return cropped
 
+    only = set(args.only) if args.only else None
     rows = []
     fail = False
     for i, item in enumerate(prompts):
         case_id = item["id"]
+        if only is not None and case_id not in only:
+            continue
         kind = item.get("kind") or "text"
         text = item.get("text") or ""
         ref_vec = ref[i]
@@ -322,10 +331,7 @@ def main() -> int:
         "limits": {
             "vision_slots": "package 280 vs HF 256 (host crops trailing pad groups)",
             "audio_slots": "package 70 vs HF 25 (host crops ceil(frames/4); 99→25)",
-            "text_s128_vs_st": (
-                f"~{TEXT_PACKAGE_VS_ST} package vs ST; wrapper/ST vs fixture ~1.0 "
-                "(prefix/pad ok; no re-export)"
-            ),
+            "text_ids": "int32 I/O; si16 wraps vocab 262144 (SearchQuery 236787)",
             "audio_mask": "all-1s silence pad required for finite audio (keep-mask NaNs)",
         },
         "cases": rows,
@@ -333,14 +339,22 @@ def main() -> int:
             "Host crops vision 280→256 (trailing pad groups) and audio 70→25 (ceil frames/4).",
             "That matches HF slot counts; package graphs stay 280/70 (no re-export).",
             "Video skipped: no video .aimodel.",
-            "text_s128 is S=128 ids-only. Interleaved 768-d uses PyTorch text tower.",
-            "text_s128 vs ST ~0.76 is a package limit (wrapper pad128 vs fixture ~1.0).",
+            "text_s128 is S=128 ids-only int32. Interleaved 768-d uses PyTorch text tower.",
+            "si16 text I/O was the 0.76 gap (3/15 SearchQuery tokens wrapped).",
             "Fail-closed: non-finite or cosine < 0.10. Not a T6 0.95 gate.",
             "CPU only. ANE embedding-widen / audio dummy_pool unchanged.",
             "FLOAT32 Core ML text tree untouched.",
         ],
     }
     dest = out_dir / "host.parity.json"
+    if only is not None and dest.is_file():
+        prev = json.loads(dest.read_text())
+        by_id = {c["id"]: c for c in prev.get("cases") or []}
+        for row in rows:
+            by_id[row["id"]] = row
+        order = [p["id"] for p in prompts]
+        report["cases"] = [by_id[i] for i in order if i in by_id]
+        report["merged_from"] = prev.get("git_sha")
     write_json(dest, report)
     print(f"wrote {dest} pass={not fail}")
     return 0 if not fail else 1

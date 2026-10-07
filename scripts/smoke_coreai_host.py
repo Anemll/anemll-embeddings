@@ -217,8 +217,8 @@ def main() -> int:
     cap = tok(caption, return_tensors="pt")
     cap_ids, cap_mask = pad_to_seq_len(cap["input_ids"], cap["attention_mask"], TEXT_S, pad_token_id=pad_id)
     text_feed = dummy_numpy_inputs("text")
-    text_feed["input_ids"] = cap_ids.numpy().astype(np.int16)
-    text_feed["attention_mask"] = cap_mask.numpy().astype(np.int16)
+    text_feed["input_ids"] = cap_ids.numpy().astype(np.int32)
+    text_feed["attention_mask"] = cap_mask.numpy().astype(np.int32)
     text_vec = _run_tower(
         out_dir / "text_s128.aimodel",
         "text_s128",

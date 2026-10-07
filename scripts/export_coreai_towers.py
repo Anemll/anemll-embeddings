@@ -302,9 +302,10 @@ def _export_text(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     wrapper = wrapper.float().eval()
     traced = TraceableEmbeddingGemma2(wrapper, seq_len=seq_len, batch=1).eval()
     ids, mask = example_trace_inputs(seq_len)
-    # Package I/O si16 (ANE-legal). Wrapper widens ids to long for embedding.
-    ids = ids.to(dtype=torch.int16)
-    mask = mask.to(dtype=torch.int16)
+    # Vocab is 262144 — si16 wraps SearchQuery tokens (236787 → -25357).
+    # int32 I/O; wrapper still widens ids to long for F.embedding.
+    ids = ids.to(dtype=torch.int32)
+    mask = mask.to(dtype=torch.int32)
     with torch.no_grad():
         emb = traced(ids, mask)
     print(f"text eager embedding={tuple(emb.shape)}")
@@ -378,6 +379,7 @@ def main() -> int:
             "Separate packages; host interleaves media placeholders.",
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
             "PyTorch export is FP32; Core AI convert casts to 16-bit except vision (cast16 zeros it).",
+            "Text I/O is int32 (vocab 262144 overflows si16). Vision/audio integer I/O stays si16.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

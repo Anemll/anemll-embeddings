@@ -40,7 +40,7 @@ def test_dummy_shapes() -> None:
     t = dummy_numpy_inputs("text")
     if tuple(t["input_ids"].shape) != (1, TEXT_SEQ_LEN):
         _fail(str(t["input_ids"].shape))
-    if t["input_ids"].dtype != np.int16 or t["attention_mask"].dtype != np.int16:
+    if t["input_ids"].dtype != np.int32 or t["attention_mask"].dtype != np.int32:
         _fail(f"{t['input_ids'].dtype} {t['attention_mask'].dtype}")
     if a["input_features_mask"].dtype != np.int16:
         _fail(str(a["input_features_mask"].dtype))

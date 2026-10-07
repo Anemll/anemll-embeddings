@@ -111,8 +111,8 @@ def dummy_numpy_inputs(
         mask = np.ones((1, AUDIO_FRAMES), dtype=mask_dt)
         return {"input_features": feat, "input_features_mask": mask}
     if name == "text":
-        ids_dt = resolve_dtype(dtypes.get("input_ids", "int16"), np.int16)
-        mask_dt = resolve_dtype(dtypes.get("attention_mask", "int16"), np.int16)
+        ids_dt = resolve_dtype(dtypes.get("input_ids", "int32"), np.int32)
+        mask_dt = resolve_dtype(dtypes.get("attention_mask", "int32"), np.int32)
         ids = np.arange(1, TEXT_SEQ_LEN + 1, dtype=ids_dt)[None, :]
         mask = np.ones((1, TEXT_SEQ_LEN), dtype=mask_dt)
         return {"input_ids": ids, "attention_mask": mask}
