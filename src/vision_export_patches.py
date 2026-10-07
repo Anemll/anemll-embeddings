@@ -14,6 +14,9 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+import torch.nn.functional as F
+
+from .audio_export_patches import swap_last_two, swap_mid_dims
 
 
 def embedding_from_int_indices(idx: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
@@ -103,8 +106,57 @@ def rotate_half_matmul(x: torch.Tensor) -> torch.Tensor:
     return x @ rot
 
 
+def _vision_attn_forward(
+    self,
+    hidden_states: torch.Tensor,
+    position_embeddings: torch.Tensor = None,
+    attention_mask: torch.Tensor | None = None,
+    position_ids: torch.Tensor | None = None,
+    **kwargs: Any,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Heads-first 4-D attention — no ``transpose(1,2)`` into ``sdpa``.
+
+    Leftover ``GPU_region_0`` unnamed ``op`` was ``q/k/v.transpose(1,2)`` on
+    ``[1,2520,12,64]``. Bake heads-first via one-hot swap, then matmul.
+    """
+    batch, seq_len, _ = hidden_states.shape
+    head_dim = int(self.head_dim)
+    n_heads = int(self.q_proj.out_features) // head_dim
+    n_kv = int(self.k_proj.out_features) // head_dim
+    hidden_shape = (batch, seq_len, n_heads, head_dim)
+    kv_shape = (batch, seq_len, n_kv, head_dim)
+
+    query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape))
+    key_states = self.k_norm(self.k_proj(hidden_states).view(kv_shape))
+    value_states = self.v_norm(self.v_proj(hidden_states).view(kv_shape))
+    if position_embeddings is not None:
+        cos, sin = position_embeddings
+        query_states = _apply_multidimensional_rope_ane(
+            query_states, cos, sin, position_ids, unsqueeze_dim=2
+        )
+        key_states = _apply_multidimensional_rope_ane(
+            key_states, cos, sin, position_ids, unsqueeze_dim=2
+        )
+    query_states = swap_mid_dims(query_states)
+    key_states = swap_mid_dims(key_states)
+    value_states = swap_mid_dims(value_states)
+    if n_kv != n_heads:
+        repeats = n_heads // n_kv
+        key_states = key_states.repeat_interleave(repeats, dim=1)
+        value_states = value_states.repeat_interleave(repeats, dim=1)
+    scale = float(self.scaling)
+    attn_weights = (query_states @ swap_last_two(key_states)) * scale
+    if attention_mask is not None:
+        attn_weights = attn_weights + attention_mask
+    attn_weights = F.softmax(attn_weights, dim=-1)
+    attn_output = attn_weights @ value_states
+    attn_output = swap_mid_dims(attn_output).reshape(batch, seq_len, n_heads * head_dim)
+    attn_output = self.o_proj(attn_output)
+    return attn_output, attn_weights
+
+
 def apply_vision_ane_embed_patch() -> dict[str, Any]:
-    """Pos one-hot + RoPE without gather / concat_slice."""
+    """Pos one-hot + RoPE + heads-first attn without gather / concat_slice / transpose."""
     import transformers.models.gemma4.modeling_gemma4 as g4
 
     global _ORIG_APPLY_ROPE
@@ -114,9 +166,11 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
         _ORIG_APPLY_ROPE = g4.apply_multidimensional_rope
     g4.apply_multidimensional_rope = _apply_multidimensional_rope_ane
     g4.rotate_half = rotate_half_matmul
+    g4.Gemma4VisionAttention.forward = _vision_attn_forward
     return {
         "patched": 1,
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
         "rotate_half": "matmul",
+        "attn": "heads_first_4d_no_transpose_sdpa",
     }

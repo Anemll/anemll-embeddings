@@ -450,8 +450,8 @@ def main() -> int:
             "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (f16 out did not clear GPU_region_0).",
-            "Audio: 4-D NCHW I/O (expandDims); attn stays 4-D (no 5-D permute).",
-            "Vision: f16 pos I/O; one-hot pos embed; RoPE without concat_slice.",
+            "Audio: 4-D NCHW I/O; no Q/K/V .float(); subsample LN without permute.",
+            "Vision: heads-first attn (no transpose(1,2) / sdpa); RoPE matmul.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)

@@ -18,12 +18,16 @@ from src.audio_export_patches import (  # noqa: E402
     _rel_shift_matmul,
     blocked_additive_attention_mask,
     gather_seq_windows,
+    nchw_to_nhwc,
+    nhwc_to_nchw,
     slice_seq_windows,
+    swap_last_two,
     swap_mid_dims,
 )
 from src.vision_export_patches import (  # noqa: E402
     _apply_multidimensional_rope_ane,
     _recomposition_frequencies_ane,
+    _vision_attn_forward,
     embedding_from_int_indices,
     rotate_half_matmul,
 )
@@ -218,6 +222,49 @@ def test_swap_mid_dims_export_has_no_5d_permute() -> None:
             _fail(f"export still permutes: {perms}")
 
 
+def test_nchw_nhwc_matches_permute() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(2, 4, 5, 6)
+    got = nchw_to_nhwc(x)
+    ref = x.permute(0, 2, 3, 1)
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("nchw_to_nhwc != permute(0,2,3,1)")
+    back = nhwc_to_nchw(got)
+    if not torch.allclose(back, x, atol=1e-5):
+        _fail("nhwc_to_nchw roundtrip")
+    kt = swap_last_two(x)
+    if not torch.allclose(kt, x.transpose(-1, -2), atol=1e-5):
+        _fail("swap_last_two != transpose(-1,-2)")
+
+
+def test_vision_attn_matches_transpose_matmul() -> None:
+    class _Attn:
+        head_dim = 4
+        scaling = 1.0
+
+        def __init__(self) -> None:
+            self.q_proj = torch.nn.Linear(8, 8, bias=False)
+            self.k_proj = torch.nn.Linear(8, 8, bias=False)
+            self.v_proj = torch.nn.Linear(8, 8, bias=False)
+            self.o_proj = torch.nn.Linear(8, 8, bias=False)
+            self.q_norm = torch.nn.Identity()
+            self.k_norm = torch.nn.Identity()
+            self.v_norm = torch.nn.Identity()
+
+    torch.manual_seed(0)
+    attn = _Attn()
+    x = torch.randn(1, 5, 8)
+    mask = torch.zeros(1, 1, 1, 5)
+    got, _ = _vision_attn_forward(attn, x, position_embeddings=None, attention_mask=mask)
+    q = attn.q_proj(x).view(1, 5, 2, 4).transpose(1, 2)
+    k = attn.k_proj(x).view(1, 5, 2, 4).transpose(1, 2)
+    v = attn.v_proj(x).view(1, 5, 2, 4).transpose(1, 2)
+    w = torch.softmax((q @ k.transpose(-1, -2)) + mask, dim=-1)
+    ref = attn.o_proj((w @ v).transpose(1, 2).reshape(1, 5, 8))
+    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+        _fail("vision heads-first != transpose+matmul")
+
+
 def test_rel_shift_matmul_matches_hf() -> None:
     class _Attn:
         context_size = 24
@@ -303,6 +350,8 @@ def main() -> int:
         test_embedding_from_int_indices_export_has_no_i64,
         test_swap_mid_dims_matches_permute,
         test_swap_mid_dims_export_has_no_5d_permute,
+        test_nchw_nhwc_matches_permute,
+        test_vision_attn_matches_transpose_matmul,
         test_rel_shift_matmul_matches_hf,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,

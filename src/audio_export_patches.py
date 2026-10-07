@@ -86,6 +86,38 @@ def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
     return (onehot @ flat).reshape(batch, dim_b, dim_a, last)
 
 
+def nchw_to_nhwc(x: torch.Tensor) -> torch.Tensor:
+    """``[B, C, H, W] → [B, H, W, C]`` via one-hot swaps (no ``permute``)."""
+    if x.ndim != 4:
+        raise ValueError(f"nchw_to_nhwc rank {x.ndim}")
+    batch, channels, height, width = (int(s) for s in x.shape)
+    mid = swap_mid_dims(x)
+    return swap_mid_dims(mid.reshape(batch * height, channels, width, 1)).reshape(
+        batch, height, width, channels
+    )
+
+
+def nhwc_to_nchw(x: torch.Tensor) -> torch.Tensor:
+    """``[B, H, W, C] → [B, C, H, W]`` via one-hot swaps (no ``permute``)."""
+    if x.ndim != 4:
+        raise ValueError(f"nhwc_to_nchw rank {x.ndim}")
+    batch, height, width, channels = (int(s) for s in x.shape)
+    mid = swap_mid_dims(x.reshape(batch * height, width, channels, 1)).reshape(
+        batch, height, channels, width
+    )
+    return swap_mid_dims(mid)
+
+
+def swap_last_two(x: torch.Tensor) -> torch.Tensor:
+    """``[..., A, B] → [..., B, A]`` via one-hot (no ``transpose`` / ``permute``)."""
+    if x.ndim < 2:
+        raise ValueError(f"swap_last_two rank {x.ndim}")
+    lead = x.shape[:-2]
+    dim_a, dim_b = int(x.shape[-2]), int(x.shape[-1])
+    flat = x.reshape(int(x.numel() // (dim_a * dim_b)), dim_a, dim_b, 1)
+    return swap_mid_dims(flat).reshape(*lead, dim_b, dim_a)
+
+
 def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     """Same layout as ``gather_seq_windows`` via one-hot ``matmul``.
 
@@ -214,9 +246,11 @@ def _audio_attn_forward(
     context = int(self.context_size)
     hidden_shape = (batch_size, seq_length, num_heads, head_dim)
 
-    query_states = self.q_proj(hidden_states).float().view(hidden_shape)
-    key_states = self.k_proj(hidden_states).float().view(hidden_shape)
-    value_states = self.v_proj(hidden_states).float().view(hidden_shape)
+    # Stay in hidden dtype. ``.float()`` made ANE I/O see f32 ``value``
+    # (Incompatible element type: not fp16/si8/si16) at the GPU island.
+    query_states = self.q_proj(hidden_states).view(hidden_shape)
+    key_states = self.k_proj(hidden_states).view(hidden_shape)
+    value_states = self.v_proj(hidden_states).view(hidden_shape)
 
     query_states = query_states * self.q_scale * F.softplus(self.per_dim_scale)
     key_states = key_states * self.k_scale
@@ -247,7 +281,7 @@ def _audio_attn_forward(
     v4 = slice_seq_windows(
         value_states.reshape(batch_size * num_heads, pad_len, head_dim), context, chunk
     )
-    matrix_ac = q4 @ k4.transpose(-1, -2)
+    matrix_ac = q4 @ swap_last_two(k4)
 
     relative_key_states = self.relative_k_proj(position_embeddings)
     relative_key_states = relative_key_states.view(-1, num_heads, head_dim)
@@ -257,7 +291,7 @@ def _audio_attn_forward(
         batch_size, -1, -1, -1
     ).reshape(batch_size * num_heads, -1, head_dim)
     matrix_bd = q4.reshape(batch_size * num_heads, num_blocks * chunk, head_dim) @ (
-        rel_bh.transpose(-1, -2)
+        swap_last_two(rel_bh)
     )
     # HF _rel_shift is 5-D. Singleton head dim is expandDims, not a head/seq swap.
     # Do not replace _rel_shift (prefix-matmul dropped cosine).
@@ -282,7 +316,7 @@ def _audio_attn_forward(
             batch_size * num_heads, num_blocks, chunk, context
         )
 
-    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(v4.dtype)
+    attn_weights = F.softmax(attn_weights, dim=-1)
     attn_output = attn_weights @ v4
     attn_output = attn_output.reshape(batch_size, num_heads, num_blocks * chunk, head_dim)
     attn_output = swap_mid_dims(attn_output).reshape(
@@ -348,8 +382,23 @@ def _subsample_conv_forward(
     hidden_states, mask = self.layer0(hidden_states, input_features_mask)
     hidden_states, mask = self.layer1(hidden_states, mask)
     batch_size, _, seq_len, _ = hidden_states.shape
-    hidden_states = hidden_states.permute(0, 2, 3, 1).contiguous().reshape(batch_size, seq_len, -1)
+    hidden_states = nchw_to_nhwc(hidden_states).reshape(batch_size, seq_len, -1)
     return self.input_proj_linear(hidden_states), mask
+
+
+def _subsample_layer_forward(
+    self, hidden_states: torch.Tensor, mask: torch.Tensor | None = None
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Conv2d + LayerNorm without NCHW↔NHWC ``permute`` (GPU layout I/O)."""
+    if mask is not None:
+        mask = mask.to(device=hidden_states.device)
+        hidden_states = hidden_states * mask[:, None, :, None]
+    hidden_states = self.conv(hidden_states.to(self.conv.weight.dtype))
+    hidden_states = self.act(self.norm(nchw_to_nhwc(hidden_states)))
+    hidden_states = nhwc_to_nchw(hidden_states)
+    if mask is not None:
+        mask = mask[:, ::2]
+    return hidden_states, mask
 
 
 def apply_audio_unfold_patch() -> dict[str, int]:
@@ -358,11 +407,14 @@ def apply_audio_unfold_patch() -> dict[str, int]:
 
     g4.Gemma4AudioAttention._extract_block_context = _extract_block_context_slices
     g4.Gemma4AudioSubSampleConvProjection.forward = _subsample_conv_forward
+    g4.Gemma4AudioSubSampleConvProjectionLayer.forward = _subsample_layer_forward
     return {
         "patched": 1,
         "window_op": "onehot_matmul",
         "attn_layout": "heads_first_4d_no5d",
         "io": "nchw_expanddims",
+        "subsample": "nchw_ln_no_permute",
+        "value_dtype": "hidden_no_float_cast",
     }
 
 
