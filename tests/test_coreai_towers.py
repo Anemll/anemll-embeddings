@@ -274,10 +274,18 @@ def test_vision_attn_matches_transpose_matmul() -> None:
     q = attn.q_proj(x).view(1, 5, 2, 4).transpose(1, 2)
     k = attn.k_proj(x).view(1, 5, 2, 4).transpose(1, 2)
     v = attn.v_proj(x).view(1, 5, 2, 4).transpose(1, 2)
+    # Island is fp16 SDPA; compare to that reference, and stay near the f32 matmul.
+    q16, k16, v16, m16 = (t.to(torch.float16) for t in (q, k, v, mask))
+    out16 = torch.nn.functional.scaled_dot_product_attention(
+        q16, k16, v16, attn_mask=m16, dropout_p=0.0, scale=1.0
+    )
+    ref16 = attn.o_proj(out16.to(torch.float32).transpose(1, 2).reshape(1, 5, 8))
     w = torch.softmax((q @ k.transpose(-1, -2)) + mask, dim=-1)
-    ref = attn.o_proj((w @ v).transpose(1, 2).reshape(1, 5, 8))
-    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
-        _fail("vision heads-first != transpose+matmul")
+    ref32 = attn.o_proj((w @ v).transpose(1, 2).reshape(1, 5, 8))
+    if got.shape != ref16.shape or not torch.allclose(got, ref16, atol=1e-4):
+        _fail("vision fp16 SDPA != fp16 reference")
+    if not torch.allclose(got, ref32, atol=2e-2):
+        _fail("vision fp16 SDPA drifted from f32 matmul")
 
 
 def test_rel_shift_matmul_matches_hf() -> None:

@@ -126,12 +126,13 @@ def _vision_attn_forward(
     position_ids: torch.Tensor | None = None,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-head attention as 4D SDPA ``[B, 1, S, D]``.
+    """Per-head 4D SDPA in fp16.
 
-    Pre-specialize MIL names the GPU-region op ``scaled_dot_product_attention``
-    (``sdpa_idyqjhwl``) with bare ``InvalidOutputType``. The live call was 3D
-    ``[B, S, D]`` after squeezing the mask to ``[B, 1, S]``. Bake the standard
-    4D layout (head axis explicit) and keep the 4D mask ``[B, 1, 1, S]``.
+    Live MIL ``sdpa_pxdrapua`` is
+    ``(tensor<1x1x2520x64xf32>, tensor<1x1x2520x64xf32>, tensor<1x1x2520x64xf32>,
+    tensor<1x1x1x2520xf32>) -> tensor<1x1x2520x64xf32>``.
+    Ranks already match. ``InvalidOutputType`` is the f32 result (ANE wants
+    fp16). Cast only this island to fp16 and cast the head output back.
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
@@ -160,6 +161,8 @@ def _vision_attn_forward(
     mask = attention_mask
     if mask is not None and mask.ndim == 3:
         mask = mask.reshape(int(mask.shape[0]), 1, int(mask.shape[-2]), int(mask.shape[-1]))
+    if mask is not None:
+        mask = mask.to(dtype=torch.float16)
     kv_heads = n_kv
     for head in range(n_heads):
         take_q = _head_take(
@@ -168,12 +171,12 @@ def _vision_attn_forward(
         take_kv = _head_take(
             kv_heads, head_dim, head % kv_heads, device=key_flat.device, dtype=key_flat.dtype
         )
-        qh = (query_flat @ take_q).reshape(batch, 1, seq_len, head_dim)
-        kh = (key_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
-        vh = (value_flat @ take_kv).reshape(batch, 1, seq_len, head_dim)
+        qh = (query_flat @ take_q).reshape(batch, 1, seq_len, head_dim).to(dtype=torch.float16)
+        kh = (key_flat @ take_kv).reshape(batch, 1, seq_len, head_dim).to(dtype=torch.float16)
+        vh = (value_flat @ take_kv).reshape(batch, 1, seq_len, head_dim).to(dtype=torch.float16)
         out_h = F.scaled_dot_product_attention(
             qh, kh, vh, attn_mask=mask, dropout_p=0.0, scale=scale
-        ).reshape(batch, seq_len, head_dim)
+        ).to(dtype=query_flat.dtype).reshape(batch, seq_len, head_dim)
         left = head * head_dim
         right = hidden - left - head_dim
         attn_output = attn_output + F.pad(out_h, (left, right))
@@ -198,5 +201,5 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
         "rotate_half": "matmul",
-        "attn": "per_head_sdpa_4d",
+        "attn": "per_head_sdpa_4d_f16",
     }
