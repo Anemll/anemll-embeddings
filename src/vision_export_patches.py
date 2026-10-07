@@ -16,7 +16,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from .audio_export_patches import swap_last_two, swap_mid_dims
+from .audio_export_patches import swap_last_two
 
 
 def embedding_from_int_indices(idx: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
@@ -106,6 +106,19 @@ def rotate_half_matmul(x: torch.Tensor) -> torch.Tensor:
     return x @ rot
 
 
+def _head_take(
+    n_heads: int, head_dim: int, head: int, *, device: torch.device, dtype: torch.dtype
+) -> torch.Tensor:
+    """``[H*D, D]`` extractor for one head — no ``transpose(1,2)`` / giant one-hot."""
+    blocks = [
+        torch.eye(head_dim, device=device, dtype=dtype)
+        if i == int(head)
+        else torch.zeros(head_dim, head_dim, device=device, dtype=dtype)
+        for i in range(int(n_heads))
+    ]
+    return torch.cat(blocks, dim=0)
+
+
 def _vision_attn_forward(
     self,
     hidden_states: torch.Tensor,
@@ -114,21 +127,19 @@ def _vision_attn_forward(
     position_ids: torch.Tensor | None = None,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Heads-first 4-D attention — no ``transpose(1,2)`` into ``sdpa``.
+    """Per-head matmul attention — no ``transpose(1,2)`` into ``sdpa``.
 
     Leftover ``GPU_region_0`` unnamed ``op`` was ``q/k/v.transpose(1,2)`` on
-    ``[1,2520,12,64]``. Bake heads-first via one-hot swap, then matmul.
+    ``[1,2520,12,64]``. ``swap_mid_dims`` on that shape is a 30240² one-hot
+    (OOM). Extract each head with a ``[768,64]`` matmul instead.
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
     n_heads = int(self.config.num_attention_heads)
     n_kv = int(self.config.num_key_value_heads)
-    hidden_shape = (batch, seq_len, n_heads, head_dim)
-    kv_shape = (batch, seq_len, n_kv, head_dim)
-
-    query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape))
-    key_states = self.k_norm(self.k_proj(hidden_states).view(kv_shape))
-    value_states = self.v_norm(self.v_proj(hidden_states).view(kv_shape))
+    query_states = self.q_norm(self.q_proj(hidden_states).view(batch, seq_len, n_heads, head_dim))
+    key_states = self.k_norm(self.k_proj(hidden_states).view(batch, seq_len, n_kv, head_dim))
+    value_states = self.v_norm(self.v_proj(hidden_states).view(batch, seq_len, n_kv, head_dim))
     if position_embeddings is not None:
         cos, sin = position_embeddings
         query_states = _apply_multidimensional_rope_ane(
@@ -137,20 +148,33 @@ def _vision_attn_forward(
         key_states = _apply_multidimensional_rope_ane(
             key_states, cos, sin, position_ids, unsqueeze_dim=2
         )
-    query_states = swap_mid_dims(query_states)
-    key_states = swap_mid_dims(key_states)
-    value_states = swap_mid_dims(value_states)
-    if n_kv != n_heads:
-        repeats = n_heads // n_kv
-        key_states = key_states.repeat_interleave(repeats, dim=1)
-        value_states = value_states.repeat_interleave(repeats, dim=1)
+    query_flat = query_states.reshape(batch, seq_len, n_heads * head_dim)
+    key_flat = key_states.reshape(batch, seq_len, n_kv * head_dim)
+    value_flat = value_states.reshape(batch, seq_len, n_kv * head_dim)
     scale = float(self.scaling)
-    attn_weights = (query_states @ swap_last_two(key_states)) * scale
-    if attention_mask is not None:
-        attn_weights = attn_weights + attention_mask
-    attn_weights = F.softmax(attn_weights, dim=-1)
-    attn_output = attn_weights @ value_states
-    attn_output = swap_mid_dims(attn_output).reshape(batch, seq_len, n_heads * head_dim)
+    hidden = n_heads * head_dim
+    attn_output = query_flat.new_zeros(batch, seq_len, hidden)
+    attn_weights = query_flat.new_zeros(batch, seq_len, seq_len)
+    kv_heads = n_kv
+    for head in range(n_heads):
+        take_q = _head_take(
+            n_heads, head_dim, head, device=query_flat.device, dtype=query_flat.dtype
+        )
+        take_kv = _head_take(
+            kv_heads, head_dim, head % kv_heads, device=key_flat.device, dtype=key_flat.dtype
+        )
+        qh = query_flat @ take_q
+        kh = key_flat @ take_kv
+        vh = value_flat @ take_kv
+        weights = (qh @ swap_last_two(kh)) * scale
+        if attention_mask is not None:
+            mask = attention_mask
+            if mask.ndim == 4 and int(mask.shape[1]) == 1:
+                mask = mask[:, 0]
+            weights = weights + mask
+        weights = F.softmax(weights, dim=-1)
+        attn_weights = weights
+        attn_output = attn_output + (weights @ vh) @ take_q.transpose(0, 1)
     attn_output = self.o_proj(attn_output)
     return attn_output, attn_weights
 
