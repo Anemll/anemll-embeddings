@@ -16,6 +16,7 @@ from src.audio_export_patches import (  # noqa: E402
     AUDIO_FUTURE,
     AUDIO_PAST,
     _rel_shift_matmul,
+    _rel_shift_static,
     blocked_additive_attention_mask,
     depthwise_conv1d_channels_last,
     gather_seq_windows,
@@ -293,6 +294,41 @@ def test_rel_shift_matmul_matches_hf() -> None:
         _fail(f"rel_shift {tuple(got.shape)} != {tuple(ref.shape)}")
 
 
+def test_rel_shift_static_matches_hf() -> None:
+    class _Attn:
+        context_size = 24
+
+        def hf(self, x: torch.Tensor) -> torch.Tensor:
+            batch, heads, blocks, block, pos = x.shape
+            context = self.context_size
+            x = torch.nn.functional.pad(x, (0, context + 1 - pos))
+            x = x.view(batch, heads, blocks, block * (context + 1))
+            x = x[..., : block * context]
+            return x.view(batch, heads, blocks, block, context)
+
+    torch.manual_seed(0)
+    attn = _Attn()
+    for shape in ((1, 2, 6, 12, 24), (8, 1, 6, 12, 13)):
+        x = torch.randn(*shape)
+        got = _rel_shift_static(attn, x)
+        ref = attn.hf(x)
+        if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-3):
+            _fail(f"static rel_shift {shape} {tuple(got.shape)} != {tuple(ref.shape)}")
+
+
+def test_rel_shift_static_export_has_no_flat_slice() -> None:
+    class _Shift(torch.nn.Module):
+        context_size = 24
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return _rel_shift_static(self, x)
+
+    ep = torch.export.export(_Shift(), (torch.randn(1, 1, 2, 12, 13),), strict=False)
+    blob = " ".join(f"{n.target} {n.meta.get('val', '')}" for n in ep.graph.nodes)
+    if "288" in blob and "strided" in blob and "300" in blob:
+        _fail("export still flattens chunk*(context+1) then slices")
+
+
 def test_rotate_half_matmul_matches_cat() -> None:
     torch.manual_seed(0)
     x = torch.randn(2, 4, 8)
@@ -421,6 +457,8 @@ def main() -> int:
         test_depthwise_conv1d_export_has_no_transpose,
         test_vision_attn_matches_transpose_matmul,
         test_rel_shift_matmul_matches_hf,
+        test_rel_shift_static_matches_hf,
+        test_rel_shift_static_export_has_no_flat_slice,
         test_rotate_half_matmul_matches_cat,
         test_apply_rope_matmul_matches_hf,
         test_recomposition_matches_cat,

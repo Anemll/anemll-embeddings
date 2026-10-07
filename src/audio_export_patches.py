@@ -164,6 +164,31 @@ def slice_seq_windows(x: torch.Tensor, window: int, step: int) -> torch.Tensor:
     return gathered.reshape(x.shape[0], n_win, window, *x.shape[2:])
 
 
+def _rel_shift_static(self, x: torch.Tensor) -> torch.Tensor:
+    """Transformer-XL rel-shift via static last-dim pad/slice (no flatten, no matmul).
+
+    HF views last-2 as ``chunk*(context+1)`` then ``strided_slice`` the prefix.
+    That is the leftover ``reshape→strided_slice→reshape``. Prefix-matmul
+    dropped cosine — do not retry it. Run the island in f16 so ANE I/O is
+    legal (mid-graph f32 ``value`` was ``Incompatible element type``).
+    """
+    _batch, _heads, _blocks, block_size, pos_len = x.shape
+    context = int(self.context_size)
+    block_size = int(block_size)
+    src_dtype = x.dtype
+    x = x.to(dtype=torch.float16)
+    x = F.pad(x, (0, context + 1 - int(pos_len)))
+    rows = []
+    for i in range(block_size):
+        if i == 0:
+            rows.append(x[..., 0, :context])
+        else:
+            prev = x[..., i - 1, (context + 1 - i) :]
+            cur = x[..., i, : (context - i)]
+            rows.append(torch.cat([prev, cur], dim=-1))
+    return torch.stack(rows, dim=-2).to(dtype=src_dtype)
+
+
 def _rel_shift_matmul(self, x: torch.Tensor) -> torch.Tensor:
     """Transformer-XL rel-shift without ``view``+``strided_slice`` (GPU I/O).
 
@@ -323,8 +348,7 @@ def _audio_attn_forward(
     matrix_bd = q4.reshape(batch_size * num_heads, num_blocks * chunk, head_dim) @ (
         swap_last_two(rel_bh)
     )
-    # HF _rel_shift is 5-D. Singleton head dim is expandDims, not a head/seq swap.
-    # Do not replace _rel_shift (prefix-matmul dropped cosine).
+    # Static pad/slice rel-shift (no flatten, no prefix-matmul).
     matrix_bd = self._rel_shift(
         matrix_bd.reshape(batch_size * num_heads, 1, num_blocks, chunk, -1)
     )
@@ -471,6 +495,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
     g4.Gemma4AudioSubSampleConvProjectionLayer.forward = _subsample_layer_forward
     g4.Gemma4AudioLightConv1d.forward = _light_conv1d_forward
     g4.Gemma4AudioRelPositionalEncoding.forward = _rel_pos_forward
+    g4.Gemma4AudioAttention._rel_shift = _rel_shift_static
     return {
         "patched": 1,
         "window_op": "onehot_matmul",
@@ -480,6 +505,7 @@ def apply_audio_unfold_patch() -> dict[str, int]:
         "value_dtype": "hidden_no_float_cast",
         "rel_pos": "float_arange",
         "lconv1d": "channels_last_onehot",
+        "rel_shift": "static_pad_slice_f16",
     }
 
 

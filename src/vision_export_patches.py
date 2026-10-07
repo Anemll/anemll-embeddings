@@ -126,11 +126,13 @@ def _vision_attn_forward(
     position_ids: torch.Tensor | None = None,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-head matmul attention — no ``transpose(1,2)`` into ``sdpa``.
+    """Per-head attention — Q/K/V same shape into ``sdpa``, no GEMM transpose.
 
-    Leftover ``GPU_region_0`` unnamed ``op`` was ``q/k/v.transpose(1,2)`` on
-    ``[1,2520,12,64]``. ``swap_mid_dims`` on that shape is a 30240² one-hot
-    (OOM). Extract each head with a ``[768,64]`` matmul instead.
+    Leftover ``GPU_region_0`` unnamed ``op`` after heads-first take was
+    ``kh.transpose(-1,-2)`` on ``[1,2520,64]`` (and ``take.T``). Core AI
+    fused that to SDPA and rejected ``Key and value must be the same shape``
+    (K became ``[1,64,2520]``, V stayed ``[1,2520,64]``). Feed matching
+    ``[B,S,D]`` triples into SDPA; scatter the head with ``F.pad``.
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
@@ -154,6 +156,9 @@ def _vision_attn_forward(
     hidden = n_heads * head_dim
     attn_output = query_flat.new_zeros(batch, seq_len, hidden)
     attn_weights = query_flat.new_zeros(batch, seq_len, seq_len)
+    mask = attention_mask
+    if mask is not None and mask.ndim == 4 and int(mask.shape[1]) == 1:
+        mask = mask[:, 0]
     kv_heads = n_kv
     for head in range(n_heads):
         take_q = _head_take(
@@ -165,17 +170,13 @@ def _vision_attn_forward(
         qh = query_flat @ take_q
         kh = key_flat @ take_kv
         vh = value_flat @ take_kv
-        # Last-2 GEMM transpose is ANE-legal; one-hot swap_last_two on
-        # [1,2520,64] is a 161k² matrix (SIGKILL).
-        weights = (qh @ kh.transpose(-1, -2)) * scale
-        if attention_mask is not None:
-            mask = attention_mask
-            if mask.ndim == 4 and int(mask.shape[1]) == 1:
-                mask = mask[:, 0]
-            weights = weights + mask
-        weights = F.softmax(weights, dim=-1)
-        attn_weights = weights
-        attn_output = attn_output + (weights @ vh) @ take_q.transpose(0, 1)
+        out_h = F.scaled_dot_product_attention(
+            qh, kh, vh, attn_mask=mask, dropout_p=0.0, scale=scale
+        )
+        attn_weights = qh.new_zeros(batch, seq_len, seq_len)
+        left = head * head_dim
+        right = hidden - left - head_dim
+        attn_output = attn_output + F.pad(out_h, (left, right))
     attn_output = self.o_proj(attn_output)
     return attn_output, attn_weights
 
@@ -197,5 +198,5 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
         "rotate_half": "matmul",
-        "attn": "heads_first_4d_no_transpose_sdpa",
+        "attn": "per_head_sdpa_same_kv_shape",
     }
