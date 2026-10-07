@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Cosine parity: Core AI host path vs ST multimodal fixtures (6×768).
 
-Driveable: text / caption / mix via text_s128 (unexpanded ids, S=128);
-image-only / audio-only via towers + PyTorch text interleave. Video skipped.
-Crops package 280/70 soft tokens to HF 256/25 when pads are a trailing suffix.
+Pure text → text_s128 (int32 ids). Image / audio / caption / mix → Core AI
+vision/audio soft tokens, then PyTorch text ``inputs_embeds`` interleave.
+``text_s128`` is ids-only S=128 and cannot take embeds or 256/25 slots.
+Video skipped. Crops package 280/70 to HF 256/25 (trailing pads).
 
 Fail-closed: non-finite or cosine below ABSURD (0.10) with no documented
-limit. Documented: package slots 280/70 vs HF 256/25; text_s128 cannot hold
-expanded image/audio slots (caption/mix stay unexpanded).
+limit. Documented: package slots 280/70 vs HF 256/25.
 
 Does not touch the FLOAT32 Core ML tree. ANE is out of scope.
 """
@@ -247,7 +247,6 @@ def main() -> int:
                     case_id=case_id,
                 )
                 row["path"] = "text_s128"
-                row["unexpanded"] = kind != "text"
                 batch = tokenize_with_st_prompt(
                     st, text, item.get("prompt_name"), max_length=TEXT_S
                 )
@@ -340,8 +339,8 @@ def main() -> int:
             "audio_slots": "package 70 vs HF 25 (host crops ceil(frames/4); 99→25)",
             "text_ids": "int32 I/O; si16 wraps vocab 262144 (SearchQuery 236787)",
             "caption_mix": (
-                "text_s128 on unexpanded caption/mix (S=128 ids-only cannot hold "
-                "256/25 expanded slots). Media-only still PT-interleaves."
+                "Core AI vision/audio soft tokens + PyTorch text inputs_embeds. "
+                "text_s128 is ids-only S=128 and cannot take embeds."
             ),
             "audio_mask": "all-1s silence pad required for finite audio (keep-mask NaNs)",
         },
@@ -350,9 +349,7 @@ def main() -> int:
             "Host crops vision 280→256 (trailing pad groups) and audio 70→25 (ceil frames/4).",
             "That matches HF slot counts; package graphs stay 280/70 (no re-export).",
             "Video skipped: no video .aimodel.",
-            "Caption/mix 768-d uses text_s128 (unexpanded). Media-only interleaves via PT text.",
-            "Unexpanded vs ST: mm_image_caption 0.825 (PT interleave was 0.947; wrapper 0.850).",
-            "Unexpanded vs ST: mm_mix 0.785 (PT interleave was 0.855; wrapper 0.751).",
+            "text_s128 (int32) is pure text only. Caption/mix/media interleave via PT text embeds.",
             "si16 text I/O was the 0.76 gap (3/15 SearchQuery tokens wrapped).",
             "int32 re-export: mm_text_sq cosine 0.995 vs ST (package vs wrapper 0.995; remaining f16/cast16).",
             "Fail-closed: non-finite or cosine < 0.10. Not a T6 0.95 gate.",

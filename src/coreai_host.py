@@ -5,10 +5,10 @@ The HF processor expands ``<|image|>`` from *valid* patches (256 on the
 64² fixture) and audio from duration (25 for 1 s). This host uses the
 **package** slot counts so scatter lines up with exported graphs.
 
-``text_s128.aimodel`` is ids-only and S=128 — expanded image slots (256)
-cannot fit. Caption / mix 768-d uses the text package on the **unexpanded**
-prompt (single media placeholders). Media-only rows still interleave via
-the PyTorch text tower + ``inputs_embeds``. ANE specialize stays a follow-up.
+``text_s128.aimodel`` is ids-only and S=128 — it cannot take ``inputs_embeds``
+or expanded media slots. Pure text uses that package. Media / caption / mix
+768-d interleaves Core AI vision/audio soft tokens into the PyTorch text
+tower (``inputs_embeds``). ANE specialize stays a follow-up.
 """
 
 from __future__ import annotations
@@ -55,13 +55,12 @@ def uses_text_package(
     audio_token: str = "<|audio|>",
     video_token: str = "<|video|>",
 ) -> bool:
-    """Caption / mix / text-only → ``text_s128``. Media-only stays interleaved."""
-    return has_caption_words(
-        text,
-        image_token=image_token,
-        audio_token=audio_token,
-        video_token=video_token,
-    )
+    """True only for pure text. Any media placeholder → soft-token interleave."""
+    raw = text or ""
+    for tok in (image_token, audio_token, video_token):
+        if tok and tok in raw:
+            return False
+    return bool(raw.strip())
 
 
 def expand_media_placeholders(

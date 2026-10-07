@@ -35,10 +35,12 @@ def _fail(msg: str) -> None:
 
 
 def test_caption_routing() -> None:
-    if not uses_text_package("title: aurora | text: Green sky glow. <|image|>"):
-        _fail("caption+image should use text_s128")
-    if not uses_text_package("tone then picture <|audio|> <|image|>"):
-        _fail("mix caption should use text_s128")
+    if not uses_text_package("What causes the northern lights?"):
+        _fail("pure text should use text_s128")
+    if uses_text_package("title: aurora | text: Green sky glow. <|image|>"):
+        _fail("caption+image should interleave")
+    if uses_text_package("tone then picture <|audio|> <|image|>"):
+        _fail("mix should interleave")
     if uses_text_package("<|image|>"):
         _fail("image-only should interleave")
     if uses_text_package("<|audio|>"):
