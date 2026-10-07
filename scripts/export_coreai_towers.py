@@ -458,7 +458,7 @@ def main() -> int:
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (edge cast, not flipped).",
             "Audio: 4-D NCHW I/O; baked one-hot rel-shift (no strided_slice, no prefix-matmul).",
-            "Vision: per-head SDPA with matching K/V [B,S,D]; no GEMM transpose.",
+            "Vision: per-head f32 matmul+softmax+matmul, no fused SDPA.",
         ],
     }
     write_json(out_dir / "towers.export.json", meta)
