@@ -274,16 +274,19 @@ def test_vision_attn_matches_transpose_matmul() -> None:
 
     torch.manual_seed(0)
     attn = _Attn()
-    x = torch.randn(1, 5, 8)
-    mask = torch.zeros(1, 1, 1, 5)
-    got, _ = _vision_attn_forward(attn, x, position_embeddings=None, attention_mask=mask)
-    q = attn.q_proj(x).view(1, 5, 2, 4).transpose(1, 2)
-    k = attn.k_proj(x).view(1, 5, 2, 4).transpose(1, 2)
-    v = attn.v_proj(x).view(1, 5, 2, 4).transpose(1, 2)
-    w = torch.softmax((q @ k.transpose(-1, -2)) + mask, dim=-1)
-    ref = attn.o_proj((w @ v).transpose(1, 2).reshape(1, 5, 8))
-    if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
-        _fail("vision heads-first != transpose+matmul")
+    # S=5: one block; S=24: 12 query blocks of 2 rows. Mask the last keys.
+    for seq in (5, 24):
+        x = torch.randn(1, seq, 8)
+        mask = torch.zeros(1, 1, 1, seq)
+        mask[..., -2:] = -1.0e4
+        got, _ = _vision_attn_forward(attn, x, position_embeddings=None, attention_mask=mask)
+        q = attn.q_proj(x).view(1, seq, 2, 4).transpose(1, 2)
+        k = attn.k_proj(x).view(1, seq, 2, 4).transpose(1, 2)
+        v = attn.v_proj(x).view(1, seq, 2, 4).transpose(1, 2)
+        w = torch.softmax((q @ k.transpose(-1, -2)) + mask, dim=-1)
+        ref = attn.o_proj((w @ v).transpose(1, 2).reshape(1, seq, 8))
+        if got.shape != ref.shape or not torch.allclose(got, ref, atol=1e-5):
+            _fail(f"vision attention (S={seq}) != transpose+matmul")
 
 
 def test_vision_attn_export_has_no_sdpa() -> None:

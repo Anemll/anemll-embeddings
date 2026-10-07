@@ -111,17 +111,13 @@ def rotate_half_matmul(x: torch.Tensor) -> torch.Tensor:
     return x @ rot
 
 
-def _head_take(
-    n_heads: int, head_dim: int, head: int, *, device: torch.device, dtype: torch.dtype
-) -> torch.Tensor:
-    """``[H*D, D]`` extractor for one head — no ``transpose(1,2)`` / giant one-hot."""
-    blocks = [
-        torch.eye(head_dim, device=device, dtype=dtype)
-        if i == int(head)
-        else torch.zeros(head_dim, head_dim, device=device, dtype=dtype)
-        for i in range(int(n_heads))
-    ]
-    return torch.cat(blocks, dim=0)
+# 2520 / 12 = 210 query rows per block. One [1, 12, S, S] score tensor per
+# layer (12.7 MB per head) round-trips DRAM on every softmax pass; 12 query
+# blocks cut the 16-layer tower from 547 to 360 ms on the ANE. Measured at
+# 2 layers: 8/10/15 blocks are slightly slower, 24-60 slower still, and 18
+# (140-row blocks) computed wrong scores on the ANE. Re-check accuracy if
+# this changes.
+VISION_ATTN_QUERY_BLOCKS = 12
 
 
 def _vision_attn_forward(
@@ -132,17 +128,18 @@ def _vision_attn_forward(
     position_ids: torch.Tensor | None = None,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-head 4D attention as matmul + softmax + matmul, all f32.
+    """All heads at once ``[B, H, S, D]``, attention in query blocks (fp16, ANE).
 
-    Fused ``scaled_dot_product_attention`` is the GPU region
-    (``1x1x2520x64xf32`` q/k/v/out, mask ``1x1x1x2520xf32``). Keep that
-    layout and do not cast the island to fp16. Explicit ops stay in the
-    main graph instead of an ``sdpa`` composite.
+    MPSGraph fuses each block into an ANE ``sdpa``; Q, K and V share the
+    ``[B, H, *, D]`` layout, which the ANE needs (it refuses sdpa when K and
+    V shapes differ). Softmax rows are independent, so the blocks are exact.
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
     n_heads = int(self.config.num_attention_heads)
     n_kv = int(self.config.num_key_value_heads)
+    if n_kv != n_heads:
+        raise ValueError(f"vision attention expects n_kv == n_heads, got {n_kv}/{n_heads}")
     query_states = self.q_norm(self.q_proj(hidden_states).view(batch, seq_len, n_heads, head_dim))
     key_states = self.k_norm(self.k_proj(hidden_states).view(batch, seq_len, n_kv, head_dim))
     value_states = self.v_norm(self.v_proj(hidden_states).view(batch, seq_len, n_kv, head_dim))
@@ -154,45 +151,26 @@ def _vision_attn_forward(
         key_states = _apply_multidimensional_rope_ane(
             key_states, cos, sin, position_ids, unsqueeze_dim=2
         )
-    query_flat = query_states.reshape(batch, seq_len, n_heads * head_dim)
-    key_flat = key_states.reshape(batch, seq_len, n_kv * head_dim)
-    value_flat = value_states.reshape(batch, seq_len, n_kv * head_dim)
     scale = float(self.scaling)
     hidden = n_heads * head_dim
-    attn_output = query_flat.new_zeros(batch, seq_len, hidden)
-    attn_weights = query_flat.new_zeros(batch, seq_len, seq_len)
-    # 4D mask ``[B, 1, 1, S]`` / ``[B, 1, S, S]`` matches 4D SDPA. Do not
-    # squeeze to 3D (that was the layout beside bare InvalidOutputType).
-    mask = attention_mask
-    if mask is not None and mask.ndim == 3:
-        mask = mask.reshape(int(mask.shape[0]), 1, int(mask.shape[-2]), int(mask.shape[-1]))
-    if batch != 1:
-        raise ValueError(f"vision attention export is batch 1, got {batch}")
-    # MPSGraph fuses this into sdpa. With 4-D heads it saw K as 1x1xSxD
-    # and Q/V as SxD, and the ANE refuses sdpa unless K and V match.
-    # Keep Q, K and V all [S, D].
-    if mask is not None:
-        mask = mask.reshape(-1, seq_len)
-    kv_heads = n_kv
-    for head in range(n_heads):
-        take_q = _head_take(
-            n_heads, head_dim, head, device=query_flat.device, dtype=query_flat.dtype
-        )
-        take_kv = _head_take(
-            kv_heads, head_dim, head % kv_heads, device=key_flat.device, dtype=key_flat.dtype
-        )
-        qh = (query_flat @ take_q).reshape(seq_len, head_dim)
-        kh = (key_flat @ take_kv).reshape(seq_len, head_dim)
-        vh = (value_flat @ take_kv).reshape(seq_len, head_dim)
-        scores = torch.matmul(qh, kh.transpose(0, 1)) * scale
+    attn_weights = query_states.new_zeros(batch, seq_len, seq_len)
+    mask = None
+    if attention_mask is not None:
+        mask = attention_mask.reshape(batch, 1, -1, seq_len)
+    q = query_states.transpose(1, 2)
+    key_t = key_states.transpose(1, 2).transpose(-1, -2)
+    v = value_states.transpose(1, 2)
+    n_blocks = VISION_ATTN_QUERY_BLOCKS if seq_len % VISION_ATTN_QUERY_BLOCKS == 0 else 1
+    rows = seq_len // n_blocks
+    parts = []
+    for b in range(n_blocks):
+        scores = torch.matmul(q[:, :, b * rows : (b + 1) * rows], key_t) * scale
         if mask is not None:
             scores = scores + mask
-        out_h = torch.matmul(torch.softmax(scores, dim=-1), vh).reshape(batch, seq_len, head_dim)
-        left = head * head_dim
-        right = hidden - left - head_dim
-        attn_output = attn_output + F.pad(out_h, (left, right))
-    attn_output = self.o_proj(attn_output)
-    return attn_output, attn_weights
+        parts.append(torch.matmul(torch.softmax(scores, dim=-1), v))
+    out = torch.cat(parts, dim=2) if n_blocks > 1 else parts[0]
+    attn_output = out.transpose(1, 2).reshape(batch, seq_len, hidden)
+    return self.o_proj(attn_output), attn_weights
 
 
 def _rms_norm_fp16_safe(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -230,9 +208,9 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
 
     global _ORIG_APPLY_ROPE
     g4.Gemma4VisionPatchEmbedder._position_embeddings = _position_embeddings_ane
-    g4.Gemma4VisionRotaryEmbedding.recomposition_frequencies = _recomposition_frequencies_ane
     if _ORIG_APPLY_ROPE is None:
         _ORIG_APPLY_ROPE = g4.apply_multidimensional_rope
+    g4.Gemma4VisionRotaryEmbedding.recomposition_frequencies = _recomposition_frequencies_ane
     g4.apply_multidimensional_rope = _apply_multidimensional_rope_ane
     g4.rotate_half = rotate_half_matmul
     g4.Gemma4VisionAttention.forward = _vision_attn_forward
@@ -243,5 +221,5 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
         "rotate_half": "matmul",
-        "attn": "per_head_matmul_softmax_f32",
+        "attn": f"batched_heads_query_blocks_{VISION_ATTN_QUERY_BLOCKS}",
     }
