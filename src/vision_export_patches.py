@@ -121,8 +121,8 @@ def _vision_attn_forward(
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
-    n_heads = int(self.q_proj.out_features) // head_dim
-    n_kv = int(self.k_proj.out_features) // head_dim
+    n_heads = int(self.config.num_attention_heads)
+    n_kv = int(self.config.num_key_value_heads)
     hidden_shape = (batch, seq_len, n_heads, head_dim)
     kv_shape = (batch, seq_len, n_kv, head_dim)
 

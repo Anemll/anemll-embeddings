@@ -238,9 +238,14 @@ def test_nchw_nhwc_matches_permute() -> None:
 
 
 def test_vision_attn_matches_transpose_matmul() -> None:
+    class _Cfg:
+        num_attention_heads = 2
+        num_key_value_heads = 2
+
     class _Attn:
         head_dim = 4
         scaling = 1.0
+        config = _Cfg()
 
         def __init__(self) -> None:
             self.q_proj = torch.nn.Linear(8, 8, bias=False)
