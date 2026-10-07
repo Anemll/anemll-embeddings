@@ -298,7 +298,9 @@ def _export_text(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     wrapper = EmbeddingGemma2Wrapper.from_sentence_transformer(st, normalize=True)
     force_eager_attention(wrapper)
     wrapper = wrapper.float().eval()
-    traced = TraceableEmbeddingGemma2(wrapper, seq_len=seq_len, batch=1).eval()
+    traced = TraceableEmbeddingGemma2(
+        wrapper, seq_len=seq_len, batch=1, index_dtype=torch.int16
+    ).eval()
     ids, mask = example_trace_inputs(seq_len)
     # ANE I/O rejects si32/si64; ids/mask fit si16 for this S=128 smoke vocab.
     ids = ids.to(dtype=torch.int16)

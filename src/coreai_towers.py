@@ -47,8 +47,7 @@ class VisionSoftTokens(nn.Module):
     def forward(
         self, pixel_values: torch.Tensor, pixel_position_ids: torch.Tensor
     ) -> torch.Tensor:
-        # Package I/O is si16 (ANE-legal). HF embedder wants long.
-        pixel_position_ids = pixel_position_ids.to(dtype=torch.long)
+        # Keep si16 through the graph — promoting to long recreates illegal ANE I/O.
         padding_positions = (pixel_position_ids == -1).all(dim=-1)
         inputs_embeds = self.vision_tower.patch_embedder(
             pixel_values, pixel_position_ids, padding_positions
