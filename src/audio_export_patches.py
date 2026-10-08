@@ -227,7 +227,22 @@ def bind_fp16_audio_constants(module: torch.nn.Module) -> dict[str, int]:
                 pos = _rel_pos_forward(mod, probe).detach().clone()
             mod.register_buffer("_pos_embed_const", pos, persistent=False)
             baked += 1
-    return {"gradient_clipping": clipped, "rel_pos": baked}
+    # The rel-pos keys depend only on weights and that constant. Computed in
+    # the graph they were two GPU regions: relative_k_proj on a constant input
+    # ("Input cannot run on ANE") and a 1664^2 one-hot matrix-vector transpose.
+    pos = next(
+        (m._pos_embed_const for m in module.modules() if isinstance(m, g4.Gemma4AudioRelPositionalEncoding)),
+        None,
+    )
+    rel_keys = 0
+    for mod in module.modules():
+        if isinstance(mod, g4.Gemma4AudioAttention) and pos is not None:
+            mod._buffers.pop("_rel_kt_const", None)
+            with torch.no_grad():
+                kt = _rel_keys_transposed(mod, pos, int(mod.num_heads), int(mod.head_dim))
+            mod.register_buffer("_rel_kt_const", kt.detach().clone(), persistent=False)
+            rel_keys += 1
+    return {"gradient_clipping": clipped, "rel_pos": baked, "rel_keys": rel_keys}
 
 
 def glu_from_bound_halves(mod: Any, x: torch.Tensor) -> torch.Tensor:
@@ -504,6 +519,15 @@ def blocked_additive_attention_mask(
     return (1.0 - keep4) * float(invalid)
 
 
+def _rel_keys_transposed(
+    attn: Any, position_embeddings: torch.Tensor, num_heads: int, head_dim: int
+) -> torch.Tensor:
+    """Relative-position keys as ``[H, D, P]`` (ready for ``q @ k^T``)."""
+    rel = attn.relative_k_proj(position_embeddings).view(-1, num_heads, head_dim)
+    rel = swap_mid_dims(rel.unsqueeze(0)).squeeze(0)  # [H, P, D]
+    return swap_last_two(rel)
+
+
 def _audio_attn_forward(
     self,
     hidden_states: torch.Tensor,
@@ -554,15 +578,12 @@ def _audio_attn_forward(
     )
     matrix_ac = q4 @ swap_last_two(k4)
 
-    relative_key_states = self.relative_k_proj(position_embeddings)
-    relative_key_states = relative_key_states.view(-1, num_heads, head_dim)
-    relative_key_states = relative_key_states.to(dtype=q4.dtype)
-    relative_key_states = swap_mid_dims(relative_key_states.unsqueeze(0)).squeeze(0)
-    rel_bh = relative_key_states.reshape(1, num_heads, -1, head_dim).expand(
-        batch_size, -1, -1, -1
-    ).reshape(batch_size * num_heads, -1, head_dim)
+    rel_kt = getattr(self, "_rel_kt_const", None)
+    if rel_kt is None:
+        rel_kt = _rel_keys_transposed(self, position_embeddings, num_heads, head_dim)
+    rel_kt = rel_kt.to(dtype=q4.dtype).unsqueeze(0).expand(batch_size, -1, -1, -1)
     matrix_bd = q4.reshape(batch_size * num_heads, num_blocks * chunk, head_dim) @ (
-        swap_last_two(rel_bh)
+        rel_kt.reshape(batch_size * num_heads, head_dim, -1)
     )
     # Baked XL shift on ``[BH, n, chunk, pos]`` — constant one-hot, no slice.
     matrix_bd = self._rel_shift(

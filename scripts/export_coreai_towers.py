@@ -32,7 +32,10 @@ from src.audio_export_patches import (  # noqa: E402
     bind_fp16_audio_constants,
     bind_glu_half_weights,
 )
-from src.vision_export_patches import apply_vision_ane_embed_patch  # noqa: E402
+from src.vision_export_patches import (  # noqa: E402
+    apply_fp16_safe_rms_norm_patch,
+    apply_vision_ane_embed_patch,
+)
 from src.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
@@ -207,14 +210,14 @@ def _export_vision(out_dir: Path, *, convert: bool) -> dict:
     aimodel = out_dir / "vision_s280.aimodel"
     rc = 0
     if convert:
-        # cast16 zeros this graph (eager/.pt2 absmax ~5.1 → aimodel 0).
+        # fp16 (cast16): the ANE refuses f32 ops. The old all-zero output was
+        # RMSNorm overflow, fixed by apply_fp16_safe_rms_norm_patch.
         rc = _convert(
             ep_path,
             aimodel,
             entry="vision_s280",
             inputs=["pixel_values", "pixel_position_ids"],
             outputs=["soft_tokens"],
-            no_cast16=True,
         )
     return {
         "tower": "vision",
@@ -231,7 +234,7 @@ def _export_vision(out_dir: Path, *, convert: bool) -> dict:
 def _export_audio(out_dir: Path, *, convert: bool) -> dict:
     print("Loading audio+text ST (vision off) on CPU FP32 …")
     unfold_patch = apply_audio_export_patches()
-    print(f"audio export patches={unfold_patch}")
+    print(f"audio export patches={unfold_patch} rms_norm={apply_fp16_safe_rms_norm_patch()}")
     st, load_meta = load_multimodal_sentence_transformer(
         dtype=torch.float32, device="cpu", vision=False, audio=True
     )
@@ -266,7 +269,6 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
                     entry="audio_s280",
                     inputs=["input_features", "input_features_mask"],
                     outputs=["soft_tokens"],
-                    no_cast16=True,
                 )
             else:
                 print("audio .pt2 save failed; converting live ExportedProgram")
@@ -277,7 +279,6 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
                         entry="audio_s280",
                         inputs=["input_features", "input_features_mask"],
                         outputs=["soft_tokens"],
-                        no_cast16=True,
                     )
                 except Exception as exc:
                     print(f"in-process convert failed with cast16: {type(exc).__name__}: {exc}")
@@ -357,6 +358,7 @@ def _export_text_embeds(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     """embeds [1, S, 512] + mask → 768. S=320 fits caption+256+25."""
     print(f"Loading text-only ST on CPU FP32; Core AI text-embeds S={seq_len} …")
     apply_fixed_shape_patches(seq_len, batch=1)
+    print(f"text_embeds rms_norm={apply_fp16_safe_rms_norm_patch()}")
     st, load_meta = load_sentence_transformer(dtype=torch.float32, device="cpu")
     wrapper = EmbeddingGemma2Wrapper.from_sentence_transformer(st, normalize=True)
     force_eager_attention(wrapper)
@@ -379,14 +381,13 @@ def _export_text_embeds(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
     aimodel = out_dir / f"text_embeds_s{seq_len}.aimodel"
     rc = 0
     if convert:
-        # Float I/O — skip cast16 (vision lesson: that pass can zero a graph).
+        # fp16 (cast16) so the graph can run on the ANE.
         rc = _convert(
             ep_path,
             aimodel,
             entry=f"text_embeds_s{seq_len}",
             inputs=["inputs_embeds", "attention_mask"],
             outputs=["embedding"],
-            no_cast16=True,
         )
     return {
         "tower": "text_embeds",
@@ -398,7 +399,7 @@ def _export_text_embeds(out_dir: Path, seq_len: int, *, convert: bool) -> dict:
         "convert_rc": rc,
         "io": tower_io_spec("text_embeds"),
         "finite": bool(torch.isfinite(emb).all()),
-        "cast16": False,
+        "cast16": True,
     }
 
 
@@ -456,7 +457,7 @@ def main() -> int:
         "notes": [
             "Separate packages; host interleaves media placeholders.",
             "Not forge.py convert. FLOAT32 Core ML text tree untouched.",
-            "PyTorch export is FP32; convert --no-cast16 (cast16 zeros vision).",
+            "PyTorch export is FP32; vision/audio/text_embeds convert with cast16 (fp16 graph, fp16-safe norms).",
             "Text ids I/O is int32 (vocab 262144 overflows si16).",
             "ANE-legal I/O: vision/audio f16 in+out; text_embeds f16 in, f32 out (edge cast, not flipped).",
             "Audio: 4-D NCHW I/O; baked one-hot rel-shift (no strided_slice, no prefix-matmul).",

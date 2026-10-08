@@ -131,8 +131,8 @@ def main() -> int:
         audio_in["input_features"].numpy(),
         audio_in["input_features_mask"].numpy(),
     )
-    # Partial keep-mask on this package yields NaNs; treat pad frames as silence.
-    amask[...] = 1
+    # Real keep-mask: with all-1s, the pad rows (noise on the ANE in fp16)
+    # were attended by the valid rows.
 
     vision_npy = out_dir / "host_vision_soft.npy"
     audio_npy = out_dir / "host_audio_soft.npy"

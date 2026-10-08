@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.audio_export_patches import (  # noqa: E402
     AUDIO_CHUNK,
     AUDIO_FUTURE,
+    AUDIO_INVALID,
     AUDIO_PAST,
     _rel_shift_baked,
     _rel_shift_matmul,
@@ -146,7 +147,8 @@ def test_blocked_additive_mask_shape_and_pad() -> None:
         _fail(f"dtype {mask.dtype}")
     # Last 8 keys of seq 70 land in the final block's current-chunk columns.
     # Those positions must be masked (large negative), earlier keys not.
-    if not bool((mask[0, -1, :, AUDIO_PAST:] < -1.0e6).any()):
+    # AUDIO_INVALID is -1e4 (fp16-safe); logits are softcapped to ±50.
+    if not bool((mask[0, -1, :, AUDIO_PAST:] <= AUDIO_INVALID).any()):
         _fail("expected padded keys to be invalid in last block")
     if float(mask[0, 0, 0, AUDIO_PAST]) < -1.0:
         _fail(f"first valid key of block 0 should be keep, got {float(mask[0, 0, 0, AUDIO_PAST])}")

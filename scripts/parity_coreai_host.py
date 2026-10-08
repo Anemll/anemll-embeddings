@@ -238,7 +238,6 @@ def main() -> int:
         feat, amask = pad_audio_to_package(
             ain["input_features"].numpy(), ain["input_features_mask"].numpy()
         )
-        amask[...] = 1
         raw = _run_tower(
             out_dir / "audio_s280.aimodel",
             "audio_s280",
@@ -389,7 +388,7 @@ def main() -> int:
                 "Core AI vision/audio + host scatter + Core AI text_embeds_s320. "
                 "text_s128 is ids-only S=128. Embed lookup stays on host."
             ),
-            "audio_mask": "all-1s silence pad required for finite audio (keep-mask NaNs)",
+            "audio_mask": "real keep-mask (pad frames masked; all-1s let fp16 pad noise reach valid rows)",
         },
         "cases": rows,
         "notes": [
