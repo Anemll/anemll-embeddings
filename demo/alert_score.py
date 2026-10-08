@@ -17,7 +17,6 @@ from typing import Any
 
 import numpy as np
 
-from api.similarity import cosine
 from demo.alert_catalog import (
     DOG_THRESHOLD,
     MEOW_THRESHOLD,

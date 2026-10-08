@@ -25,8 +25,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from demo.alert_catalog import catalog_items  # noqa: E402
-from samples.fetch_corpus import _trim_wav, audio_skip_reason  # noqa: E402
-from demo.settings import assert_outside_artifacts, default_alert_dir, env_path  # noqa: E402
+from demo.settings import (  # noqa: E402
+    assert_outside_artifacts,
+    default_alert_dir,
+    env_path,
+)
 from samples.download_utils import (  # noqa: E402
     MAX_AUDIO_BYTES,
     MAX_IMAGE_BYTES,
@@ -35,7 +38,11 @@ from samples.download_utils import (  # noqa: E402
     get_json,
     utc_now,
 )
-from samples.fetch_corpus import MAX_AUDIO_SECONDS  # noqa: E402
+from samples.fetch_corpus import (  # noqa: E402
+    MAX_AUDIO_SECONDS,
+    _trim_wav,
+    audio_skip_reason,
+)
 
 UA = "anemll-embeddings-demo/1.0 (local educational showcase; https://github.com/Anemll/anemll-embeddings)"
 API = "https://commons.wikimedia.org/w/api.php"
@@ -60,9 +67,7 @@ def license_ok(name: str | None) -> bool:
         return True
     if "publicdomain" in compact:
         return True
-    if compact.startswith("ccby"):
-        return True
-    return False
+    return compact.startswith("ccby")
 
 
 def _get(url: str) -> dict:

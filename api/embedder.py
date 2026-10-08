@@ -25,6 +25,16 @@ import numpy as np
 import torch
 from PIL import Image
 
+from api.coreai_host import (
+    AUDIO_FRAMES,
+    TEXT_EMBEDS_S,
+    crop_audio_soft_to_src,
+    crop_vision_soft_to_valid,
+    expand_media_placeholders,
+    hf_audio_slots_from_frames,
+    interleaved_inputs_embeds,
+    pad_embeds_to_package,
+)
 from api.feeds import assert_text_mask_preserved, audio_tower_feed, vision_tower_feed
 from api.host_embed import load_slim_host
 from api.mock import MockBackend
@@ -37,16 +47,6 @@ from api.runtime_paths import (
 from api.runtime_paths import default_artifacts as _default_artifacts
 from api.runtime_paths import default_model as _default_model
 from api.types import DIM, EmbedResult, TowerHealth
-from api.coreai_host import (
-    AUDIO_FRAMES,
-    TEXT_EMBEDS_S,
-    crop_audio_soft_to_src,
-    hf_audio_slots_from_frames,
-    crop_vision_soft_to_valid,
-    expand_media_placeholders,
-    interleaved_inputs_embeds,
-    pad_embeds_to_package,
-)
 
 AUDIO_SR = 16000
 
@@ -133,7 +133,7 @@ class CoreAIWorkerClient:
             return
         try:
             self._request({"cmd": "shutdown"})
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - best-effort shutdown; terminate() follows
             pass
         if self._proc.poll() is None:
             self._proc.terminate()

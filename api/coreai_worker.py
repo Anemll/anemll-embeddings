@@ -70,6 +70,7 @@ from coreai_smoke import (  # noqa: E402
     placement_from_cache_manifest,
 )
 
+
 def _coreai_cache_dir() -> Path:
     raw = os.environ.get("CFFIXED_USER_HOME")
     home = Path(raw).expanduser() if raw else Path.home()
@@ -180,10 +181,10 @@ def _placement(model, started: float, package: Path) -> str:
             return "fullyOnANE"
     devices: list[str] = []
     try:
-        raw = model._debug_infos  # noqa: SLF001
+        raw = model._debug_infos
         blob = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
         devices = extract_devices_from_debug(json.loads(blob))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - debug info is optional; log and continue
         _log(f"debug_infos: {type(exc).__name__}: {exc}")
     # Warm starts do not rewrite the cache, so a time window around ``started``
     # is empty and the globally newest manifest can belong to another compile.
@@ -206,7 +207,7 @@ def _desc_dtypes(fn) -> dict[str, str]:
     for name in list(fn.desc.input_names):
         try:
             out[name] = str(fn.desc.input_descriptor(name).dtype)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - best-effort dtype probe
             continue
     return out
 
@@ -317,7 +318,7 @@ async def _serve() -> None:
                 break
             else:
                 _reply({"ok": False, "error": f"unknown cmd {cmd!r}"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the worker must reply, not die
             _log(f"worker error: {type(exc).__name__}: {exc}")
             _reply({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 

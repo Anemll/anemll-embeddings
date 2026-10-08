@@ -25,7 +25,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from demo.settings import assert_outside_artifacts, default_corpus_dir, env_path  # noqa: E402
+from demo.settings import (  # noqa: E402
+    assert_outside_artifacts,
+    default_corpus_dir,
+    env_path,
+)
 from samples.download_utils import (  # noqa: E402
     MAX_AUDIO_BYTES,
     MAX_IMAGE_BYTES,
@@ -278,7 +282,7 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
                 }
             )
             print(f"image {topic} · {row.get('license')} · {row.get('title')}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - skip this item, keep fetching
             print(f"image {topic} failed: {type(exc).__name__}: {exc}")
         time.sleep(0.35)
     skip = audio_skip_reason()
@@ -322,7 +326,7 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
                 }
             )
             print(f"audio {topic} · {row.get('license')} · {row.get('title')}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - skip this item, keep fetching
             print(f"audio {topic} failed: {type(exc).__name__}: {exc}")
         time.sleep(0.35)
     manifest = {

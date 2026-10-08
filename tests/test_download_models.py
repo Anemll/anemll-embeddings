@@ -14,11 +14,9 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api.host_embed import (  # noqa: E402
-    EMBED_SCALE as HOST_EMBED_SCALE,
-    SLIM_EMBED_NAME as HOST_SLIM_NAME,
-    load_slim_host,
-)
+from api.host_embed import EMBED_SCALE as HOST_EMBED_SCALE  # noqa: E402
+from api.host_embed import SLIM_EMBED_NAME as HOST_SLIM_NAME  # noqa: E402
+from api.host_embed import load_slim_host  # noqa: E402
 from scripts.download_common import (  # noqa: E402
     ANE_ALLOW,
     ANE_BYTES,
@@ -37,9 +35,9 @@ from scripts.download_common import (  # noqa: E402
     TOWERS,
     all_bundles_complete,
     bundle_complete,
-    env_exports,
     ensure_slim_embed,
     ensure_symlink,
+    env_exports,
     export_download_bytes,
     extract_embed_from_bytes,
     extract_embed_from_file,

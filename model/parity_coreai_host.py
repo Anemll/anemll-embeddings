@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from api.coreai_host import (  # noqa: E402
+    TEXT_EMBEDS_S,
     adapt_audio_features_nchw,
     adapt_audio_mask_nchw,
     adapt_vision_pixels,
@@ -41,10 +42,12 @@ from api.coreai_host import (  # noqa: E402
     pad_embeds_to_package,
     slot_report,
     uses_text_package,
-    TEXT_EMBEDS_S,
 )
 from model.coreai_smoke import dummy_numpy_inputs  # noqa: E402
-from model.embed_wrapper import EmbeddingGemma2Wrapper, tokenize_with_st_prompt  # noqa: E402
+from model.embed_wrapper import (  # noqa: E402
+    EmbeddingGemma2Wrapper,
+    tokenize_with_st_prompt,
+)
 from model.export_utils import (  # noqa: E402
     artifacts_root,
     git_sha,
@@ -52,7 +55,10 @@ from model.export_utils import (  # noqa: E402
     utc_now,
     write_json,
 )
-from model.load_text_model import default_model_path, load_sentence_transformer  # noqa: E402
+from model.load_text_model import (  # noqa: E402
+    default_model_path,
+    load_sentence_transformer,
+)
 from model.multimodal_media import AUDIO_SR, write_default_media  # noqa: E402
 from model.parity_metrics import cosine, rel_l2  # noqa: E402
 
@@ -375,7 +381,7 @@ def main() -> int:
                     )
                     fail = True
             print(f"  cosine={row.get('cosine')} rel_l2={row.get('rel_l2')} finite={finite}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - record per-row failure
             row["driven"] = True
             row["error"] = f"{type(exc).__name__}: {exc}"
             fail = True

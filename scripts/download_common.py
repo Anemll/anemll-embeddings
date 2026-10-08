@@ -151,13 +151,9 @@ def matches_hf_patterns(
 ) -> bool:
     """Same idea as huggingface_hub allow/ignore globs (basename or full path)."""
     names = (name, Path(name).name)
-    if allow is not None:
-        if not any(fnmatch(candidate, pat) for candidate in names for pat in allow):
-            return False
-    if ignore is not None:
-        if any(fnmatch(candidate, pat) for candidate in names for pat in ignore):
-            return False
-    return True
+    if allow is not None and not any(fnmatch(candidate, pat) for candidate in names for pat in allow):
+        return False
+    return not (ignore is not None and any(fnmatch(candidate, pat) for candidate in names for pat in ignore))
 
 
 def bundle_path(ane_dir: Path, name: str) -> Path:

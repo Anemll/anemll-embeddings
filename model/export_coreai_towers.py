@@ -31,16 +31,12 @@ from model.audio_export_patches import (  # noqa: E402
     bind_fp16_audio_constants,
     bind_glu_half_weights,
 )
-from model.vision_export_patches import (  # noqa: E402
-    apply_fp16_safe_rms_norm_patch,
-    apply_vision_ane_embed_patch,
-)
 from model.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
     AUDIO_SOFT_TOKENS,
-    AudioSoftTokens,
     VISION_SOFT_TOKENS,
+    AudioSoftTokens,
     VisionSoftTokens,
     audio_example,
     tower_io_spec,
@@ -61,10 +57,17 @@ from model.load_multimodal_model import (  # noqa: E402
     load_multimodal_sentence_transformer,
 )
 from model.load_text_model import load_sentence_transformer  # noqa: E402
-from model.trace_patches import apply_fixed_shape_patches, bind_used_weight_layout  # noqa: E402
+from model.trace_patches import (  # noqa: E402
+    apply_fixed_shape_patches,
+    bind_used_weight_layout,
+)
 from model.traceable_wrapper import (  # noqa: E402
     TraceableEmbeddingGemma2,
     TraceableEmbeddingGemma2Embeds,
+)
+from model.vision_export_patches import (  # noqa: E402
+    apply_fp16_safe_rms_norm_patch,
+    apply_vision_ane_embed_patch,
 )
 
 CONVERT_SCRIPT = REPO_ROOT / "model" / "_coreai_convert_ep.py"
@@ -103,7 +106,7 @@ def _export_program(module: torch.nn.Module, args: tuple, path: Path):
         torch.export.save(ep, str(path))
         print(f"wrote {path}")
         return ep, None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - saving the .pt2 is optional; error is recorded
         print(f"torch.export.save skipped ({type(exc).__name__}: {exc})")
         return ep, f"{type(exc).__name__}: {exc}"
 
@@ -288,7 +291,7 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
                         inputs=["input_features", "input_features_mask"],
                         outputs=["soft_tokens"],
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - retry without cast16
                     print(f"in-process convert failed with cast16: {type(exc).__name__}: {exc}")
                     rc = _convert_inprocess(
                         ep,
@@ -298,7 +301,7 @@ def _export_audio(out_dir: Path, *, convert: bool) -> dict:
                         outputs=["soft_tokens"],
                         no_cast16=True,
                     )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - record the convert failure in the report
             convert_error = f"{type(exc).__name__}: {exc}"
             unsupported = _unsupported_ops(exc)
             print(f"FAIL audio convert: {convert_error}")
@@ -451,7 +454,7 @@ def main() -> int:
                 )
             else:
                 reports.append(_export_text(out_dir, int(args.seq_len), convert=convert))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - record per-tower failure and continue
             fail = True
             reports.append({"tower": name, "error": f"{type(exc).__name__}: {exc}"})
             print(f"FAIL {name}: {type(exc).__name__}: {exc}")

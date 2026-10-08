@@ -14,7 +14,7 @@ import struct
 from pathlib import Path
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 SLIM_EMBED_NAME = "embed_tokens.safetensors"
 EMBED_WEIGHT_KEY = "embed_tokens.weight"

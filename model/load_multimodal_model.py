@@ -90,7 +90,7 @@ def load_multimodal_sentence_transformer(
 def get_auto_model(st_model: SentenceTransformer):
     """Return the HF ``EmbeddingGemma2Model`` from an ST stack."""
     transformer = st_model[0]
-    auto = getattr(transformer, "auto_model", None) or getattr(transformer, "model")
+    auto = getattr(transformer, "auto_model", None) or transformer.model
     if auto is None:
         raise TypeError(f"ST module 0 has no auto_model: {type(transformer)}")
     return auto

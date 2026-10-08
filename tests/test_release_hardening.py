@@ -8,19 +8,19 @@ import asyncio
 import io
 import os
 import sys
-import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pytest
+import tomllib
 from fastapi.testclient import TestClient
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-import api.runtime_paths as runtime_paths  # noqa: E402
+from api import runtime_paths  # noqa: E402
 from api.embedder import CoreAIWorkerClient, worker_python  # noqa: E402
 from api.runtime_paths import (  # noqa: E402
     CoreAIPythonNotFound,
@@ -91,9 +91,11 @@ def test_coreai_python_candidate_used_when_env_unset(clean_env: Path) -> None:
 
 
 def test_worker_python_refuses_interpreter_without_coreai(clean_env: Path) -> None:
-    with patch("api.embedder.current_python_has_coreai", return_value=False):
-        with pytest.raises(CoreAIPythonNotFound) as err:
-            worker_python(None)
+    with (
+        patch("api.embedder.current_python_has_coreai", return_value=False),
+        pytest.raises(CoreAIPythonNotFound) as err,
+    ):
+        worker_python(None)
     assert "cannot import coreai.runtime" in str(err.value)
     with patch("api.embedder.current_python_has_coreai", return_value=True):
         assert worker_python(None) is None
@@ -334,9 +336,11 @@ def test_download_ane_rejects_bad_checksum(tmp_path: Path, monkeypatch) -> None:
             for filename in ("metadata.json", "main.hash", "main.mlirb"):
                 (bundle / filename).write_text("tampered\n")
 
-    with patch("scripts.download_common._hf_snapshot_download", fake):
-        with pytest.raises(SystemExit) as err:
-            download_models.download_ane(tmp_path / "ane", force=True)
+    with (
+        patch("scripts.download_common._hf_snapshot_download", fake),
+        pytest.raises(SystemExit) as err,
+    ):
+        download_models.download_ane(tmp_path / "ane", force=True)
     assert "checksum" in str(err.value)
     assert not (tmp_path / "ane" / ".anemll-revision").exists()
 
@@ -349,9 +353,8 @@ def test_prepare_host_temp_source_is_removed(tmp_path: Path) -> None:
     def fake_snapshot(repo, rev, local_dir, **kw):
         seen.append(Path(local_dir))
 
-    with patch.object(prep, "snapshot", fake_snapshot):
-        with prep.resolve_src(None) as (src, kind):
-            assert kind == "downloaded" and src.is_dir()
+    with patch.object(prep, "snapshot", fake_snapshot), prep.resolve_src(None) as (src, kind):
+        assert kind == "downloaded" and src.is_dir()
     assert seen and not seen[0].exists()
 
 
@@ -379,9 +382,11 @@ def test_sample_download_cap_and_provenance(tmp_path: Path) -> None:
         rec = download_utils.download("https://example.org/x", tmp_path / "x.bin", user_agent="t", max_bytes=10)
     assert rec["final_url"] == "https://example.org/final" and rec["bytes"] == 3
     assert rec["sha256"] == sha256_file(tmp_path / "x.bin") and rec["fetched_at"].endswith("Z")
-    with patch.object(download_utils.urllib.request, "urlopen", lambda *a, **k: _FakeResponse(b"x" * 50)):
-        with pytest.raises(download_utils.DownloadTooLarge):
-            download_utils.download("https://example.org/y", tmp_path / "y.bin", user_agent="t", max_bytes=10)
+    with (
+        patch.object(download_utils.urllib.request, "urlopen", lambda *a, **k: _FakeResponse(b"x" * 50)),
+        pytest.raises(download_utils.DownloadTooLarge),
+    ):
+        download_utils.download("https://example.org/y", tmp_path / "y.bin", user_agent="t", max_bytes=10)
     assert not (tmp_path / "y.bin").exists()
     assert not list(tmp_path.glob("*.part"))
 

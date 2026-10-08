@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from PIL import Image
 
+from api.similarity import cosine
 from demo.alert_catalog import (
     CHANGE_LABELS,
     FRAMES,
@@ -36,7 +37,6 @@ from demo.alert_library import (
 from demo.alert_score import (
     average_unit,
     change_score,
-    cosine,
     fires,
     placeholder_threshold,
     rule_value,
@@ -89,7 +89,7 @@ def mount_alert(app: FastAPI, alert_dir: Path) -> None:
     @app.post("/alert/frames/{item_id}")
     async def replace_frame(item_id: str, request: Request) -> dict[str, Any]:
         item_id = _known_frame(item_id)
-        data, filename = await _one_file(request)
+        data, _filename = await _one_file(request)
         if len(data) > MAX_IMAGE_BYTES:
             raise HTTPException(413, "image is too large")
         try:

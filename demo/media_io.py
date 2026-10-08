@@ -121,7 +121,7 @@ def resample_linear(samples: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray
     mono = np.asarray(samples, dtype=np.float32).reshape(-1)
     if int(src_sr) == int(dst_sr) or mono.size == 0:
         return mono
-    n = max(1, int(round(mono.size * float(dst_sr) / float(src_sr))))
+    n = max(1, round(mono.size * float(dst_sr) / float(src_sr)))
     src_x = np.linspace(0.0, 1.0, mono.size, endpoint=False)
     dst_x = np.linspace(0.0, 1.0, n, endpoint=False)
     return np.interp(dst_x, src_x, mono).astype(np.float32, copy=False)

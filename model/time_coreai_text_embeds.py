@@ -117,7 +117,7 @@ def _desc_dtypes(fn) -> dict[str, str]:
     for name in list(fn.desc.input_names):
         try:
             out[name] = str(fn.desc.input_descriptor(name).dtype)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - best-effort dtype probe
             continue
     return out
 
@@ -143,7 +143,7 @@ async def _time_one(
             model = await AIModel.load(pkg, specialization_options=opts)
         else:
             model = await AIModel.load(pkg)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - record the load failure in the report
         report["error"] = f"{type(exc).__name__}: {exc}"
         return report
 
@@ -182,10 +182,10 @@ async def _time_one(
         }
     )
     try:
-        raw = model._debug_infos  # noqa: SLF001
+        raw = model._debug_infos
         dbg = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
         report["debug_devices"] = extract_devices_from_debug(dbg)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - debug info is optional
         report["debug_infos"] = f"{type(exc).__name__}: {exc}"
     report["placement"] = _cache_since(started)
     return report

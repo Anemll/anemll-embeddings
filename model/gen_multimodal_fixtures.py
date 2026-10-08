@@ -26,7 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from model.export_utils import artifacts_root, write_json  # noqa: E402
-from model.load_multimodal_model import load_multimodal_sentence_transformer  # noqa: E402
+from model.load_multimodal_model import (  # noqa: E402
+    load_multimodal_sentence_transformer,
+)
 from model.load_text_model import DEFAULT_MODEL, ensure_hf_cache_env  # noqa: E402
 from model.multimodal_media import AUDIO_SR, write_default_media  # noqa: E402
 

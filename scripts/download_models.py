@@ -27,11 +27,11 @@ from scripts.download_common import (  # noqa: E402
     ANE_INFERENCE_ALLOW,
     ANE_REPO,
     ANE_REVISION,
-    HOST_SHA256,
     BASE_REPO,
     BASE_REVISION,
     HOST_FOLDER,
     HOST_FOLDER_ALLOW,
+    HOST_SHA256,
     INFERENCE_HOST_ALLOW,
     INFERENCE_HOST_IGNORE,
     SLIM_EMBED_NAME,
@@ -43,12 +43,12 @@ from scripts.download_common import (  # noqa: E402
     ensure_slim_embed,
     env_exports,
     format_gb,
+    host_checksums,
     host_payload_complete,
     inference_download_bytes,
     install_host,
     link_coreai,
     revision_matches,
-    host_checksums,
     snapshot,
     tower_checksums,
     verify_sha256,
@@ -118,7 +118,7 @@ def fetch_mirrored_host(ane_dir: Path) -> bool:
         snapshot(ANE_REPO, rev, ane_dir, allow_patterns=HOST_FOLDER_ALLOW)
     except SystemExit:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - fall back to Google's host files
         print(f"mirrored host/ fetch failed ({type(exc).__name__}: {exc})")
         return False
     return host_payload_complete(mirrored)

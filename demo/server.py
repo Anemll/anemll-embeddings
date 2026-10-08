@@ -27,7 +27,9 @@ from PIL import Image
 
 from api.runtime_paths import default_artifacts, default_model
 from api.types import EmbedResult
+from demo.alert_routes import mount_alert
 from demo.backends import open_backend
+from demo.limits import BodySizeLimit
 from demo.media_io import (
     AUDIO_SR,
     load_audio_bytes,
@@ -37,8 +39,6 @@ from demo.media_io import (
     save_jpeg,
     sniff_modality,
 )
-from demo.alert_routes import mount_alert
-from demo.limits import BodySizeLimit
 from demo.settings import (
     DEFAULT_PORT,
     assert_outside_artifacts,

@@ -64,10 +64,10 @@ def _reexec_if_needed(argv: list[str]) -> None:
 
 
 def _probe_aimodel(out: Path) -> None:
-    import torch
-    import torch.nn as nn
     import coreai_torch
+    import torch
     from coreai_opt.casting import cast_to_16_bit_precision
+    from torch import nn
 
     class Tiny(nn.Module):
         def __init__(self) -> None:

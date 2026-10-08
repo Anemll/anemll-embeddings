@@ -19,21 +19,32 @@ from model.audio_export_patches import (  # noqa: E402
     _rel_shift_baked,
     _rel_shift_matmul,
     _rel_shift_static,
+    bind_glu_half_weights,
     blocked_additive_attention_mask,
     depthwise_conv1d_channels_last,
     gather_seq_windows,
-    bind_glu_half_weights,
     glu_from_bound_halves,
     glu_from_linear_halves,
     glu_split_last,
-    prefix_rows,
-    stride_select,
     nchw_to_nhwc,
     nhwc_to_nchw,
+    prefix_rows,
     rel_pos_ids_float,
     slice_seq_windows,
+    stride_select,
     swap_last_two,
     swap_mid_dims,
+)
+from model.coreai_towers import (  # noqa: E402
+    AUDIO_FEAT,
+    AUDIO_FRAMES,
+    AUDIO_SOFT_TOKENS,
+    VISION_PATCH_DIM,
+    VISION_PATCHES,
+    VISION_SOFT_TOKENS,
+    audio_example,
+    tower_io_spec,
+    vision_example,
 )
 from model.trace_patches import (  # noqa: E402
     _make_attention_forward,
@@ -47,17 +58,6 @@ from model.vision_export_patches import (  # noqa: E402
     _vision_attn_forward,
     embedding_from_int_indices,
     rotate_half_matmul,
-)
-from model.coreai_towers import (  # noqa: E402
-    AUDIO_FEAT,
-    AUDIO_FRAMES,
-    AUDIO_SOFT_TOKENS,
-    VISION_PATCH_DIM,
-    VISION_PATCHES,
-    VISION_SOFT_TOKENS,
-    audio_example,
-    tower_io_spec,
-    vision_example,
 )
 
 

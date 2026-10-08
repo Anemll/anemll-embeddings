@@ -15,8 +15,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from api.coreai_host import (  # noqa: E402
     AUDIO_FRAMES,
     IMAGE_SLOTS,
-    has_caption_words,
-    uses_text_package,
+    TEXT_EMBEDS_S,
     adapt_audio_features_nchw,
     adapt_audio_mask_nchw,
     adapt_vision_pixels,
@@ -25,13 +24,14 @@ from api.coreai_host import (  # noqa: E402
     crop_audio_soft_to_src,
     crop_vision_soft_to_valid,
     expand_media_placeholders,
+    has_caption_words,
     hf_audio_slots_from_frames,
     hf_image_slots_from_positions,
     pad_audio_to_package,
     pad_embeds_to_package,
-    TEXT_EMBEDS_S,
     placeholder_masks,
     scatter_soft_tokens,
+    uses_text_package,
 )
 
 

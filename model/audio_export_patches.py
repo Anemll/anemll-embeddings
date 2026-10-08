@@ -17,9 +17,9 @@ import functools
 from typing import Any
 
 import numpy as np
-
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 # HF Gemma4 audio defaults (EmbeddingGemma 2).
 AUDIO_CHUNK = 12
@@ -81,7 +81,7 @@ def window_onehot(
     return torch.relu(1.0 - (idx.unsqueeze(-1) - slots).abs())
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _swap_permutation(dim_a: int, dim_b: int) -> np.ndarray:
     """``[A*B, A*B]`` 0/1 matrix mapping row ``b*A + a`` to ``a*B + b``."""
     n = dim_a * dim_b

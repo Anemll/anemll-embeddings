@@ -7,6 +7,7 @@ are flagged. Cache-manifest strings from forge are coarse (ANE / GPU / mixed).
 
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any
 
 import numpy as np
@@ -183,7 +184,7 @@ def classify_device_runs(devices: list[str]) -> dict[str, Any]:
 
     switches = [
         {"from": a["device"], "to": b["device"], "at": b["start"]}
-        for a, b in zip(runs, runs[1:])
+        for a, b in pairwise(runs)
     ]
     return {
         "device_runs": runs,
@@ -230,11 +231,10 @@ def extract_devices_from_debug(obj: Any, *, limit: int = 4000) -> list[str]:
             return
         if isinstance(node, dict):
             for k, v in node.items():
-                if str(k).lower().replace("_", "") in {x.replace("_", "") for x in keys}:
-                    if isinstance(v, str):
-                        n = _norm(v)
-                        if n:
-                            found.append(n)
+                if str(k).lower().replace("_", "") in {x.replace("_", "") for x in keys} and isinstance(v, str):
+                    n = _norm(v)
+                    if n:
+                        found.append(n)
                 walk(v)
         elif isinstance(node, list):
             for item in node:

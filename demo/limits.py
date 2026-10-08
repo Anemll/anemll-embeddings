@@ -9,7 +9,8 @@ see ``demo/settings.py`` for the defaults and environment overrides.
 from __future__ import annotations
 
 import json
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 Scope = dict[str, Any]
 Message = dict[str, Any]

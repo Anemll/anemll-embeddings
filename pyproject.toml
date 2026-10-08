@@ -65,3 +65,8 @@ model = ["*.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+# Ruff's default rules, plus E402: scripts and tests put the repo root on
+# sys.path before importing project modules and mark that with `# noqa: E402`.
+extend-select = ["E402"]

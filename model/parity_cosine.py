@@ -15,7 +15,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 
 try:
     import coremltools as ct

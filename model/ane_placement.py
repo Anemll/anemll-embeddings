@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from itertools import pairwise
 from typing import Any
 
 from coremltools.models.compute_device import (
@@ -161,7 +162,7 @@ def classify_device_sequence(rows: list[dict[str, Any]]) -> dict[str, Any]:
             mid_islands.append(island)
 
     switches: list[dict[str, Any]] = []
-    for prev, nxt in zip(runs, runs[1:]):
+    for prev, nxt in pairwise(runs):
         switches.append(
             {
                 "from": prev["device"],
@@ -240,7 +241,7 @@ def summarize_compute_plan(plan: Any, *, skip_const: bool = True) -> dict[str, A
     by_op_device: dict[str, Counter[str]] = {"ANE": Counter(), "CPU": Counter(), "GPU": Counter()}
     supported_ane = 0
     records: list[dict[str, Any]] = []
-    getter = getattr(plan, "get_compute_device_usage_for_mlprogram_operation")
+    getter = plan.get_compute_device_usage_for_mlprogram_operation
     for op in operations:
         op_name = getattr(op, "operator_name", None) or getattr(op, "operatorName", "")
         if skip_const and op_name == "const":
@@ -300,7 +301,9 @@ def placement_verdict(summary: dict[str, Any]) -> tuple[bool, str]:
         supported = int(summary.get("supported_ane_ops") or 0)
         return (
             False,
-            "CPU fallback suspected: 0 non-const ops prefer ANE "
-            f"(ANE listed as supported on {supported} ops)",
+            (
+                "CPU fallback suspected: 0 non-const ops prefer ANE "
+                f"(ANE listed as supported on {supported} ops)"
+            ),
         )
     return True, f"{summary['ane_ops']} non-const ops prefer ANE"

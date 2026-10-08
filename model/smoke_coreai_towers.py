@@ -101,7 +101,7 @@ def _desc_dtypes(fn) -> dict[str, str]:
     for name in list(fn.desc.input_names):
         try:
             out[name] = str(fn.desc.input_descriptor(name).dtype)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - best-effort dtype probe
             continue
     return out
 
@@ -122,8 +122,13 @@ def _cache_placement_since(since: float) -> dict:
 async def _smoke_one(
     tower: str, pkg: Path, export_io: dict | None, *, compute: str = "cpu"
 ) -> dict:
-    from coreai.runtime import AIModel, ComputeUnitKind, NDArray, SpecializationOptions
-    from coreai.runtime import _AIModelAsset
+    from coreai.runtime import (
+        AIModel,
+        ComputeUnitKind,
+        NDArray,
+        SpecializationOptions,
+        _AIModelAsset,
+    )
 
     started = time.time()
     report: dict = {
@@ -144,7 +149,7 @@ async def _smoke_one(
         if summary is not None:
             report["function_names"] = list(summary.function_names)
             report["compute_types"] = list(summary.compute_types)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - asset summary is optional
         report["asset_error"] = f"{type(exc).__name__}: {exc}"
 
     opts = None
@@ -160,7 +165,7 @@ async def _smoke_one(
             elif compute == "cpu":
                 opts = SpecializationOptions.cpu_only()
                 spec_note = "cpu_only"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fall back to default specialization
             spec_note = f"options_failed:{type(exc).__name__}"
             opts = None
     report["specialization"] = spec_note
@@ -170,7 +175,7 @@ async def _smoke_one(
             model = await AIModel.load(pkg, specialization_options=opts)
         else:
             model = await AIModel.load(pkg)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - record the load failure in the report
         report["error"] = f"{type(exc).__name__}: {exc}"
         return report
 
@@ -217,11 +222,11 @@ async def _smoke_one(
     placement = _cache_placement_since(started)
     devices: list[str] = []
     try:
-        raw = model._debug_infos  # noqa: SLF001
+        raw = model._debug_infos
         dbg = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
         devices = extract_devices_from_debug(dbg)
         report["debug_device_count"] = len(devices)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - debug info is optional
         report["debug_infos"] = f"{type(exc).__name__}: {exc}"
 
     classified = classify_device_runs(devices)
@@ -266,7 +271,7 @@ async def _run(towers: list[str], out_dir: Path, *, compute: str) -> dict:
         print(f"smoke {name} compute={compute} {pkg}")
         try:
             row = await _smoke_one(name, pkg, export_io, compute=compute)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - record per-tower failure and continue
             row = {
                 "tower": name,
                 "package": str(pkg),
