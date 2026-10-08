@@ -26,6 +26,7 @@ import torch
 from PIL import Image
 
 from api.feeds import assert_text_mask_preserved, audio_tower_feed, vision_tower_feed
+from api.host_embed import load_slim_host
 from api.mock import MockBackend
 from api.types import DIM, EmbedResult, TowerHealth
 from api.coreai_host import (
@@ -263,17 +264,23 @@ class CoreAIBackend:
     def _load_host(self) -> None:
         # Checkpoint stack is the Mac host venv. Tests inject a processor and
         # text module, so this import stays off the mock/CI path.
-        import torch
         from transformers import AutoProcessor
-
-        from model.embed_wrapper import EmbeddingGemma2Wrapper
-        from model.load_text_model import load_sentence_transformer
 
         if self.model_path is None or not Path(self.model_path).is_dir():
             raise FileNotFoundError(
                 "coreai backend needs ANEMLL_EMBEDDINGS_MODEL "
                 "(EmbeddingGemma 2 checkpoint for the host embed lookup and processor)"
             )
+        slim = load_slim_host(self.model_path)
+        if slim is not None:
+            self._text, self._prompts = slim
+            self._proc = AutoProcessor.from_pretrained(
+                str(self.model_path), trust_remote_code=True
+            )
+            return
+        from model.embed_wrapper import EmbeddingGemma2Wrapper
+        from model.load_text_model import load_sentence_transformer
+
         st, _meta = load_sentence_transformer(
             self.model_path, dtype=torch.float32, device="cpu"
         )

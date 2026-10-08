@@ -16,7 +16,7 @@ One input (for example the phrase “white house”) always gives exactly one ve
 
 ## What’s included
 
-- Public Neural Engine packages on [Hugging Face](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus `scripts/download_models.py` and `scripts/warmup.py`
+- Public Neural Engine packages on [Hugging Face](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus `scripts/download_models.py` (inference) and `scripts/warmup.py`
 - Scripts that export EmbeddingGemma 2’s vision, audio, and text towers to Core AI `.aimodel` packages
 - Host code that tokenizes text, runs those packages, and inserts image/audio tokens into the text model
 - A local demo: search, a similarity heatmap, “search what I heard”, and camera alerts (see [Try the demo](#try-the-demo) and [demo/README.md](demo/README.md))
@@ -29,20 +29,20 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | --- | --- |
 | `model/` | Export / convert EmbeddingGemma 2 to Core AI / ANE: wrappers, ANE graph patches, specialize and inspect tools, parity and cosine checks |
 | `api/` | Importable Python runtime: `from api import Embedder, cosine` — see [api/README.md](api/README.md) |
-| `scripts/` | Download the public Hugging Face packages and warm them up on this Mac — see [scripts/README.md](scripts/README.md) |
+| `scripts/` | Inference download (`download_models.py`), export download (`download_export_assets.py`), and warmup — see [scripts/README.md](scripts/README.md) |
 | `samples/` | Small runnable examples plus corpus / alert fetch scripts and manifests (no large binaries in git) |
 | `demo/` | FastAPI showcase server and static pages only (imports `api`) |
 | `docs/` | How it works, historical plan, diagrams |
 | `tests/` | Unit and API tests |
 
-**Model weights are not in this git repo.** The converted Neural Engine packages are on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `8ceba04`). The host still needs [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (revision `914f7f89142e33e77833254d9c9b90c3cef7303b`) for the tokenizer, processor, and embedding lookup. Both are Apache-2.0 under Google’s terms, not MIT.
+**Model weights are not in this git repo.** The converted Neural Engine packages are on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `8ceba04`). Inference also needs the tokenizer, processor, and embedding table from [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (revision `914f7f89142e33e77833254d9c9b90c3cef7303b`) — not the full 1.49 GB `model.safetensors`. Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
 
 ## Requirements
 
 - An Apple Silicon Mac. The numbers below were measured on an **M4 Pro, macOS 27.0**.
 - Python with `torch`, `transformers`, `sentence-transformers`, and `pillow`
 - A Python that can `import coreai.runtime`, pointed at by `ANEMLL_COREAI_PYTHON` (typically the `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge))
-- The official checkpoint: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (~740M, vision + audio + text) and the converted packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane)
+- The public ANE packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus the slim Google host files (tokenizer / processor / 256 MiB embed table). The full ~740M checkpoint is only for re-export.
 
 ## Quick start
 
@@ -58,7 +58,7 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
    export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
    ```
 
-2. **Download** the public ANE packages and the Google host checkpoint. No Hugging Face login or token — both repos are public and ungated. The script needs `huggingface_hub`, which `pip install -e .` (or `.[demo]`) already installs. Full flag list and examples: [scripts/README.md](scripts/README.md).
+2. **Download** the public ANE packages and the slim Google host files. This is the inference script only — it does **not** pull `model.safetensors` (1.49 GB). No Hugging Face login or token — both repos are public and ungated. The script needs `huggingface_hub`, which `pip install -e .` (or `.[demo]`) already installs. Full flag list and examples: [scripts/README.md](scripts/README.md).
 
    ```sh
    python scripts/download_models.py
@@ -66,12 +66,13 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
    # custom dest: python scripts/download_models.py --dest /Volumes/Models/anemll-embeddings
    ```
 
-   **What gets downloaded** (about **2.8 GB** on disk):
+   **What gets downloaded** (about **1.49 GB** on disk):
 
    | What | Source | Size |
    | --- | --- | --- |
    | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 8ceba04` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
-   | Host checkpoint (tokenizer, processor, embed table) | [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b` | **~1.53 GB** (`model.safetensors` 1.49 GB / 1,488,915,288 bytes, plus `tokenizer.json` 32 MB, `tokenizer.model` 4.7 MB, and small config/processor files) |
+   | Host tokenizer / processor / configs | [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b` | **~37 MB** (`tokenizer.json` 32.2 MB, `tokenizer.model` 4.7 MB, plus `config.json`, processor / preprocessor configs, tokenizer config, chat template) |
+   | Embed table `embed_tokens.safetensors` | extracted from that checkpoint (HF range request, not a full-weights download) | **256 MiB** (268,435,456 bytes, BF16 `[262144, 512]`, plus Gemma `sqrt(512)` scale) |
 
    On-disk layout under `~/.anemll-embeddings` (default `--dest`; or `$ANEMLL_EMBEDDINGS_HOME`):
 
@@ -81,14 +82,14 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
        vision_s280/vision_s280.aimodel/
        audio_s280/audio_s280.aimodel/
        text_embeds_s320/text_embeds_s320.aimodel/
-     embeddinggemma-2/                 # Google host checkpoint
+     embeddinggemma-2/                 # slim host (no model.safetensors)
      artifacts/coreai/
        vision_s280.aimodel -> …/ane/vision_s280/vision_s280.aimodel
        audio_s280.aimodel -> …/ane/audio_s280/audio_s280.aimodel
        text_embeds_s320.aimodel -> …/ane/text_embeds_s320/text_embeds_s320.aimodel
    ```
 
-   `api.Embedder` reads `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/<name>.aimodel` (those symlinks). Put the printed exports in `~/.zshrc` or a file you `source`:
+   `api.Embedder` reads `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/<name>.aimodel` (those symlinks) and loads `embed_tokens.safetensors` when present, falling back to a full checkpoint if you already have one. Put the printed exports in `~/.zshrc` or a file you `source`:
 
    ```sh
    # example output of scripts/download_models.py
@@ -132,14 +133,33 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
    python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
    ```
 
-To re-export packages yourself (optional; not needed if you used the download script):
+## Re-export the packages yourself
+
+Optional. Everyday inference does **not** need this — use `scripts/download_models.py` above.
 
 ```sh
+python scripts/download_export_assets.py
+# copy the printed export lines, then:
 python model/export_coreai_towers.py \
   --tower vision --tower audio --tower text --tower text_embeds
 ```
 
-That writes `vision_s280.aimodel` (pixels → 280 × 512 tokens), `audio_s280.aimodel` (280 × 128 mel frames → 70 × 512 tokens), `text_s128.aimodel` (ids-only 768-d; not in the public HF pack), and `text_embeds_s320.aimodel` (looked-up tokens, including image/audio, → 768-d). This is not `forge.py convert`.
+**What gets downloaded** (about **1.53 GB** on disk):
+
+| What | Source | Size |
+| --- | --- | --- |
+| Full Google checkpoint (conversion weights) | [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b` | **~1.53 GB** (`model.safetensors` 1.49 GB / 1,488,915,288 bytes, plus tokenizer / processor / configs) |
+
+The script writes `~/.anemll-embeddings/embeddinggemma-2-full` (separate from the slim inference dir) and prints the env `model/export_coreai_towers.py` needs:
+
+```sh
+# example output of scripts/download_export_assets.py
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Users/you/.anemll-embeddings/artifacts
+export ANEMLL_EMBEDDINGS_MODEL=/Users/you/.anemll-embeddings/embeddinggemma-2-full
+export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
+```
+
+Conversion also needs `torch`, `transformers`, `sentence-transformers`, and a Python that can `import coreai.runtime`. That writes `vision_s280.aimodel` (pixels → 280 × 512 tokens), `audio_s280.aimodel` (280 × 128 mel frames → 70 × 512 tokens), `text_s128.aimodel` (ids-only 768-d; not in the public HF pack), and `text_embeds_s320.aimodel` (looked-up tokens, including image/audio, → 768-d). This is not `forge.py convert`.
 
 ## Python usage
 
@@ -202,7 +222,7 @@ The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 - On macOS 27.2 (M5, newer Neural Engine) the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU. Audio still runs on the Neural Engine.
 - Audio clips must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips error instead of returning a bad vector.
 - There is no video package yet. `<|video|>` fixtures are skipped.
-- Weights are not in git. Use `scripts/download_models.py`. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms and the [ANE package card](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) before you download.
+- Weights are not in git. Use `scripts/download_models.py` for inference (~1.49 GB). Use `scripts/download_export_assets.py` only if you will re-convert. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms and the [ANE package card](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) before you download.
 - The demo’s microphone needs `http://127.0.0.1` or HTTPS. A plain `http://<lan-ip>` page cannot record.
 
 ## Try the demo
