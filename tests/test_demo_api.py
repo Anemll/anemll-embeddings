@@ -20,22 +20,22 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "model"))
 
 from _coreai_run_npy import parity_compute  # noqa: E402
-import demo.coreai_worker as coreai_worker  # noqa: E402
+import api.coreai_worker as coreai_worker  # noqa: E402
 from demo.backends.coreai import apply_compute_env  # noqa: E402
-from demo.coreai_worker import (  # noqa: E402
+from api.coreai_worker import (  # noqa: E402
     _manifest_label,
     _placement,
     manifest_label_for_package,
     package_main_hash_hex,
 )
-from demo.feeds import audio_tower_feed  # noqa: E402
-from demo.scripts.fetch_corpus import _trim_with_wave, audio_skip_reason, fetch  # noqa: E402
+from api.feeds import audio_tower_feed  # noqa: E402
+from samples.fetch_corpus import _trim_with_wave, audio_skip_reason, fetch  # noqa: E402
 from demo.alert_catalog import default_rules  # noqa: E402
 from demo.alert_score import change_score, suggest_margin, suggest_midpoint, suggest_split  # noqa: E402
-from demo.scripts.fetch_alert import license_ok  # noqa: E402
+from samples.fetch_alert import license_ok  # noqa: E402
 from demo.server import create_app  # noqa: E402
 from demo.settings import DEFAULT_PORT, server_compute  # noqa: E402
 
@@ -161,7 +161,7 @@ def test_api(tmp: Path) -> None:
         if b"latency-badge" not in client.get("/heard").content:
             _fail("heard page")
         alert_page = client.get("/alert")
-        if alert_page.status_code != 200 or b"Score everything" not in alert_page.content:
+        if alert_page.status_code != 200 or b"Configured alerts" not in alert_page.content:
             _fail("alert page")
         if b'href="/alert"' not in client.get("/").content:
             _fail("alert nav")
@@ -500,15 +500,13 @@ def test_alert(tmp: Path) -> None:
             _fail("sparky reference")
         page = client.get("/alert").text
         for snippet in (
-            "These are your alerts.",
-            "Click what the camera sees or hears.",
-            "Watch which alerts fire.",
-            "Score everything",
-            "Your alerts",
-            "Camera feed",
-            "Sounds",
-            "Advanced / customize",
-            "green = alert fires",
+            "These are your alerts",
+            "Pick a frame and a sound",
+            "Watch which alerts fire",
+            "Configured alerts",
+            "Front door cam",
+            "Microphone",
+            "Advanced: rules, thresholds, reference photo",
             "Front door cam: UPS truck",
             "Sparky (test photo)",
             "Neighbor's cat",

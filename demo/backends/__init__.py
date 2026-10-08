@@ -1,11 +1,15 @@
-"""Pluggable embedders: ``mock``, ``reference``, and ``coreai``."""
+"""Pluggable embedders: ``mock``, ``reference``, and ``coreai``.
+
+The showcase talks to :class:`api.embedder.Embedder` — the same public
+runtime a script would use. ``open_backend`` is the factory the server
+calls at startup.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
-from .mock import MockBackend
+from api import Embedder
 
 
 def open_backend(
@@ -15,22 +19,14 @@ def open_backend(
     model: Path | None = None,
     coreai_python: Path | None = None,
     compute: str = "ane",
-) -> Any:
+) -> Embedder:
     key = (name or "mock").strip().lower()
-    if key == "mock":
-        return MockBackend()
-    if key == "reference":
-        # Sentence-Transformers is optional and heavy; import only when selected.
-        from .reference import ReferenceBackend
-
-        return ReferenceBackend(model_path=model)
-    if key == "coreai":
-        from .coreai import CoreAIBackend
-
-        return CoreAIBackend(
-            artifacts=artifacts,
-            model_path=model,
-            coreai_python=coreai_python,
-            compute=compute,
-        )
-    raise ValueError(f"unknown backend {name!r} (expected mock, reference, or coreai)")
+    if key not in {"mock", "reference", "coreai"}:
+        raise ValueError(f"unknown backend {name!r} (expected mock, reference, or coreai)")
+    return Embedder(
+        artifacts=artifacts,
+        model=model,
+        coreai_python=coreai_python,
+        compute=compute,
+        backend=key,
+    )

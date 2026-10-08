@@ -1,6 +1,6 @@
 """Showcase process settings.
 
-Parity (``scripts/_coreai_run_npy.py``) defaults ``ANEMLL_COREAI_COMPUTE`` to
+Parity (``model/_coreai_run_npy.py``) defaults ``ANEMLL_COREAI_COMPUTE`` to
 CPU. This server defaults to the Neural Engine. The worker process is the
 only place that sets ``ANEMLL_COREAI_COMPUTE``, so a shell used for CPU
 parity is not silently switched.

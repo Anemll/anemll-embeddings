@@ -17,6 +17,7 @@ from typing import Any
 
 import numpy as np
 
+from api.similarity import cosine
 from demo.alert_catalog import (
     DOG_THRESHOLD,
     MEOW_THRESHOLD,
@@ -37,10 +38,6 @@ def l2(vector: np.ndarray) -> np.ndarray:
     if norm < 1e-8:
         raise ValueError("embedding norm is zero")
     return (arr / norm).astype(np.float32, copy=False)
-
-
-def cosine(left: np.ndarray, right: np.ndarray) -> float:
-    return float(np.dot(np.asarray(left, dtype=np.float32), np.asarray(right, dtype=np.float32)))
 
 
 def average_unit(vectors: list[np.ndarray]) -> np.ndarray:

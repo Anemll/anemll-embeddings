@@ -140,7 +140,7 @@ def _catalog_payload(library: AlertLibrary) -> dict[str, Any]:
     ready = all(row["available"] for row in [*frames, *sounds, *references])
     return {
         "ready": ready,
-        "fetch": "python demo/scripts/fetch_alert.py",
+        "fetch": "python samples/fetch_alert.py",
         "note": (
             "The model compares meaning, so describe the scene rather than giving a command. "
             "Sparky is visual similarity to the reference photo, not identity verification. "
@@ -381,8 +381,10 @@ async def _score(
             return cached
 
         def _run(query: str, role: str) -> tuple[Any, float]:
-            result = app.state.backend.embed_text(query, role=role)
-            return result.vector, float(result.latency_ms)
+            vector = app.state.backend.embed_text(query, role=role)
+            last = getattr(app.state.backend, "last", None)
+            latency = float(last.latency_ms) if last is not None else 0.0
+            return vector, latency
 
         vector, spent = await asyncio.to_thread(library.embed_text, text, "query", _run)
         _remember(spent)

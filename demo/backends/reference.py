@@ -1,6 +1,6 @@
 """PyTorch reference: the full EmbeddingGemma 2 checkpoint on CPU.
 
-Same encode path as ``scripts/gen_multimodal_fixtures.py``. This is the
+Same encode path as ``model/gen_multimodal_fixtures.py``. This is the
 parity target for the Core AI towers, not an ANE placement. It needs the
 local checkpoint (``ANEMLL_EMBEDDINGS_MODEL``) and sentence-transformers.
 """
@@ -47,7 +47,7 @@ class ReferenceBackend:
             )
         import torch
 
-        from src.load_multimodal_model import load_multimodal_sentence_transformer
+        from model.load_multimodal_model import load_multimodal_sentence_transformer
 
         model, _meta = load_multimodal_sentence_transformer(
             self.model_path, dtype=torch.float32, device="cpu"

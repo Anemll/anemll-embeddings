@@ -12,7 +12,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.coreai_host import (  # noqa: E402
+from api.coreai_host import (  # noqa: E402
     AUDIO_FRAMES,
     IMAGE_SLOTS,
     has_caption_words,

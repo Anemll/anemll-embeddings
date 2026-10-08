@@ -17,11 +17,11 @@ A *soft token* is a 512-wide vector that stands in for an image patch group or a
 
 Tokenization, task prefixes (`SearchQuery`, `Document`, …), and the embedding-table lookup stay on the host. That keeps the compiled graphs fixed-shape and ANE-friendly.
 
-`scripts/export_coreai_towers.py` does `torch.export` in this repo’s venv, then converts `.pt2` → `.aimodel` under `ANEMLL_COREAI_PYTHON`. It does **not** call `forge.py convert`. The FLOAT32 Core ML text tree is left alone.
+`model/export_coreai_towers.py` does `torch.export` in this repo’s venv, then converts `.pt2` → `.aimodel` under `ANEMLL_COREAI_PYTHON`. It does **not** call `forge.py convert`. The FLOAT32 Core ML text tree is left alone.
 
 ## Why fp16 — and why the original model forbids it
 
-The Neural Engine wants 16-bit (fp16) compute. Upstream EmbeddingGemma 2 tells you never to run the *PyTorch* model in fp16: it NaNs or goes silently wrong. This repo still refuses fp16 in `src/load_text_model.py`.
+The Neural Engine wants 16-bit (fp16) compute. Upstream EmbeddingGemma 2 tells you never to run the *PyTorch* model in fp16: it NaNs or goes silently wrong. This repo still refuses fp16 in `model/load_text_model.py`.
 
 The shipped Core AI graphs are a different story. Vision, audio, and `text_embeds` are converted with `cast16` (an fp16 graph). Two rewrites make that safe:
 
@@ -36,7 +36,7 @@ The host still passes a 0/1 keep-mask. Do not force that mask to all ones: fp16 
 
 A first export that “looks like Hugging Face” compiles, then the ANE refuses whole families of ops and MPSGraph runs them on the GPU. The leftover “unnamed GPU island” from earlier notes was that: the three towers were FP32, the ANE refuses every f32 op, and almost the whole tower ran on the GPU.
 
-What had to change (see `src/vision_export_patches.py`, `src/audio_export_patches.py`, `src/trace_patches.py`):
+What had to change (see `model/vision_export_patches.py`, `model/audio_export_patches.py`, `model/trace_patches.py`):
 
 - **No fused SDPA** when Q, K, and V shapes differ. Vision attention is Q/K/V as `[S, D]`, then matmul + softmax. Softmax is tiled as 6 head groups × 2 query blocks (18 query blocks matched poorly on the ANE).
 - **No 1-bit / bool masks.** The ANE cannot reshape `i1`. Masks are float additive biases, 4-D.
@@ -46,7 +46,7 @@ What had to change (see `src/vision_export_patches.py`, `src/audio_export_patche
 - **Layout swaps are constants.** Computed permutations in-graph were refused; they are baked.
 - **Audio conv-stem layout** is permutes, not a mid-graph gather. Rel-pos sinusoids and keys are precomputed per layer.
 
-`scripts/dump_mpsgraph.py` reads the compiled `mps` graph, including each op’s device and `ane_validation_message`. That is how “fully on the ANE” is checked: `mps.fullyPlacedOnANE`, `mps.noGPUActivity`, one ANE region, no GPU or CPU regions.
+`model/dump_mpsgraph.py` reads the compiled `mps` graph, including each op’s device and `ane_validation_message`. That is how “fully on the ANE” is checked: `mps.fullyPlacedOnANE`, `mps.noGPUActivity`, one ANE region, no GPU or CPU regions.
 
 ## What “fully on the ANE” means here
 
@@ -74,7 +74,7 @@ Vision attention is most of each ~21 ms layer (~15 ms) and is at its floor for e
 
 ## Older Core ML text path
 
-`scripts/export_torchscript.py` + `scripts/convert_coreml.py` still build a fixed-S text `.mlpackage`. That path is not the multimodal product. On the M4 Pro, FP16 Core ML *does* place on the ANE (2307 ANE / 17 CPU preferred ops). Those 17 leftovers are a **begin-of-graph** island (pad/window mask + embedding gather), not a mid-graph CPU island. Mid-graph CPU would be a fail. The FP16 *CPU* path was the weak one (min cosine 0.920 vs the T1 fixtures). Timings for S=512 (warmup 2, iters 5): CPU_ONLY p50 65.0 ms / CPU_AND_NE 27.4 ms / CPU_AND_GPU 38.6 ms / ALL 28.4 ms.
+`model/export_torchscript.py` + `model/convert_coreml.py` still build a fixed-S text `.mlpackage`. That path is not the multimodal product. On the M4 Pro, FP16 Core ML *does* place on the ANE (2307 ANE / 17 CPU preferred ops). Those 17 leftovers are a **begin-of-graph** island (pad/window mask + embedding gather), not a mid-graph CPU island. Mid-graph CPU would be a fail. The FP16 *CPU* path was the weak one (min cosine 0.920 vs the T1 fixtures). Timings for S=512 (warmup 2, iters 5): CPU_ONLY p50 65.0 ms / CPU_AND_NE 27.4 ms / CPU_AND_GPU 38.6 ms / ALL 28.4 ms.
 
 ## Limitations that come from the hardware
 

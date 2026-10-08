@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+from api.types import EmbedResult
 from demo.backends import open_backend
 from demo.media_io import (
     AUDIO_SR,
@@ -80,6 +81,7 @@ def create_app(
     chosen = server_compute(compute)
     store = VectorStore(data)
     if embedder is None:
+        # Same public class as ``from api import Embedder``.
         embedder = open_backend(
             backend,
             artifacts=art,
@@ -249,32 +251,57 @@ def _page_handler(filename: str):
     return page
 
 
-async def _embed_incoming(backend: Any, incoming: dict[str, Any]):
+def _as_result(embedder: Any, value: Any, *, modality: str) -> EmbedResult:
+    """Accept ``Embedder`` (vector + ``.last``) or a backend that returns ``EmbedResult``."""
+    if isinstance(value, EmbedResult):
+        return value
+    last = getattr(embedder, "last", None)
+    if isinstance(last, EmbedResult):
+        return last
+    return EmbedResult(
+        vector=np.asarray(value, dtype=np.float32),
+        latency_ms=0.0,
+        backend=getattr(embedder, "name", "unknown"),
+        modality=modality,
+        placement=getattr(embedder, "placement", None),
+    )
+
+
+def _call_embed(embedder: Any, incoming: dict[str, Any]) -> EmbedResult:
     modality = incoming["modality"]
     if modality == "text":
-        return await asyncio.to_thread(
-            backend.embed_text, incoming["text"], role=incoming.get("role") or "query"
-        )
+        out = embedder.embed_text(incoming["text"], role=incoming.get("role") or "query")
+        return _as_result(embedder, out, modality="text")
     if modality == "image":
-        return await asyncio.to_thread(backend.embed_image, incoming["image"])
+        out = embedder.embed_image(incoming["image"])
+        return _as_result(embedder, out, modality="image")
     if modality == "audio":
-        return await asyncio.to_thread(
-            backend.embed_audio, incoming["wav"], incoming.get("sample_rate") or AUDIO_SR
-        )
+        out = embedder.embed_audio(incoming["wav"], incoming.get("sample_rate") or AUDIO_SR)
+        return _as_result(embedder, out, modality="audio")
     raise HTTPException(400, f"unknown modality {modality}")
 
 
-async def _embed_stored(backend: Any, store: VectorStore, item: dict[str, Any]):
+async def _embed_incoming(backend: Any, incoming: dict[str, Any]) -> EmbedResult:
+    return await asyncio.to_thread(_call_embed, backend, incoming)
+
+
+async def _embed_stored(backend: Any, store: VectorStore, item: dict[str, Any]) -> EmbedResult:
     modality = item.get("modality")
     if modality == "text":
         text = item.get("text") or item.get("label") or ""
-        return await asyncio.to_thread(backend.embed_text, text, role="document")
+
+        def _text() -> Any:
+            return backend.embed_text(text, role="document")
+
+        out = await asyncio.to_thread(_text)
+        return _as_result(backend, out, modality="text")
     path = store.media_path(item["id"])
     if path is None:
         raise HTTPException(400, f"item {item['id']} has no media to re-embed")
     if modality == "image":
         image = Image.open(path).convert("RGB")
-        return await asyncio.to_thread(backend.embed_image, image)
+        out = await asyncio.to_thread(backend.embed_image, image)
+        return _as_result(backend, out, modality="image")
     if modality == "audio":
         samples, rate = read_wav_bytes(path.read_bytes())
         if samples.ndim > 1:
@@ -282,7 +309,8 @@ async def _embed_stored(backend: Any, store: VectorStore, item: dict[str, Any]):
         if rate != AUDIO_SR:
             samples = resample_linear(samples, rate, AUDIO_SR)
             rate = AUDIO_SR
-        return await asyncio.to_thread(backend.embed_audio, samples, rate)
+        out = await asyncio.to_thread(backend.embed_audio, samples, rate)
+        return _as_result(backend, out, modality="audio")
     raise HTTPException(400, f"unknown modality {modality}")
 
 

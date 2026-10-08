@@ -20,6 +20,7 @@ from typing import Any, Callable
 import numpy as np
 from PIL import Image
 
+from api.types import EmbedResult
 from demo.alert_catalog import REFERENCES, catalog_items
 from demo.alert_score import l2
 from demo.media_io import AUDIO_SR, load_audio_bytes, read_wav_bytes, resample_linear, save_jpeg
@@ -226,16 +227,26 @@ class AlertLibrary:
         (self.root / "embed-cache.json").write_text(json.dumps(keys))
 
 
+def _from_embed(backend: Any, value: Any, timing: dict[str, Any] | None) -> tuple[np.ndarray, float]:
+    """Read a public ``Embedder`` vector (and ``.last``) or a raw ``EmbedResult``."""
+    if isinstance(value, EmbedResult):
+        if timing is not None:
+            timing.update(value.extra or {})
+        return np.asarray(value.vector, dtype=np.float32), float(value.latency_ms)
+    last = getattr(backend, "last", None)
+    if isinstance(last, EmbedResult) and timing is not None:
+        timing.update(last.extra or {})
+    latency = float(last.latency_ms) if isinstance(last, EmbedResult) else 0.0
+    return np.asarray(value, dtype=np.float32), latency
+
+
 def embed_path(
     path: Path, modality: str, backend: Any, timing: dict[str, Any] | None = None
 ) -> tuple[np.ndarray, float]:
-    """Embed one file. ``timing`` receives the backend's per-tower split, if any."""
+    """Embed one file through the public ``Embedder`` methods."""
     if modality == "image":
         image = Image.open(path).convert("RGB")
-        result = backend.embed_image(image)
-        if timing is not None:
-            timing.update(result.extra or {})
-        return np.asarray(result.vector, dtype=np.float32), float(result.latency_ms)
+        return _from_embed(backend, backend.embed_image(image), timing)
     if modality == "audio":
         samples, rate = read_wav_bytes(path.read_bytes())
         if samples.ndim > 1:
@@ -243,10 +254,11 @@ def embed_path(
         if rate != AUDIO_SR:
             samples = resample_linear(samples, rate, AUDIO_SR)
             rate = AUDIO_SR
-        result = backend.embed_audio(np.ascontiguousarray(samples, dtype=np.float32), rate)
-        if timing is not None:
-            timing.update(result.extra or {})
-        return np.asarray(result.vector, dtype=np.float32), float(result.latency_ms)
+        return _from_embed(
+            backend,
+            backend.embed_audio(np.ascontiguousarray(samples, dtype=np.float32), rate),
+            timing,
+        )
     raise ValueError(f"unknown modality {modality}")
 
 

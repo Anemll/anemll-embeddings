@@ -10,7 +10,7 @@ from types import SimpleNamespace
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.ane_placement import (  # noqa: E402
+from model.ane_placement import (  # noqa: E402
     classify_device_sequence,
     cpu_op_role,
     device_kind,

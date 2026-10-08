@@ -13,8 +13,8 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.load_multimodal_model import modality_config_kwargs  # noqa: E402
-from src.multimodal_media import (  # noqa: E402
+from model.load_multimodal_model import modality_config_kwargs  # noqa: E402
+from model.multimodal_media import (  # noqa: E402
     AUDIO_SR,
     write_default_media,
     write_tone_wav,

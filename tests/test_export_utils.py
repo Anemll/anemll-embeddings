@@ -11,7 +11,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.export_utils import (  # noqa: E402
+from model.export_utils import (  # noqa: E402
     MASK_NEG,
     additive_full_attention_bias,
     additive_sliding_attention_bias,
@@ -19,7 +19,7 @@ from src.export_utils import (  # noqa: E402
     package_stem,
     pad_to_seq_len,
 )
-from src.trace_patches import _rotate_half_chunk, repeat_kv_index  # noqa: E402
+from model.trace_patches import _rotate_half_chunk, repeat_kv_index  # noqa: E402
 
 
 def _fail(msg: str) -> None:
