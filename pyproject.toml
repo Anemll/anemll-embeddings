@@ -16,6 +16,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+runtime = [
+    "torch",
+    "torchvision",
+    "transformers",
+    "sentence-transformers",
+    "pillow>=10",
+]
 demo = [
     "fastapi>=0.110",
     "uvicorn>=0.27",

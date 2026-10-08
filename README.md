@@ -36,12 +36,12 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | `docs/` | How it works, historical plan, diagrams |
 | `tests/` | Unit and API tests |
 
-**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane). Inference is one download from that repo. If `host/` is not on the pinned revision yet, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
+**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `47d05aa218a227e887858fe571f8deb2f2a1d532`). Inference is one download from that repo. If `host/` is missing on the pin, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
 
 ## Requirements
 
 - An Apple Silicon Mac. The numbers below were measured on an **M4 Pro, macOS 27.0**.
-- Python with `torch`, `transformers`, `sentence-transformers`, and `pillow`
+- Python with `torch`, `torchvision`, `transformers`, `sentence-transformers`, and `pillow`
 - A Python that can `import coreai.runtime`, pointed at by `ANEMLL_COREAI_PYTHON` (typically the `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge))
 - The public ANE packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus the slim Google host files (tokenizer / processor / 256 MiB embed table). The full ~740M checkpoint is only for re-export.
 
@@ -54,8 +54,9 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
 1. **Install** (in a virtualenv):
 
    ```sh
-   python -m pip install -e ".[demo]"
-   python -m pip install torch transformers sentence-transformers pillow
+   python -m pip install -e ".[demo,runtime]"
+   # or: python -m pip install -e ".[demo]"
+   #     python -m pip install torch torchvision transformers sentence-transformers pillow
    export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
    ```
 
@@ -71,7 +72,7 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
 
    | What | Source | Size |
    | --- | --- | --- |
-   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
+   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 47d05aa218a227e887858fe571f8deb2f2a1d532` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
    | Host tokenizer / processor / configs | same repo, `host/` (fallback: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b`) | **~37 MB** (`tokenizer.json` 32.2 MB, `tokenizer.model` 4.7 MB, plus `config.json`, processor / preprocessor configs, tokenizer config, chat template) |
    | Embed table `embed_tokens.safetensors` | same repo, `host/` (extracted from Google’s `model.safetensors`; not a full-weights download) | **256 MiB** (268,435,456 bytes, BF16 `[262144, 512]`, plus Gemma `sqrt(512)` scale) |
 
@@ -102,27 +103,39 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
    | Flag | Default | Meaning |
    | --- | --- | --- |
    | `--dest PATH` | `~/.anemll-embeddings` | Parent directory (`ANEMLL_EMBEDDINGS_HOME` overrides the default) |
-   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
+   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=47d05aa218a227e887858fe571f8deb2f2a1d532`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
    | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON` or the forge venv if present | Value printed for `ANEMLL_COREAI_PYTHON` |
 
-3. **Warm up** once on this Mac. There is **no** per-hardware compile to ship: Core AI specializes each tower for the local chip on first load and caches it (`~/Library/Caches/coreai-cache`). The first run is slow; later loads are fast.
+3. **Warm up** once on this Mac. There is **no** per-hardware compile to ship: Core AI specializes each tower for the local chip on first load and caches it (`$CFFIXED_USER_HOME/Library/Caches/coreai-cache`, or `~/Library/Caches/coreai-cache`). Cold first load is slow; later (warm) loads are fast.
 
    ```sh
    python scripts/warmup.py
    ```
 
    ```
-   # example output of scripts/warmup.py (M4 Pro / macOS 27.0)
+   # cold first load (M3 Ultra / macOS 27.0) — compile + cache, ~111 s
    tower                  on ANE                load_ms   first_run_ms
-   vision_s280            yes                    4521.0          337.0
-   audio_s280             yes                     890.1           10.8
-   text_embeds_s320       yes                    2100.4           34.8
-   overall_placement=fullyOnANE  wall_ms=7800.0
+   vision_s280            yes                   58000.0            -
+   audio_s280             yes                   16000.0            -
+   text_embeds_s320       yes                   36000.0            -
+   overall_placement=fullyOnANE  wall_ms=111000.0
    ```
+
+   ```
+   # warm load (M3 Ultra / macOS 27.0) — cache hit, load ~0.06–0.1 s per tower
+   tower                  on ANE                load_ms   first_run_ms
+   vision_s280            yes                      80.0          360.0
+   audio_s280             yes                      80.0           25.0
+   text_embeds_s320       yes                      80.0           42.0
+   overall_placement=fullyOnANE
+   ```
+
+   M4 Pro / macOS 27.0 warm first-run p50 is in [Results](#results) (vision 337 ms, audio 10.8 ms, text 34.8 ms). M3 Ultra matches M4 embeddings (cosine 1.000000 / 0.999995) and also runs fully on the ANE.
 
    **Troubleshooting**
 
-   - A slow first warmup is normal (compile + cache). The next load should be much faster.
+   - A **cold** first warmup of ~111 s on M3 Ultra is normal (compile + write the cache). A **warm** load is ~0.06–0.1 s per tower.
+   - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect: `export CFFIXED_USER_HOME=/path/to/writable/home` (cache becomes `$CFFIXED_USER_HOME/Library/Caches/coreai-cache`), or pass `--cache-dir`.
    - On macOS 27.2 / M5, vision and text may print a GPU-fallback / `invalid MLIR-MPS program` message. Audio still runs on the ANE.
    - Rerunning `download_models.py` or `warmup.py` is safe. Download skips files that already match the pinned revision.
    - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.

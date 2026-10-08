@@ -61,7 +61,13 @@ from coreai_smoke import (  # noqa: E402
     placement_from_cache_manifest,
 )
 
-CACHE = Path.home() / "Library/Caches/coreai-cache"
+def _coreai_cache_dir() -> Path:
+    raw = os.environ.get("CFFIXED_USER_HOME")
+    home = Path(raw).expanduser() if raw else Path.home()
+    return home / "Library" / "Caches" / "coreai-cache"
+
+
+CACHE = _coreai_cache_dir()
 TOWER_ORDER = ("vision", "audio", "text")
 
 

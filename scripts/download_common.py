@@ -18,16 +18,18 @@ except ImportError:
     _hf_snapshot_download = None
 
 ANE_REPO = "anemll/anemll-embeddinggemma-2-ane"
-# Towers shipped at 8ceba04 (no host/ yet). After host/ is uploaded, set this
-# to that commit or export ANEMLL_ANE_REVISION=<sha>. Until host/ exists at
-# this pin, download_models.py falls back to Google for host files.
-ANE_REVISION = "8ceba04"
+# Towers + mirrored host/ on the Hub. Override with ANEMLL_ANE_REVISION.
+ANE_REVISION = "47d05aa218a227e887858fe571f8deb2f2a1d532"
 BASE_REPO = "google/embeddinggemma-2"
 BASE_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 HOST_FOLDER = "host"
 TOWERS = ("vision_s280", "audio_s280", "text_embeds_s320")
 BUNDLE_FILES = ("metadata.json", "main.hash", "main.mlirb")
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
+COREAI_PYTHON_CANDIDATES = (
+    Path.home() / "anemll-forge" / "coreai" / ".venv" / "bin" / "python",
+    Path.home() / "SourceRelease" / "GITHUB" / "ML_playground" / "anemll-forge" / "coreai" / ".venv" / "bin" / "python",
+)
+DEFAULT_COREAI_PY = COREAI_PYTHON_CANDIDATES[0]
 REVISION_MARK = ".anemll-revision"
 SLIM_EMBED_NAME = "embed_tokens.safetensors"
 EMBED_TENSOR_KEY = "language_model.embed_tokens.weight"
@@ -223,11 +225,97 @@ def link_coreai(artifacts: Path, ane_dir: Path) -> dict[str, str]:
     return status
 
 
-def coreai_python_export() -> str:
+def discover_coreai_python(
+    explicit: Path | str | None = None,
+    *,
+    required: bool = True,
+) -> Path | None:
+    """Resolve a Python that can ``import coreai.runtime``.
+
+    Order: ``explicit`` / ``--coreai-python``, then ``ANEMLL_COREAI_PYTHON``,
+    then common anemll-forge venv paths.
+    """
+    checked: list[Path] = []
+    if explicit is not None:
+        path = Path(explicit).expanduser()
+        checked.append(path)
+        if path.is_file():
+            return path
+        if required:
+            raise SystemExit(f"Core AI Python not found: {path}")
+        return None
     raw = os.environ.get("ANEMLL_COREAI_PYTHON")
     if raw:
-        return raw
+        path = Path(raw).expanduser()
+        checked.append(path)
+        if path.is_file():
+            return path
+        if required:
+            raise SystemExit(f"ANEMLL_COREAI_PYTHON is set but not a file: {path}")
+        return None
+    for path in COREAI_PYTHON_CANDIDATES:
+        checked.append(path)
+        if path.is_file():
+            return path
+    if required:
+        looked = ", ".join(str(path) for path in checked)
+        raise SystemExit(
+            "no Core AI Python found. Set ANEMLL_COREAI_PYTHON or pass "
+            "--coreai-python to an interpreter that can import coreai.runtime "
+            f"(looked in: {looked})"
+        )
+    return None
+
+
+def coreai_python_export() -> str:
+    found = discover_coreai_python(required=False)
+    if found is not None:
+        return str(found)
     return str(DEFAULT_COREAI_PY)
+
+
+def coreai_cache_dir(cache_dir: Path | str | None = None) -> Path:
+    """Core AI specialization cache (``…/Library/Caches/coreai-cache``).
+
+    ``--cache-dir`` wins, then ``$CFFIXED_USER_HOME``, then ``Path.home()``.
+    """
+    if cache_dir is not None:
+        return Path(cache_dir).expanduser()
+    raw = os.environ.get("CFFIXED_USER_HOME")
+    home = Path(raw).expanduser() if raw else Path.home()
+    return home / "Library" / "Caches" / "coreai-cache"
+
+
+def fixed_user_home_for_cache(cache: Path) -> Path | None:
+    """Home that makes Core AI write ``cache`` via ``CFFIXED_USER_HOME``."""
+    if (
+        cache.name == "coreai-cache"
+        and cache.parent.name == "Caches"
+        and cache.parent.parent.name == "Library"
+    ):
+        return cache.parent.parent.parent
+    return None
+
+
+def cache_unwritable_hint(cache: Path) -> str:
+    notes: list[str] = []
+    if cache.is_symlink():
+        try:
+            cache.resolve(strict=True)
+        except OSError:
+            notes.append(f"{cache} is a broken symlink.")
+    elif cache.exists() and not os.access(cache, os.W_OK):
+        notes.append(f"{cache} exists but is not writable.")
+    detail = (" ".join(notes) + " ") if notes else ""
+    return (
+        f"The Core AI worker died during load. {detail}"
+        f"The specialization cache ({cache}) may be unwritable or a broken symlink.\n"
+        "Fix that path, or redirect Core AI's home:\n"
+        "  export CFFIXED_USER_HOME=/path/to/writable/home\n"
+        "  # cache becomes $CFFIXED_USER_HOME/Library/Caches/coreai-cache\n"
+        "  python scripts/warmup.py --cache-dir "
+        "$CFFIXED_USER_HOME/Library/Caches/coreai-cache"
+    )
 
 
 def env_exports(*, artifacts: Path, model: Path, coreai_python: str) -> str:

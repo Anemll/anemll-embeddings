@@ -87,11 +87,14 @@ One download from this repo is enough for inference (towers + `host/`).
 
 ```bash
 git clone https://github.com/Anemll/anemll-embeddings && cd anemll-embeddings
+python -m pip install -e .
+python -m pip install torch torchvision transformers sentence-transformers pillow
 python scripts/download_models.py
 # prints the export lines; add them to ~/.zshrc or source them
 python scripts/warmup.py
 ```
 
+This card is commit `47d05aa218a227e887858fe571f8deb2f2a1d532` (towers + `host/`).
 `download_models.py` prefers `host/` here. If a pin does not have that
 folder yet, it falls back to the slim files on
 `google/embeddinggemma-2` (still not the full `model.safetensors`).
