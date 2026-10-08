@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased (release candidate for 0.1.0)
+## 0.1.0
+
+First public release. Notes: [docs/RELEASE_NOTES_v0.1.0.md](docs/RELEASE_NOTES_v0.1.0.md).
 
 ### Security
 - Demo binds to `127.0.0.1` by default. Binding all interfaces needs an explicit
@@ -26,6 +28,10 @@ All notable changes to this project are documented here.
 - `constraints.txt`, `reference` and `test` extras, CI workflow, hardware-gated
   `tests/test_hardware_ane.py`.
 - Console scripts: `anemll-embeddings-download`, `-warmup`, `-embed`, `-demo`.
+- Signed release manifest: `release/MANIFEST-v0.1.0.json` (SHA-256 of the
+  Hugging Face package at the pin and key repo files), regenerated and signed
+  keyless with Sigstore by `.github/workflows/release.yml` on the tag;
+  `scripts/release_manifest.py verify` checks a checkout and download.
 - Sample downloads record license URL, final URL, SHA-256, size, fetch time, and
   modifications, and are size-capped.
 

@@ -1,0 +1,209 @@
+{
+  "huggingface": {
+    "base_repo": "google/embeddinggemma-2",
+    "base_revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+    "files": {
+      "LICENSE": {
+        "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+        "size": 10173
+      },
+      "NOTICE": {
+        "sha256": "afc64bd52b69b95ce84dd35cfd7a382fe0be746238be4243d3ae463f567962a3",
+        "size": 1821
+      },
+      "README.md": {
+        "sha256": "571eae413f1e1e95002c20a462d0a1e2d53d43967be2729bdce742938a39b1d8",
+        "size": 6399
+      },
+      "audio_s280/audio_s280.aimodel/main.hash": {
+        "sha256": "303a6cf68b2b097fc0ad8c04d197c09d5f02159bf5dc2bbc4d1dd21ce3d123c5",
+        "size": 32
+      },
+      "audio_s280/audio_s280.aimodel/main.mlirb": {
+        "sha256": "bbbd714866d5b37a2ccd9c8ec0899f966dbf5dac66031f886522a8fc6824c35f",
+        "size": 588591673
+      },
+      "audio_s280/audio_s280.aimodel/metadata.json": {
+        "sha256": "0d4f7f5e5cfb81623c78dfa5aeac81850104a71f9d9d312831f8d2f11965c766",
+        "size": 105
+      },
+      "host/LICENSE": {
+        "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+        "size": 10173
+      },
+      "host/NOTICE": {
+        "sha256": "afc64bd52b69b95ce84dd35cfd7a382fe0be746238be4243d3ae463f567962a3",
+        "size": 1821
+      },
+      "host/SHA256SUMS": {
+        "sha256": "3a41a4f05dffe3ec1a67427310ab739ea7f73e507ab566d4da8ec303a349dfe1",
+        "size": 932
+      },
+      "host/SOURCE.md": {
+        "sha256": "11a8cdc1c4dde10fdcc228deb053916d332c171ad06b3cf96e639b65baa08e90",
+        "size": 3316
+      },
+      "host/chat_template.jinja": {
+        "sha256": "4b852efc0b9960283e735363331e6f325b33bc74bdbaa076f595bc4e9b94d85e",
+        "size": 1016
+      },
+      "host/config.json": {
+        "sha256": "b8f1e9931b57fbc054acdb445c41765d55b0074c58d145fa82839941ad1b5bb3",
+        "size": 4455
+      },
+      "host/config_sentence_transformers.json": {
+        "sha256": "031e56a498d33c349ab489a21885bcfe25b4fcba841149dc99e1e90d4a7c28f5",
+        "size": 1565
+      },
+      "host/embed_tokens.safetensors": {
+        "sha256": "a37078ff5786d9bf75b059bdc8f4009f4311bf8e7ffbc287b66bab3d38457996",
+        "size": 268435637
+      },
+      "host/preprocessor_config.json": {
+        "sha256": "ea2ae257e901064abdd98dceb19f2b0da06af600bed15e0f99f5c85c37ee9d78",
+        "size": 511
+      },
+      "host/processor_config.json": {
+        "sha256": "168f6a08522f3ce5dea596d94d003af2fd691742d4f41fe1f9d8cce76bfbf69c",
+        "size": 1788
+      },
+      "host/tokenizer.json": {
+        "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4",
+        "size": 32170510
+      },
+      "host/tokenizer.model": {
+        "sha256": "e594c8a90eb08d8bda498ff4747977dc827ae0c3c56b5c0d41a605a22d02ef03",
+        "size": 4689013
+      },
+      "host/tokenizer_config.json": {
+        "sha256": "17bd5d6e9364ca49a534e1502076593317c298d4a663623091ed45388f004874",
+        "size": 1599
+      },
+      "text_embeds_s320/text_embeds_s320.aimodel/main.hash": {
+        "sha256": "cb6331e3343f8c347a4e30160992c84b91058b73b92c60db5aea7ddada956d2f",
+        "size": 32
+      },
+      "text_embeds_s320/text_embeds_s320.aimodel/main.mlirb": {
+        "sha256": "c52be1ab6401d69bb28b880498a90ca3f5891d419726e1531809584907a2d536",
+        "size": 290890643
+      },
+      "text_embeds_s320/text_embeds_s320.aimodel/metadata.json": {
+        "sha256": "682d74adb45a1dfdc19e8f4d82e47d05c7437781258fe5fdee3e541a44a25e49",
+        "size": 105
+      },
+      "towers.yaml": {
+        "sha256": "dcbb56fe857dc37cfe9c327d701c529adf7685824f50d37b4059f44c37da8785",
+        "size": 4199
+      },
+      "vision_s280/vision_s280.aimodel/main.hash": {
+        "sha256": "079c430916865e46069587c6519ca4e0a20a41dddf3a0a332eae9d8dd2fdb94b",
+        "size": 32
+      },
+      "vision_s280/vision_s280.aimodel/main.mlirb": {
+        "sha256": "d11f9d91a41a978ef419cd15b7b3633d47fc388b5d7327b302f4b4355f68b097",
+        "size": 307104223
+      },
+      "vision_s280/vision_s280.aimodel/metadata.json": {
+        "sha256": "bb8e6b62d4a7bc3eda8b8391b771227b5a53c3d1908b2d0684000a8ab24b59f9",
+        "size": 105
+      }
+    },
+    "repo": "anemll/anemll-embeddinggemma-2-ane",
+    "revision": "90d2ab497d423bba4ee29947b274c787bb4a1f0a"
+  },
+  "repo": {
+    "files": {
+      "LICENSE": {
+        "sha256": "713b74874c756bfd3a2967264485db6de83b71f8405be8192a30611b819f2bc6",
+        "size": 1067
+      },
+      "api/__init__.py": {
+        "sha256": "cb7d91b59d4ef1028789996ccff2f9af2fdee89bb37aabed9d788183f99e05a2",
+        "size": 1096
+      },
+      "api/coreai_host.py": {
+        "sha256": "2fa38a682f99f71d07c37c05e1862db9f6fc856190a58540c6961a09fec2edfb",
+        "size": 12168
+      },
+      "api/coreai_worker.py": {
+        "sha256": "c800593618c56d42ac667723df2fbe1b13fdb9d758cff06494708e3af1c0deeb",
+        "size": 11682
+      },
+      "api/embedder.py": {
+        "sha256": "e5ee5ddc1c60eac41de834a57119cc2e4d475440e5f764ab3214e8d81f2ea63f",
+        "size": 26726
+      },
+      "api/feeds.py": {
+        "sha256": "94675e69560e9c7bbebde3edfec7e0642b4415d7e62a4cf7da70a637ce6e9545",
+        "size": 3819
+      },
+      "api/host_embed.py": {
+        "sha256": "ebba41dea953e1f74cabeee6da1a886b6cfdb32ab8d32b3765be4379d53a7d26",
+        "size": 4284
+      },
+      "api/mock.py": {
+        "sha256": "ce6b38d0325eee30c0477bc8b3c4672697e155177892811e59587d6dabaeb442",
+        "size": 4855
+      },
+      "api/runtime_paths.py": {
+        "sha256": "e8cf570e27092ff2b8bb0538d8cf0642d5689e65ce15a94f1ffeea06b8318377",
+        "size": 4820
+      },
+      "api/similarity.py": {
+        "sha256": "68b9b9c715130c275c149678de8b6fe7f84dce4160fdd30d1e0a8d78f68cbfbb",
+        "size": 1539
+      },
+      "api/types.py": {
+        "sha256": "53662c11816de9db19ef0bab5d861a92628b2af005ea160a6e2a4ee1ba11686d",
+        "size": 1792
+      },
+      "constraints.txt": {
+        "sha256": "9ad9d8e6304758d520e5119ae9c5dafd27fa77d364fda4a8613be9baf0458d3a",
+        "size": 749
+      },
+      "hf/towers.yaml": {
+        "sha256": "dcbb56fe857dc37cfe9c327d701c529adf7685824f50d37b4059f44c37da8785",
+        "size": 4199
+      },
+      "pyproject.toml": {
+        "sha256": "0dc191eb47ae2721b28c247a77b1728cb3076a23440d9066e37cc199ffc28f63",
+        "size": 2145
+      },
+      "scripts/__init__.py": {
+        "sha256": "f3ce84ca8f8f63adb6c50b988d304e8178d353317912a9385b94bbddafc00a27",
+        "size": 47
+      },
+      "scripts/download_common.py": {
+        "sha256": "faa502c5601b73ef41092bbafe9deeafed9a30f374042c9250aebfaf494fd6bc",
+        "size": 20236
+      },
+      "scripts/download_export_assets.py": {
+        "sha256": "db5313cfe958ee225ad8656a85ccf40867078e5fad41220587ef09948b9d6f4b",
+        "size": 3047
+      },
+      "scripts/download_models.py": {
+        "sha256": "c44b914f33ca50355617e14daa29b8b93b863d52af5e6a5cd25cee7ea06ef75f",
+        "size": 7419
+      },
+      "scripts/download_models.sh": {
+        "sha256": "a774613dde3267750504d667e5541869134169c983fc86c44178d74f56011025",
+        "size": 196
+      },
+      "scripts/prepare_hf_host_folder.py": {
+        "sha256": "97b9a32f9dce2e1d0d6d68f37a614fdc570fe46151d41dac4d862567a85e7619",
+        "size": 9452
+      },
+      "scripts/release_manifest.py": {
+        "sha256": "fdc40ee13124b6a18d17e90f997397a8338a79a0ef4b447bd3f2a5c07338f834",
+        "size": 9171
+      },
+      "scripts/warmup.py": {
+        "sha256": "afa1e095c75db92559878159f709741e63057d9f3c52fa5f2779c1e4a0ba2364",
+        "size": 6305
+      }
+    }
+  },
+  "schema": "anemll-embeddings/release-manifest/v1",
+  "source": "https://github.com/Anemll/anemll-embeddings",
+  "version": "v0.1.0"
+}

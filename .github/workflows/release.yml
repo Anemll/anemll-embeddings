@@ -1,0 +1,76 @@
+# Signs the release manifest when a version tag is pushed.
+#
+# 1. Regenerates release/MANIFEST-<tag>.json from this checkout and the pinned
+#    Hugging Face revision and fails if it differs from the committed copy.
+# 2. Signs it keyless with Sigstore (cosign): the signing certificate is issued
+#    to this workflow at this tag via GitHub OIDC; no long-lived key exists.
+# 3. Verifies the signature, then attaches the manifest, a SHA256SUMS listing,
+#    and the Sigstore bundle to the GitHub release for the tag. If no release
+#    exists yet it creates a DRAFT from docs/RELEASE_NOTES_<tag>.md; publishing
+#    stays a manual step.
+#
+# Verify a download: release/README.md.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  sign-manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write   # attach assets / create the draft release
+      id-token: write   # Sigstore keyless signing (GitHub OIDC)
+    env:
+      TAG: ${{ github.ref_name }}
+      IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
+      ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (manifest needs huggingface_hub only)
+        run: python -m pip install -e . -c constraints.txt
+      - name: Regenerate and compare with the committed manifest
+        run: python scripts/release_manifest.py check --version "$TAG"
+      - name: Build release assets
+        run: |
+          mkdir -p dist
+          cp "release/MANIFEST-$TAG.json" dist/
+          python scripts/release_manifest.py build --version "$TAG" \
+            --out "dist/check-$TAG.json" --sums "dist/SHA256SUMS-$TAG.txt"
+          cmp "dist/check-$TAG.json" "dist/MANIFEST-$TAG.json"
+          rm "dist/check-$TAG.json"
+      - uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: Sign (keyless, Sigstore)
+        run: |
+          cd dist
+          cosign sign-blob --yes "MANIFEST-$TAG.json" --bundle "MANIFEST-$TAG.json.sigstore.json"
+          cosign sign-blob --yes "SHA256SUMS-$TAG.txt" --bundle "SHA256SUMS-$TAG.txt.sigstore.json"
+      - name: Verify the signatures
+        run: |
+          cd dist
+          for f in "MANIFEST-$TAG.json" "SHA256SUMS-$TAG.txt"; do
+            cosign verify-blob "$f" --bundle "$f.sigstore.json" \
+              --certificate-identity "$IDENTITY" \
+              --certificate-oidc-issuer "$ISSUER" \
+              --certificate-github-workflow-sha "$GITHUB_SHA"
+          done
+      - name: Attach to the GitHub release (draft if none exists)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --verify-tag \
+              --title "anemll-embeddings $TAG" \
+              --notes-file "docs/RELEASE_NOTES_$TAG.md"
+          fi
+          gh release upload "$TAG" --clobber dist/*
