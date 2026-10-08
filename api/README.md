@@ -1,4 +1,4 @@
-# `api` — embed text, images, and audio
+# `api` - embed text, images, and audio
 
 One class. Three methods. Each call returns **one L2-normalized 768-d `float32` vector**.
 
@@ -17,10 +17,10 @@ embedder.close()
 | --- | --- |
 | `1.0` | Same input |
 | `0.85–1.0` | Same thing, different wording or viewpoint |
-| `0.60–0.85` | Related — UPS photo vs `a brown UPS delivery truck` 0.727, bark vs `a dog barking` 0.721 |
+| `0.60–0.85` | Related - UPS photo vs `a brown UPS delivery truck` 0.727, bark vs `a dog barking` 0.721 |
 | ~`0` | Unrelated |
 
-On a Mac run `python scripts/download_models.py` (one-repo inference, about 1.49 GB; prefers `host/` on the ANE repo; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)), and set up the [Core AI runtime](../README.md#core-ai-runtime) (a Python 3.13 venv with `coreai-core` 1.0.0b2). `Embedder(compute="ane")` reads `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON` when the constructor arguments are omitted, falls back to the default `~/.anemll-embeddings` layout and `~/.anemll-embeddings/coreai-venv`, and raises `CoreAIPythonNotFound` with setup steps if no Core AI interpreter exists. It loads the slim embed table when `embed_tokens.safetensors` is present. Then `python scripts/warmup.py` once so Core AI specializes the towers for this chip and caches them — there is no per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra, macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
+On a Mac run `python scripts/download_models.py` (one-repo inference, about 1.49 GB; prefers `host/` on the ANE repo; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)), and set up the [Core AI runtime](../README.md#core-ai-runtime) (a Python 3.13 venv with `coreai-core` 1.0.0b2). `Embedder(compute="ane")` reads `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON` when the constructor arguments are omitted, falls back to the default `~/.anemll-embeddings` layout and `~/.anemll-embeddings/coreai-venv`, and raises `CoreAIPythonNotFound` with setup steps if no Core AI interpreter exists. It loads the slim embed table when `embed_tokens.safetensors` is present. Then `python scripts/warmup.py` once so Core AI specializes the towers for this chip and caches them - there is no per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra, macOS 27.0; on macOS 27.2 / M5 all three towers work, with audio on the ANE and vision and text currently on the GPU. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
 
 `python -m pip install -e ".[runtime]" -c constraints.txt` then `from api import Embedder` works anywhere. From a checkout, keep the repo root on `PYTHONPATH`.
 
@@ -99,7 +99,7 @@ print("fires" if score >= 0.65 else "quiet", score)
 embedder.close()
 ```
 
-That is a text rule. “Anything significant” on the Alert page is `1 - cosine(frame, empty_street)` — a change from the baseline photo, not a caption. `samples/camera_alert_rule.py` prints both: cosine vs the rule text, and 1 − cosine vs `--street` (or `$ANEMLL_DEMO_ALERT/frames/street.jpg`). Scoring lives in [`demo/alert_routes.py`](../demo/alert_routes.py) and [`demo/alert_score.py`](../demo/alert_score.py); the UI is [`demo/static/alert.js`](../demo/static/alert.js).
+That is a text rule. “Anything significant” on the Alert page is `1 - cosine(frame, empty_street)` - a change from the baseline photo, not a caption. `samples/camera_alert_rule.py` prints both: cosine vs the rule text, and 1 − cosine vs `--street` (or `$ANEMLL_DEMO_ALERT/frames/street.jpg`). Scoring lives in [`demo/alert_routes.py`](../demo/alert_routes.py) and [`demo/alert_score.py`](../demo/alert_score.py); the UI is [`demo/static/alert.js`](../demo/static/alert.js).
 
 ---
 

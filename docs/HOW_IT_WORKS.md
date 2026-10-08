@@ -19,7 +19,7 @@ Tokenization, task prefixes (`SearchQuery`, `Document`, …), and the embedding-
 
 `model/export_coreai_towers.py` does `torch.export` in this repo’s venv, then converts `.pt2` → `.aimodel` under `ANEMLL_COREAI_PYTHON`. It does **not** call `forge.py convert`. The FLOAT32 Core ML text tree is left alone.
 
-## Why fp16 — and why the original model forbids it
+## Why fp16 - and why the original model forbids it
 
 The Neural Engine wants 16-bit (fp16) compute. Upstream EmbeddingGemma 2 tells you never to run the *PyTorch* model in fp16: it NaNs or goes silently wrong. This repo still refuses fp16 in `model/load_text_model.py`.
 
@@ -30,7 +30,7 @@ The shipped Core AI graphs are a different story. Vision, audio, and `text_embed
 
 The host still passes a 0/1 keep-mask. Do not force that mask to all ones: fp16 noise on pad rows can leak into the real frames.
 
-`text_embeds` keeps a float32 output edge (an edge cast, not a flipped graph). Text *ids* stay int32 — the 262,144-word vocabulary does not fit in int16.
+`text_embeds` keeps a float32 output edge (an edge cast, not a flipped graph). Text *ids* stay int32 - the 262,144-word vocabulary does not fit in int16.
 
 ## Why attention and masks were rewritten
 
@@ -80,7 +80,7 @@ About **35 ms** per sentence, **380 ms** per photo, **50 ms** per sound.
 ## Limitations that come from the hardware
 
 - M4 Pro / macOS 27.0 is the validated setup.
-- On macOS 27.2 (M5, newer ANE) the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU. Audio still runs on the ANE.
+- On M5 / macOS 27.2 all three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the ANE; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with `invalid MLIR-MPS program`).
 - Audio shorter than one mel frame (about 9 ms at 16 kHz) cannot produce a soft token.
 
 ## History

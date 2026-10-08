@@ -1,12 +1,12 @@
 # EmbeddingGemma 2 → Core ML / ANE conversion plan
 
-> **Status.** This is the original conversion plan (text-first Core ML, multimodal “later”). That work landed. The **primary path is now Core AI multimodal packages** that run fully on the Neural Engine on an M4 Pro / macOS 27.0. Start with the [README](../README.md). Why fp16 and the attention/mask rewrites exist: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Tickets T1–T10 and Phase 2 are done. Some “later” / “non-goal” lines below are historical — do not take them over the README.
+> **Status.** This is the original conversion plan (text-first Core ML, multimodal “later”). That work landed. The **primary path is now Core AI multimodal packages** that run fully on the Neural Engine on an M4 Pro / macOS 27.0. Start with the [README](../README.md). Why fp16 and the attention/mask rewrites exist: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Tickets T1–T10 and Phase 2 are done. Some “later” / “non-goal” lines below are historical - do not take them over the README.
 
-Concrete phased plan for converting Google’s **EmbeddingGemma 2** to Core ML for the Apple Neural Engine, using ANEMLL-forge as a **read-only** source of ANE lessons—not as a drop-in converter.
+Concrete phased plan for converting Google’s **EmbeddingGemma 2** to Core ML for the Apple Neural Engine, using ANEMLL-forge as a **read-only** source of ANE lessons - not as a drop-in converter.
 
 **Checkpoint:** [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (prefer official; ~1.53 GB text safetensors when modality encoders are omitted).  
 **Reference stack:** Sentence-Transformers `SentenceTransformer("google/embeddinggemma-2", …)`.  
-**Forge reference (read-only):** an [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge) checkout — especially `docs/WORKFLOW.md`, `docs/TECHNIQUES.md`, `docs/ENVIRONMENT.md`, `docs/ANE_COMPILE_MODE_POLICY.md`, `ANE_DELTANET_NUMERICS.md`, `forge.py` `convert` → `scripts/qwen38_ane_model.py` / `qwen38_ane_chunk.py`, `tools/coreml/`.  
+**Forge reference (read-only):** an [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge) checkout - especially `docs/WORKFLOW.md`, `docs/TECHNIQUES.md`, `docs/ENVIRONMENT.md`, `docs/ANE_COMPILE_MODE_POLICY.md`, `ANE_DELTANET_NUMERICS.md`, `forge.py` `convert` → `scripts/qwen38_ane_model.py` / `qwen38_ane_chunk.py`, `tools/coreml/`.  
 **Weights location:** outside this git repo, on a fast local or attached disk with room for the checkpoint, the Hugging Face cache, and the compiled artifacts. Point `ANEMLL_EMBEDDINGS_MODEL`, `ANEMLL_EMBEDDINGS_ARTIFACTS`, and (optionally) `HF_HOME` / `ANEMLL_HF_CACHE` at it. The default is `~/.anemll-embeddings/` (see `scripts/download_export_assets.py`). Do **not** download into the git checkout or onto slow removable media. Do **not** download models as part of planning work.
 
 ---
@@ -30,23 +30,23 @@ Concrete phased plan for converting Google’s **EmbeddingGemma 2** to Core ML f
 | Projection | **512 → 768** dense |
 | Native output | 768-d; **MRL** truncate to 512 / 256 / 128 then **re-L2-normalize** |
 | Task steering | Text instruction prefixes only (ST `prompt_name=…`) |
-| Allowed dtypes (upstream) | **BF16 or FP32 only — never FP16** (FP16 → NaNs / silent trash) |
+| Allowed dtypes (upstream) | **BF16 or FP32 only - never FP16** (FP16 → NaNs / silent trash) |
 | Text-only load | `config_kwargs={"vision_config": None, "audio_config": None}` |
 
 Sentence-Transformers graph (conceptual): Transformer → mean Pooling (`embedding_dimension=768`) → Normalize. Task prefixes must match the reference encode path or cosine parity will look “wrong” for the right reason.
 
 ---
 
-## Phase 0 — Repo / environment (no weights yet)
+## Phase 0 - Repo / environment (no weights yet)
 
 1. Keep this checkout lean: code, configs, fixed prompt fixtures, docs. Weights and `.mlpackage` / `.mlmodelc` stay gitignored on the network volume.
-2. Conversion venv (separate from forge’s Qwen/Core AI stack): Python 3.11, `torch`, `transformers`, `sentence-transformers`, `safetensors`, `coremltools` 9.x (public wheel first; note forge’s research env used a patched `9.1.dev1` with FP8 work—**do not assume that patch is required** for a text encoder).
+2. Conversion venv (separate from forge’s Qwen/Core AI stack): Python 3.11, `torch`, `transformers`, `sentence-transformers`, `safetensors`, `coremltools` 9.x (public wheel first; note forge’s research env used a patched `9.1.dev1` with FP8 work - **do not assume that patch is required** for a text encoder).
 3. Record `python -c '…'` / `forge.py doctor`-style version dumps when the forge checkout is available, but **do not** merge forge’s Core AI Python 3.13 / `coreai-*` pins into this project.
 4. Weights directory chosen (see **Weights location** above). Set `HF_HOME` / `ANEMLL_HF_CACHE` to a cache on that disk before any download ticket.
 
 ---
 
-## Phase 1 — Text-only 270M → Core ML → ANE (primary)
+## Phase 1 - Text-only 270M → Core ML → ANE (primary)
 
 ### 1.1 Scope
 
@@ -58,9 +58,9 @@ Sentence-Transformers graph (conceptual): Transformer → mean Pooling (`embeddi
 
 | Reuse (lessons / small tools) | Do **not** expect to reuse unmodified |
 | --- | --- |
-| ANE numerics: native activations can be wrong near 0; forge replaced SiLU with `0.5*x*(1+tanh(x/2))` because `x*sigmoid(x)` re-fuses to native SiLU (`ANE_DELTANET_NUMERICS.md`, `docs/TECHNIQUES.md`) — apply the **same skepticism to GELU** | `forge.py convert` / `quantize` / `chat` / `serve` — hard-wired to Qwen3.8-27B (`64` layers, `hidden_size=5120`), KV I/O, DeltaNet, LUT exports |
+| ANE numerics: native activations can be wrong near 0; forge replaced SiLU with `0.5*x*(1+tanh(x/2))` because `x*sigmoid(x)` re-fuses to native SiLU (`ANE_DELTANET_NUMERICS.md`, `docs/TECHNIQUES.md`) - apply the **same skepticism to GELU** | `forge.py convert` / `quantize` / `chat` / `serve` - hard-wired to Qwen3.8-27B (`64` layers, `hidden_size=5120`), KV I/O, DeltaNet, LUT exports |
 | Validation discipline: finite checks, **rel-L2 + norms**, not cosine alone; CPU vs ANE same graph; PyTorch same-weight parity; record OS/Xcode/coremltools hashes (`docs/WORKFLOW.md` validation section) | Chunked 4-layer LLM packages, host KV, recurrent DeltaNet state, drafter pairing |
-| Compile / placement: `CPU_AND_NE` ≠ “on ANE”; capture compute plans; bonded compile mode policy is SoC-specific (`docs/ANE_COMPILE_MODE_POLICY.md`) — re-validate for Core ML (not Core AI) | Core AI Swift bridge, multifunction verify/prefill entries, V8 KV |
+| Compile / placement: `CPU_AND_NE` ≠ “on ANE”; capture compute plans; bonded compile mode policy is SoC-specific (`docs/ANE_COMPILE_MODE_POLICY.md`) - re-validate for Core ML (not Core AI) | Core AI Swift bridge, multifunction verify/prefill entries, V8 KV |
 | Timing helper pattern in `tools/coreml/time_models.swift` (Apple sample, BSD-3) | MIL builders in `qwen38_ane_chunk.py` as a copy-paste encoder (wrong architecture) |
 | Environment hygiene: separate conversion vs inference envs; pin and record (`docs/ENVIRONMENT.md`) | Forge requirements-conversion.txt Core AI pins |
 
@@ -104,7 +104,7 @@ coremltools.convert(
 4. **Pooling in-graph:** implement mask-aware mean (`sum(h * mask) / clamp(sum(mask), min=1)`) inside the module so ST and Core ML share one definition. Do not “forget” the mask (padding will poison the mean).
 5. **Projection / MRL:** keep full 768 in the package; do MRL truncate + re-normalize on the host for 512/256/128 so one compiled graph serves all dims. Optionally add a second package later with in-graph truncate.
 6. **Normalize:** match ST (`Normalize` module / `normalize_embeddings=True`). Document whether the `.mlpackage` emits unit vectors or raw projected vectors.
-7. **coremltools path:** Torch frontend first. Escalate to hand-written MIL **only** if specific ops refuse ANE placement (forge’s pattern)—not as the default.
+7. **coremltools path:** Torch frontend first. Escalate to hand-written MIL **only** if specific ops refuse ANE placement (forge’s pattern) - not as the default.
 8. **Quantization:** FP baseline first. INT8 / LUT later, guided by forge’s “preserve ANE placement” notes (vector LUT width / axis matter). Do not GPTQ an encoder until cosine/L2 gates pass.
 
 ### 1.4 Likely ANE pitfalls
@@ -114,11 +114,11 @@ coremltools.convert(
 | **FP16 activations** | Upstream forbids FP16; ANE compute is often FP16 | Reference in BF16/FP32. Convert carefully; if Core ML lowers to FP16, gate on NaN rate + cosine **and** rel-L2. Prefer keeping sensitive ops in FP32 if the converter allows, or split embedding table / late projection. Abort any path that matches “silent NaN” behavior. |
 | **GELU** | Gated FFN uses GELU; forge saw native SiLU ~1e-3 abs error near 0 | A/B native GELU vs `gelu ≈ x * Φ(x)` / tanh approximation; compare ANE vs CPU same package and vs PyTorch. Do not trust fluency of cosine alone. |
 | **GQA / MQA + 5:1 local:global** | Unusual head layout vs dense MHA | Ensure RoPE / attention masks match Gemma 4 embedding variant; wrong KV repeat or head split → soft failure in cosine. |
-| **Sliding window 1024** | Local layers are not full-context attention | Fixed-S traces must bake the correct windowed mask. Long prompts (up to 8K) need either chunked attention patterns that match the model or a full-context global layer schedule—copying “full causal 8K” will diverge. |
+| **Sliding window 1024** | Local layers are not full-context attention | Fixed-S traces must bake the correct windowed mask. Long prompts (up to 8K) need either chunked attention patterns that match the model or a full-context global layer schedule - copying “full causal 8K” will diverge. |
 | **Mean pooling** | Sensitive to mask and dtype | Integer mask → float; protect empty sequences; compare pool-only tensors before projection when debugging. |
 | **512→768 projection** | Extra matmul after pool | Include in graph for parity; check weight dtype/layout after convert. |
-| **Long context (8K)** | Compile time, memory, ANE working set | Start S≤512 or 1024; grow ladder. Forge learned blocked softmax / tiling for large windows—revisit if full 8K loses placement. |
-| **Embedding table 262K × 512** | Large gather | May dominate package size; watch ANE vs CPU placement of gather; consider host embedding + Core ML body only as a fallback experiment (document if used—changes I/O). |
+| **Long context (8K)** | Compile time, memory, ANE working set | Start S≤512 or 1024; grow ladder. Forge learned blocked softmax / tiling for large windows - revisit if full 8K loses placement. |
+| **Embedding table 262K × 512** | Large gather | May dominate package size; watch ANE vs CPU placement of gather; consider host embedding + Core ML body only as a fallback experiment (document if used - changes I/O). |
 | **Task prefixes** | Quality and parity | Host-side only; fixtures must use the same `prompt_name` / manual document title format as ST. |
 | **Silent CPU fallback** | `CPU_AND_NE` can still run on CPU | Require compute-plan / timing evidence of ANE; forge explicitly warns not to promote CPU parity to ANE correctness. |
 
@@ -126,7 +126,7 @@ coremltools.convert(
 
 **Reference:** ST text-only, BF16 or FP32, fixed seed, fixed tokenizer revision, fixed `prompt_name`s.
 
-**Fixed prompt fixture** (check into `tests/fixtures/prompts.json` or similar—small text only):
+**Fixed prompt fixture** (check into `tests/fixtures/prompts.json` or similar - small text only):
 
 - Asymmetric: `SearchQuery` / `Document` pairs (short + medium).
 - Symmetric: `SentenceSimilarity`, `Classification`, `Clustering` (one each).
@@ -135,7 +135,7 @@ coremltools.convert(
 
 **Metrics (record all):**
 
-1. Cosine(ST, CoreML) per prompt — primary gate (e.g. ≥ 0.999 for FP path on short prompts; tighten/loosen after first measurements).
+1. Cosine(ST, CoreML) per prompt - primary gate (e.g. ≥ 0.999 for FP path on short prompts; tighten/loosen after first measurements).
 2. Rel-L2 and embedding L2 norms (forge lesson: cosine hides magnitude bugs).
 3. Finite / NaN / Inf counts (especially any FP16 path).
 4. Pairwise similarity agreement: `cos(q,d)` ST vs CoreML on the same pairs (ranking-relevant).
@@ -148,31 +148,31 @@ coremltools.convert(
 
 Small, numbered, independently mergeable:
 
-1. **T1 — Fixture pack:** ✅ `tests/fixtures/prompts.json` + `embeddings.npy` + digests; `model/gen_reference_fixtures.py`.
-2. **T2 — Text-only loader helper:** ✅ `model/load_text_model.py` — ST load with `vision_config`/`audio_config` None; BF16/FP32 only (refuse FP16).
-3. **T3 — Inference wrapper module:** ✅ `model/embed_wrapper.py` — mask-aware mean pool + 512→768 + optional L2; `model/smoke_wrapper_vs_fixtures.py` cosine vs T1.
-4. **T4 — Trace export:** Script `model/export_torchscript.py` — fixed-S trace, save `.pt` + metadata (S, dtype, git sha, model revision).
-5. **T5 — coremltools convert:** `model/convert_coreml.py` — TorchScript → `.mlpackage`, compute units flag, I/O names documented in README.
-6. **T6 — Parity harness:** `model/parity_cosine.py` — ST vs Core ML (CPU) cosine/rel-L2 on fixtures; JSON report.
-7. **T7 — ANE smoke + placement:** Load with ANE-capable units; NaN check; placement/timing note; fail ticket if CPU fallback suspected.
-8. **T8 — Shape ladder:** Repeat T4–T7 for S∈{128,512,1024} (separate packages or multifunction); document which S is default.
-9. **T9 — MRL host path:** Truncate+renorm helper matching ST `truncate_dim`; parity at 128/256/512.
-10. **T10 — FP16 hazard report:** Explicit experiment: what happens if convert forces FP16 compute; document NaN/cosine collapse; decide FP32 islands or other mitigation before any release claim.
-11. **T11 — GELU A/B:** Native vs approximate GELU on ANE; pick recipe; note in PLAN results subsection.
-12. **T12 — Weights + HF cache docs:** README documents where weights and caches live; no model bytes in git.
+1. **T1 - Fixture pack:** ✅ `tests/fixtures/prompts.json` + `embeddings.npy` + digests; `model/gen_reference_fixtures.py`.
+2. **T2 - Text-only loader helper:** ✅ `model/load_text_model.py` - ST load with `vision_config`/`audio_config` None; BF16/FP32 only (refuse FP16).
+3. **T3 - Inference wrapper module:** ✅ `model/embed_wrapper.py` - mask-aware mean pool + 512→768 + optional L2; `model/smoke_wrapper_vs_fixtures.py` cosine vs T1.
+4. **T4 - Trace export:** Script `model/export_torchscript.py` - fixed-S trace, save `.pt` + metadata (S, dtype, git sha, model revision).
+5. **T5 - coremltools convert:** `model/convert_coreml.py` - TorchScript → `.mlpackage`, compute units flag, I/O names documented in README.
+6. **T6 - Parity harness:** `model/parity_cosine.py` - ST vs Core ML (CPU) cosine/rel-L2 on fixtures; JSON report.
+7. **T7 - ANE smoke + placement:** Load with ANE-capable units; NaN check; placement/timing note; fail ticket if CPU fallback suspected.
+8. **T8 - Shape ladder:** Repeat T4–T7 for S∈{128,512,1024} (separate packages or multifunction); document which S is default.
+9. **T9 - MRL host path:** Truncate+renorm helper matching ST `truncate_dim`; parity at 128/256/512.
+10. **T10 - FP16 hazard report:** Explicit experiment: what happens if convert forces FP16 compute; document NaN/cosine collapse; decide FP32 islands or other mitigation before any release claim.
+11. **T11 - GELU A/B:** Native vs approximate GELU on ANE; pick recipe; note in PLAN results subsection.
+12. **T12 - Weights + HF cache docs:** README documents where weights and caches live; no model bytes in git.
 
 ---
 
-## Phase 2 — Multimodal (later)
+## Phase 2 - Multimodal (later)
 
 Only after Phase 1 cosine/placement gates pass on text.
 
 1. **Prefer separate packages:** vision encoder → tokens/features; audio encoder → tokens/features; shared text backbone package. Host assembles interleaved sequences (`<|image|>`, `<|video|>`, `<|audio|>` placeholders) unless a single fused graph proves necessary.
 2. **Load sizes:** text+image ~440M (`audio_config=None`); text+audio ~570M (`vision_config=None`); full 740M.
-3. **Token budgets:** images ~280 tokens default (configurable 70–1120); video frames ~140; audio ~25 tokens/s; shared 8K window—ANE shapes must reflect the chosen budget.
+3. **Token budgets:** images ~280 tokens default (configurable 70–1120); video frames ~140; audio ~25 tokens/s; shared 8K window - ANE shapes must reflect the chosen budget.
 4. **Prefixes:** still text-only; media has no task prefix.
 5. **Validation:** extend fixtures with tiny synthetic image/audio **paths outside the repo** (not in git); cross-modal cosine vs ST; keep text regression suite green.
-6. **Reuse forge?** Still no—multimodal encoders are not Qwen DeltaNet chunks. Possibly revisit Core AI later if Core ML hits a hard ceiling; that is a separate decision.
+6. **Reuse forge?** Still no - multimodal encoders are not Qwen DeltaNet chunks. Possibly revisit Core AI later if Core ML hits a hard ceiling; that is a separate decision.
 
 ---
 
@@ -192,7 +192,7 @@ Only after Phase 1 cosine/placement gates pass on text.
 - Running or modifying `forge.py convert` against EmbeddingGemma.
 - Downloading the checkpoint in planning tickets.
 - Shipping INT8/LUT or Core AI packages before FP Core ML parity.
-- Chat, speculative decode, or OpenAI-compatible generate APIs—this project embeds, it does not serve an LM.
+- Chat, speculative decode, or OpenAI-compatible generate APIs - this project embeds, it does not serve an LM.
 
 ---
 

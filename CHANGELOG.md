@@ -13,8 +13,15 @@ All notable changes to this project are documented here.
 
 ### Changed
 - `ANE_REVISION` pinned to Hugging Face commit
-  `30fe9a770d417c35bedf716075dc9a41a957c9f4` (adds the root `config.json` and
-  one card line; towers and `host/` byte-identical to `47d05aa`).
+  `1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` (adds the root `config.json`, updates
+  the card and the `towers.yaml` notes; towers and `host/` byte-identical to
+  `47d05aa`).
+- M5 / macOS 27.2 status reworded in the README, HF card, `towers.yaml`, and
+  docs: all three towers work and match the reference (cosine
+  0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently
+  run on the GPU because the macOS 27.2 ANE pre-check rejects them. Fully-ANE
+  placement stays validated on M4 Pro and M3 Ultra, macOS 27.0.
+- Em dashes in the Markdown docs replaced with plain dashes.
 - `download_models.py` fetches the root `config.json` with the towers and
   verifies it against `ROOT_CONFIG_SHA256` like the other pinned files.
   Existing installs see the new pin and refresh; unchanged files are not

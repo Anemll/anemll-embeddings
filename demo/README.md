@@ -1,6 +1,6 @@
 # Local demo
 
-This demo shows EmbeddingGemma 2 running on your Mac’s Neural Engine. It turns photos, sounds, and text into embeddings — lists of numbers that capture meaning — so things that mean the same thing land close together, even across types. A photo of a fox, a bark, and the words “a red fox” can match each other. Everything stays on your Mac.
+This demo shows EmbeddingGemma 2 running on your Mac’s Neural Engine. It turns photos, sounds, and text into embeddings - lists of numbers that capture meaning - so things that mean the same thing land close together, even across types. A photo of a fox, a bark, and the words “a red fox” can match each other. Everything stays on your Mac.
 
 The pages are plain HTML. There is no front-end build step.
 
@@ -20,7 +20,7 @@ python -m demo.server --backend coreai --port 8766                 # this Mac on
 python -m demo.server --backend coreai --host 0.0.0.0 --port 8766  # trusted LAN, see below
 ```
 
-First `warmup.py` load compiles each tower for this Mac and caches it. There is no separate per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra, macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU (the `/health` badge shows it).
+First `warmup.py` load compiles each tower for this Mac and caches it. There is no separate per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra, macOS 27.0; on macOS 27.2 / M5 all three towers work, with audio on the ANE and vision and text currently on the GPU (the `/health` badge shows it).
 
 ### Network exposure
 
@@ -72,7 +72,7 @@ Keep `$ANEMLL_DEMO_DATA`, `$ANEMLL_DEMO_CORPUS`, and `$ANEMLL_DEMO_ALERT` **outs
 
 You can also skip the corpus and click **Load samples** on the Search page (colored squares, two captions, two tones).
 
-## Search — `/`
+## Search - `/`
 
 Drop photos, audio, or text on the **left** to add them to your library, then type a query like “a red fox” or drop an image or sound on the **right** to see the closest matches with similarity bars.
 
@@ -86,7 +86,7 @@ The whole left panel is the drop target, not only the dashed box. A failed add s
 
 To add a clip from disk, drop it here (Search), not on Heard.
 
-## Heatmap — `/heatmap`
+## Heatmap - `/heatmap`
 
 The nav label is **Matrix**. The server re-embeds the items you tick and fills a grid: every item versus every other. A higher score (brighter cell) means more alike. You need at least two library items first. The API will compare at most 12.
 
@@ -96,9 +96,9 @@ The nav label is **Matrix**. The server re-embeds the items you tick and fills a
 2. Look at two color squares versus each other, then a square versus the “northern lights” caption, then a square versus a tone. Same-type pairs should score higher than unrelated pairs.
 3. After the corpus is loaded, include the red fox photo and search-like captions in the same grid.
 
-## Search what I heard — `/heard`
+## Search what I heard - `/heard`
 
-Record a few seconds, then type what you heard. The page indexes short mic chunks with timestamps and searches **only those chunks** (this browser session’s audio). It does not search the main library’s photos or captions, and it has no file-upload control — drop clips on Search instead.
+Record a few seconds, then type what you heard. The page indexes short mic chunks with timestamps and searches **only those chunks** (this browser session’s audio). It does not search the main library’s photos or captions, and it has no file-upload control - drop clips on Search instead.
 
 The chunk length is 5–10 seconds (default 8). On the Core AI package, audio longer than the 280-frame window is sliced and averaged.
 
@@ -110,11 +110,11 @@ The chunk length is 5–10 seconds (default 8). On the Core AI package, audio lo
 
 The browser will only give the microphone to a **secure context**: `http://127.0.0.1` or HTTPS. `http://<your-mac-ip>:8766` can show the pages and do text/file search, but recording will fail.
 
-## Camera alert — `/alert`
+## Camera alert - `/alert`
 
 Four alerts are already set: **Anything significant**, **UPS truck**, **Sparky**, and **Dog barking**. They are read-only. Click a camera frame or a sound and watch which ones fire. Editing rules, thresholds, and pet photos is under **Advanced / customize**.
 
-**Anything significant** is not a text search. It is how different a frame is from the empty-street photo (`1 − cosine`). The line sits halfway between that photo (score 0) and the smallest real change. UPS, Sparky, and Dog barking ship with *threshold lines* (about 0.65, 0.75, and 0.68) — halfway between the hit and the closest miss, not the pair scores in the root README (UPS photo 0.727 vs its caption, bark 0.721 vs “a dog barking”). The page measures this set again in the background so one click is already on the right side of the line.
+**Anything significant** is not a text search. It is how different a frame is from the empty-street photo (`1 − cosine`). The line sits halfway between that photo (score 0) and the smallest real change. UPS, Sparky, and Dog barking ship with *threshold lines* (about 0.65, 0.75, and 0.68) - halfway between the hit and the closest miss, not the pair scores in the root README (UPS photo 0.727 vs its caption, bark 0.721 vs “a dog barking”). The page measures this set again in the background so one click is already on the right side of the line.
 
 The frames and clips are not in git. Fetch them first (CC0 / CC BY / CC BY-SA, licenses in `manifest.json`):
 
@@ -128,7 +128,7 @@ Sparky’s two photos are the same black cat (Nikolai Bulykin, Medeo, Almaty). M
 
 ## Limits
 
-- Validated on an M4 Pro, macOS 27.0, with `--backend coreai`. On macOS 27.2 (M5) the vision and text packages currently fall back to the GPU; audio still runs on the Neural Engine.
+- Validated fully on the Neural Engine on an M4 Pro, macOS 27.0, with `--backend coreai`. On M5 / macOS 27.2 all three towers work and match the reference; audio runs on the Neural Engine, and vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them).
 - Audio must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips return `audio too short (min N ms)`.
 - Browser uploads that are not WAV (webm/ogg from some mics) need `ffmpeg` on the server.
 - Images are capped at 20 MiB, audio at 30 MiB.

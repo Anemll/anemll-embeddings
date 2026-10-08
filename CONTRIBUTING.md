@@ -33,8 +33,10 @@ python scripts/warmup.py --require-ane        # exit 3 = a tower is not fully on
 ANEMLL_HW_TESTS=1 python -m pytest tests/test_hardware_ane.py -q -s
 ```
 
-Say which chip and macOS version you ran on. M5 / macOS 27.2 currently places
-vision and text on the GPU; that is a known limitation, not a regression.
+Say which chip and macOS version you ran on. On M5 / macOS 27.2 all three
+towers work and match the reference, but vision and text currently run on the
+GPU (the macOS 27.2 ANE pre-check rejects them), so `--require-ane` exits 3
+there. That is expected, not a regression.
 
 ## Guidelines
 

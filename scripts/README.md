@@ -1,10 +1,10 @@
 # Download and warm-up
 
-`download_models.py` fetches the **inference** assets from one repo: the public Neural Engine packages, the root `config.json` package descriptor, and `host/` (tokenizer, processor, embed table) on [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 30fe9a770d417c35bedf716075dc9a41a957c9f4`. It does **not** download `model.safetensors`. If `host/` is missing on the pin, it falls back to the slim Google files. `download_export_assets.py` is a separate script for the full checkpoint if you will re-convert. `prepare_hf_host_folder.py` stages `hf/host/` for a Hub upload (writes only under `--dest`; does not upload). `warmup.py` loads each tower once so Core AI specializes them for this Mac and caches the result. There is **no** per-hardware compile to ship.
+`download_models.py` fetches the **inference** assets from one repo: the public Neural Engine packages, the root `config.json` package descriptor, and `host/` (tokenizer, processor, embed table) on [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`. It does **not** download `model.safetensors`. If `host/` is missing on the pin, it falls back to the slim Google files. `download_export_assets.py` is a separate script for the full checkpoint if you will re-convert. `prepare_hf_host_folder.py` stages `hf/host/` for a Hub upload (writes only under `--dest`; does not upload). `warmup.py` loads each tower once so Core AI specializes them for this Mac and caches the result. There is **no** per-hardware compile to ship.
 
 No Hugging Face login or token is needed. Both repos are public and ungated. The download scripts need `huggingface_hub`, which `python -m pip install -e .` (or `.[demo]`) already installs.
 
-Fully on the ANE on **M4 Pro / M3 Ultra, macOS 27.0**. On **macOS 27.2 / M5** the ANE pre-check currently rejects vision and text (`invalid MLIR-MPS program`) and they fall back to the GPU; audio still runs on the ANE. `warmup.py --require-ane` turns that into a non-zero exit.
+Fully on the ANE on **M4 Pro / M3 Ultra, macOS 27.0**. On **macOS 27.2 / M5** all three towers work and match the reference (cosine 0.99994-0.99997); audio runs on the ANE, and vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with `invalid MLIR-MPS program`). `warmup.py --require-ane` exits non-zero there because it requires every tower on the ANE.
 
 The packages run under a separate Core AI interpreter (`coreai-core` 1.0.0b2 on Python 3.13). Setup and lookup order: [README → Core AI runtime](../README.md#core-ai-runtime).
 
@@ -24,7 +24,7 @@ About **1.49 GB** on disk. `scripts/download_models.py` only.
 
 | What | Source | Size |
 | --- | --- | --- |
-| ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 30fe9a770d417c35bedf716075dc9a41a957c9f4` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
+| ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
 | Host tokenizer / processor / configs | same repo, `host/` (fallback: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b`) | **~37 MB** (`tokenizer.json` 32.2 MB, `tokenizer.model` 4.7 MB, plus `config.json`, processor / preprocessor configs, tokenizer config, chat template) |
 | Embed table `embed_tokens.safetensors` | same repo, `host/` (extracted from Google’s `model.safetensors`; not a full-weights download) | **256 MiB** (268,435,456 bytes, BF16 `[262144, 512]`, plus Gemma `sqrt(512)` scale) |
 | Package descriptor `config.json` | same repo, root (towers, shapes, `host/` paths; not a transformers config) | **~3 KB** |
@@ -60,7 +60,7 @@ Default `--dest` is `~/.anemll-embeddings` (or `$ANEMLL_EMBEDDINGS_HOME`). `api.
 | `--verify` | off | Re-hash the towers and host files already on disk against the pinned digests (no download). |
 | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then `~/.anemll-embeddings/coreai-venv`, then a sibling or `~/anemll-forge/coreai/.venv` | Value printed for `ANEMLL_COREAI_PYTHON`. If none exists, commented setup lines are printed instead. |
 
-Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=30fe9a770d417c35bedf716075dc9a41a957c9f4`, overridable with `ANEMLL_ANE_REVISION`; Google fallback stays at `914f7f8…`). There is no `--revision` flag. Skip-if-present is the default; use `--force` to fetch again.
+Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`, overridable with `ANEMLL_ANE_REVISION`; Google fallback stays at `914f7f8…`). There is no `--revision` flag. Skip-if-present is the default; use `--force` to fetch again.
 
 Custom dest:
 
@@ -75,7 +75,7 @@ python scripts/download_models.py --dest /path/to/fast/disk/anemll-embeddings
 | `--artifacts PATH` | `$ANEMLL_EMBEDDINGS_ARTIFACTS`, else `~/.anemll-embeddings/artifacts` | Directory that contains `coreai/<name>.aimodel` |
 | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then `~/.anemll-embeddings/coreai-venv`, then a sibling or `~/anemll-forge/coreai/.venv` | Interpreter that can `import coreai.runtime`. A set-but-missing path is an error; with nothing found it stops with setup steps. |
 | `--coreai-home DIR` | `$CFFIXED_USER_HOME`, else your home | Core AI's home; the specialization cache is `<DIR>/Library/Caches/coreai-cache`. Created if missing. |
-| `--cache-dir PATH` | — | Same as `--coreai-home`, given as the full cache path. Must end in `Library/Caches/coreai-cache` (Core AI has no free-form cache location); anything else is rejected. Mutually exclusive with `--coreai-home`. |
+| `--cache-dir PATH` | - | Same as `--coreai-home`, given as the full cache path. Must end in `Library/Caches/coreai-cache` (Core AI has no free-form cache location); anything else is rejected. Mutually exclusive with `--coreai-home`. |
 | `--compute ane\|cpu` | `ane` | Device for this load |
 | `--require-ane` | off | Exit **3** unless every tower reports fully on the Neural Engine. Cannot be combined with `--compute cpu`. |
 
@@ -90,10 +90,10 @@ export ANEMLL_EMBEDDINGS_MODEL=/Users/you/.anemll-embeddings/embeddinggemma-2
 export ANEMLL_COREAI_PYTHON=/Users/you/.anemll-embeddings/coreai-venv/bin/python
 ```
 
-`scripts/warmup.py` — **cold** vs **warm** (M3 Ultra / macOS 27.0):
+`scripts/warmup.py` - **cold** vs **warm** (M3 Ultra / macOS 27.0):
 
 ```
-# cold first load — compile + cache, ~111 s
+# cold first load - compile + cache, ~111 s
 tower                  on ANE                load_ms   first_run_ms
 vision_s280            yes                   58000.0            -
 audio_s280             yes                   16000.0            -
@@ -102,7 +102,7 @@ overall_placement=fullyOnANE  wall_ms=111000.0
 ```
 
 ```
-# warm load — cache hit, load ~0.06–0.1 s per tower
+# warm load - cache hit, load ~0.06–0.1 s per tower
 tower                  on ANE                load_ms   first_run_ms
 vision_s280            yes                      80.0          360.0
 audio_s280             yes                      80.0           25.0
@@ -155,6 +155,6 @@ export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
 - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect: `python scripts/warmup.py --coreai-home /path/to/writable/home` (or `export CFFIXED_USER_HOME=/path/to/writable/home`; the cache becomes `<home>/Library/Caches/coreai-cache`). Keep `CFFIXED_USER_HOME` set for later runs so the samples and demo reuse that cache.
 - "Core AI Python not found" / "cannot import coreai.runtime": create the Core AI venv ([README → Core AI runtime](../README.md#core-ai-runtime)) or set `ANEMLL_COREAI_PYTHON`.
 - `sha256 mismatch …`: the file on disk is not the pinned one. Delete that tower or `host/` folder and rerun with `--force`.
-- On macOS 27.2 / M5, vision and text report `no (GPU)` (`invalid MLIR-MPS program`). Audio still runs on the ANE. `--require-ane` exits 3 there.
+- On macOS 27.2 / M5, vision and text report `no (GPU)` (the ANE pre-check rejects them with `invalid MLIR-MPS program`). They work and match the reference; they just run on the GPU for now. Audio runs on the ANE. `--require-ane` exits 3 there.
 - Rerunning either inference or warmup is safe. Download skips files that already match the pinned revision.
 - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.
