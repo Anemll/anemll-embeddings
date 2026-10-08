@@ -37,7 +37,8 @@ shared space, so you can compare any of them with cosine similarity.
 | `host/` | tokenizer, processor, `embed_tokens.safetensors` | host-side lookup for `api.Embedder` | — |
 
 Exact input/output names, shapes, dtypes, and checksums are in
-[`towers.yaml`](towers.yaml). Per-file origin for `host/` is in
+[`towers.yaml`](towers.yaml). The root [`config.json`](config.json) is a short JSON
+descriptor of the same package (not a transformers config). Per-file origin for `host/` is in
 [`host/SOURCE.md`](host/SOURCE.md).
 
 Images and audio go through their tower first. Their soft tokens are then
@@ -106,7 +107,7 @@ Neural Engine (currently vision and text on M5 / macOS 27.2).
 
 The tower and `host/` files are byte-identical to commit
 `47d05aa218a227e887858fe571f8deb2f2a1d532`; later commits only update this
-card. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
+card and add the root `config.json`. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
 `scripts/download_common.py`) and checks every tower and `host/` file against
 SHA-256 digests on download. `download_models.py` prefers `host/` here. If a pin does not have that
 folder yet, it falls back to the slim files on

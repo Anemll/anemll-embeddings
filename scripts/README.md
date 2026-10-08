@@ -1,6 +1,6 @@
 # Download and warm-up
 
-`download_models.py` fetches the **inference** assets from one repo: the public Neural Engine packages plus `host/` (tokenizer, processor, embed table) on [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 90d2ab497d423bba4ee29947b274c787bb4a1f0a`. It does **not** download `model.safetensors`. If `host/` is missing on the pin, it falls back to the slim Google files. `download_export_assets.py` is a separate script for the full checkpoint if you will re-convert. `prepare_hf_host_folder.py` stages `hf/host/` for a Hub upload (writes only under `--dest`; does not upload). `warmup.py` loads each tower once so Core AI specializes them for this Mac and caches the result. There is **no** per-hardware compile to ship.
+`download_models.py` fetches the **inference** assets from one repo: the public Neural Engine packages, the root `config.json` package descriptor, and `host/` (tokenizer, processor, embed table) on [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 30fe9a770d417c35bedf716075dc9a41a957c9f4`. It does **not** download `model.safetensors`. If `host/` is missing on the pin, it falls back to the slim Google files. `download_export_assets.py` is a separate script for the full checkpoint if you will re-convert. `prepare_hf_host_folder.py` stages `hf/host/` for a Hub upload (writes only under `--dest`; does not upload). `warmup.py` loads each tower once so Core AI specializes them for this Mac and caches the result. There is **no** per-hardware compile to ship.
 
 No Hugging Face login or token is needed. Both repos are public and ungated. The download scripts need `huggingface_hub`, which `python -m pip install -e .` (or `.[demo]`) already installs.
 
@@ -16,7 +16,7 @@ python scripts/warmup.py
 
 With the default `--dest` nothing needs exporting: `api.Embedder`, the samples, `warmup.py`, and the demo fall back to `~/.anemll-embeddings/artifacts` and `~/.anemll-embeddings/embeddinggemma-2`. With a custom `--dest`, put the printed (shell-quoted) `export` lines in `~/.zshrc` or a file you `source`.
 
-Each fresh download is verified against SHA-256 digests tracked in `scripts/download_common.py` (`TOWER_MLIRB_SHA256` for each tower's `main.mlirb`, `HOST_SHA256` for every `host/` file) **before** the revision marker is written, so a corrupted or tampered file is never treated as installed. A mismatch stops the script with the file name and both digests. If you override `ANEMLL_ANE_REVISION`, the pinned table does not apply and verification is skipped with a note.
+Each fresh download is verified against SHA-256 digests tracked in `scripts/download_common.py` (`TOWER_MLIRB_SHA256` for each tower's `main.mlirb`, `ROOT_CONFIG_SHA256` for the root `config.json`, `HOST_SHA256` for every `host/` file) **before** the revision marker is written, so a corrupted or tampered file is never treated as installed. A mismatch stops the script with the file name and both digests. If you override `ANEMLL_ANE_REVISION`, the pinned table does not apply and verification is skipped with a note.
 
 ## What gets downloaded (inference)
 
@@ -24,9 +24,10 @@ About **1.49 GB** on disk. `scripts/download_models.py` only.
 
 | What | Source | Size |
 | --- | --- | --- |
-| ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 90d2ab497d423bba4ee29947b274c787bb4a1f0a` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
+| ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 30fe9a770d417c35bedf716075dc9a41a957c9f4` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
 | Host tokenizer / processor / configs | same repo, `host/` (fallback: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b`) | **~37 MB** (`tokenizer.json` 32.2 MB, `tokenizer.model` 4.7 MB, plus `config.json`, processor / preprocessor configs, tokenizer config, chat template) |
 | Embed table `embed_tokens.safetensors` | same repo, `host/` (extracted from Google’s `model.safetensors`; not a full-weights download) | **256 MiB** (268,435,456 bytes, BF16 `[262144, 512]`, plus Gemma `sqrt(512)` scale) |
+| Package descriptor `config.json` | same repo, root (towers, shapes, `host/` paths; not a transformers config) | **~3 KB** |
 
 Weights are Apache-2.0 under Google’s terms. This repo’s code is MIT.
 
@@ -37,6 +38,7 @@ Default `--dest` is `~/.anemll-embeddings` (or `$ANEMLL_EMBEDDINGS_HOME`). `api.
 ```
 ~/.anemll-embeddings/
   ane/
+    config.json                          # package descriptor (root config.json on the Hub)
     vision_s280/vision_s280.aimodel/     # metadata.json, main.hash, main.mlirb
     audio_s280/audio_s280.aimodel/
     text_embeds_s320/text_embeds_s320.aimodel/
@@ -58,7 +60,7 @@ Default `--dest` is `~/.anemll-embeddings` (or `$ANEMLL_EMBEDDINGS_HOME`). `api.
 | `--verify` | off | Re-hash the towers and host files already on disk against the pinned digests (no download). |
 | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then `~/.anemll-embeddings/coreai-venv`, then a sibling or `~/anemll-forge/coreai/.venv` | Value printed for `ANEMLL_COREAI_PYTHON`. If none exists, commented setup lines are printed instead. |
 
-Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=90d2ab497d423bba4ee29947b274c787bb4a1f0a`, overridable with `ANEMLL_ANE_REVISION`; Google fallback stays at `914f7f8…`). There is no `--revision` flag. Skip-if-present is the default; use `--force` to fetch again.
+Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=30fe9a770d417c35bedf716075dc9a41a957c9f4`, overridable with `ANEMLL_ANE_REVISION`; Google fallback stays at `914f7f8…`). There is no `--revision` flag. Skip-if-present is the default; use `--force` to fetch again.
 
 Custom dest:
 

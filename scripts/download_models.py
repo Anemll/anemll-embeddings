@@ -8,7 +8,7 @@ Google host files (tokenizer / processor / extracted embed table) — never
 
 Writes:
 
-    <dest>/ane/                              ANE towers (+ host/ when mirrored)
+    <dest>/ane/                              ANE towers + config.json (+ host/ when mirrored)
     <dest>/embeddinggemma-2/                 tokenizer / processor / embed_tokens.safetensors
     <dest>/artifacts/coreai/<name>.aimodel   symlinks Embedder expects
 """
@@ -48,9 +48,9 @@ from scripts.download_common import (  # noqa: E402
     inference_download_bytes,
     install_host,
     link_coreai,
+    package_checksums,
     revision_matches,
     snapshot,
-    tower_checksums,
     verify_sha256,
     write_revision,
 )
@@ -66,11 +66,11 @@ def _check(problems: list[str], what: str) -> None:
 
 
 def verify_ane(ane_dir: Path, rev: str) -> str:
-    """Check tower ``main.mlirb`` digests against the git-tracked table."""
+    """Check tower ``main.mlirb`` and root ``config.json`` digests (git-tracked)."""
     if rev != ANE_REVISION:
         print(f"note: checksums are pinned for {ANE_REVISION}; not verifying towers at override {rev}")
         return "unpinned"
-    _check(verify_sha256(tower_checksums(ane_dir)), "ANE towers")
+    _check(verify_sha256(package_checksums(ane_dir)), "ANE towers + config.json")
     return "ok"
 
 

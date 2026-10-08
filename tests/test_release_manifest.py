@@ -11,7 +11,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import release_manifest as rm  # noqa: E402
-from scripts.download_common import ANE_REVISION  # noqa: E402
+from scripts.download_common import HOST_SHA256, TOWER_MLIRB_SHA256  # noqa: E402
 
 
 def test_repo_files_cover_download_path() -> None:
@@ -33,11 +33,17 @@ def test_committed_manifest_matches_pin() -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["schema"] == rm.SCHEMA
     assert data["version"] == "v0.1.0"
-    assert data["huggingface"]["revision"] == ANE_REVISION
+    # v0.1.0 shipped at HF 90d2ab4; later pins (ANE_REVISION) only add files
+    # (root config.json), so its tower/host digests still match the tables.
+    assert data["huggingface"]["revision"] == "90d2ab497d423bba4ee29947b274c787bb4a1f0a"
     hub = data["huggingface"]["files"]
     for tower in ("vision_s280", "audio_s280", "text_embeds_s320"):
         assert f"{tower}/{tower}.aimodel/main.mlirb" in hub
     assert "host/embed_tokens.safetensors" in hub
+    for tower, digest in TOWER_MLIRB_SHA256.items():
+        assert hub[f"{tower}/{tower}.aimodel/main.mlirb"]["sha256"] == digest
+    for name, digest in HOST_SHA256.items():
+        assert hub[f"host/{name}"]["sha256"] == digest
 
 
 def test_verify_and_sums(tmp_path: Path, capsys) -> None:
