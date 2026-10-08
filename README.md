@@ -8,6 +8,12 @@ The Neural Engine is the dedicated chip on Apple Silicon for this kind of work. 
 
 An embedding is a list of numbers that captures meaning. This model writes a list of 768 numbers for each photo, sound, or sentence. Things that mean the same thing land close together, even across types: a photo of a fox, a bark, and the words “a red fox” can match each other. Search then ranks by how close those lists are (cosine similarity on length-normalized vectors).
 
+![How EmbeddingGemma 2 is used: one vector per input, then compare](docs/images/embedding_flow.png)
+
+The model turns each input into one 768-number vector; similarity is computed afterwards by comparing vectors (grid values are illustrative).
+
+One input (for example the phrase “white house”) always gives exactly one vector, regardless of length.
+
 ## What’s included
 
 - Scripts that export EmbeddingGemma 2’s vision, audio, and text towers to Core AI `.aimodel` packages
