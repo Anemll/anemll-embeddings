@@ -8,6 +8,9 @@ photos) and dots them with cached image and audio vectors.
 from __future__ import annotations
 
 import asyncio
+import sys
+import time
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +80,10 @@ def mount_alert(app: FastAPI, alert_dir: Path) -> None:
         rules = _parse_rules(body.get("rules"))
         wanted = body.get("item_ids")
         compare_on = bool(body.get("include_compare", True))
-        return await _score(app, library, rules, wanted, compare_on)
+        # A click sends fresh=true: the clicked frame/sound is embedded again on
+        # the Neural Engine instead of read from the cache.
+        fresh = bool(body.get("fresh", False))
+        return await _score(app, library, rules, wanted, compare_on, fresh=fresh)
 
     @app.post("/alert/frames/{item_id}")
     async def replace_frame(item_id: str, request: Request) -> dict[str, Any]:
@@ -289,7 +295,10 @@ async def _score(
     rules: list[dict[str, Any]],
     wanted: Any,
     compare_on: bool,
+    *,
+    fresh: bool = False,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     media = [_public_item(library, item) for item in [*FRAMES, *SOUNDS]]
     available = [row for row in media if row["available"]]
     by_id = {row["id"]: row for row in available}
@@ -306,6 +315,7 @@ async def _score(
             target_ids.append(item_id)
 
     needed = set(target_ids)
+    fresh_ids = set(target_ids) if fresh else set()
     for rule in rules:
         if rule.get("baseline_id"):
             base = str(rule["baseline_id"])
@@ -318,6 +328,7 @@ async def _score(
     placement = None
     backend_name = None
     vectors: dict[str, Any] = {}
+    item_timing: list[dict[str, Any]] = []
 
     def _remember(spent: float) -> None:
         nonlocal latency_ms, fresh_embeds, placement, backend_name
@@ -333,8 +344,21 @@ async def _score(
         if path is None:
             raise HTTPException(400, f"{item_id} is not downloaded")
         modality = by_id[item_id]["modality"]
-        vector, spent = await asyncio.to_thread(library.embed_file, path, modality, _embedder(app))
+        split: dict[str, Any] = {}
+        renew = item_id in fresh_ids
+        vector, spent = await asyncio.to_thread(
+            partial(library.embed_file, fresh=renew), path, modality, _embedder(app, split)
+        )
         _remember(spent)
+        if renew:
+            item_timing.append(
+                {
+                    "id": item_id,
+                    "modality": modality,
+                    "embed_ms": round(float(spent), 3),
+                    **{key: round(float(value), 3) for key, value in split.items() if key.endswith("_ms")},
+                }
+            )
         return vector
 
     async def cached_media(item_id: str) -> Any | None:
@@ -398,6 +422,7 @@ async def _score(
         for label in CHANGE_LABELS:
             label_vectors.append((str(label["caption"]), await embed_query(str(label["text"]))))
 
+    match_started = time.perf_counter()
     raw_by_rule: dict[str, dict[str, float]] = {}
     cosine_by_rule: dict[str, dict[str, float]] = {}
     hints: dict[str, dict[str, str]] = {}
@@ -565,8 +590,29 @@ async def _score(
             }
         )
 
+    match_ms = (time.perf_counter() - match_started) * 1000.0
+    towers: dict[str, float] = {}
+    for row in item_timing:
+        for key in ("vision_ms", "audio_ms", "text_ms"):
+            if key in row:
+                towers[key[: -len("_ms")]] = round(towers.get(key[: -len("_ms")], 0.0) + row[key], 3)
+    server_ms = (time.perf_counter() - started) * 1000.0
+    timing = {
+        "items": item_timing,
+        "towers": towers,
+        "match_ms": round(match_ms, 3),
+        "server_ms": round(server_ms, 3),
+    }
+    tower_text = " ".join(f"{name} {value:.1f} ms" for name, value in towers.items()) or "cached"
+    print(
+        f"[alert] score items={','.join(target_ids)} fresh={','.join(sorted(fresh_ids)) or '-'} "
+        f"{tower_text} match {match_ms:.2f} ms server {server_ms:.1f} ms",
+        file=sys.stderr,
+        flush=True,
+    )
     return {
         "items": items_out,
+        "timing": timing,
         "latency_ms": round(latency_ms, 3),
         "backend": backend_name,
         "placement": placement,
@@ -582,9 +628,9 @@ def _num(value: float) -> float:
     return round(float(value), 6)
 
 
-def _embedder(app: FastAPI):
+def _embedder(app: FastAPI, timing: dict[str, Any] | None = None):
     def _run(file_path: Path, kind: str) -> tuple[Any, float]:
-        return embed_path(file_path, kind, app.state.backend)
+        return embed_path(file_path, kind, app.state.backend, timing)
 
     return _run
 

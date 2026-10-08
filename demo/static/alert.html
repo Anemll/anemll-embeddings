@@ -14,6 +14,10 @@
         <strong>ANE Embeddings</strong>
         <span>Camera alert · one embedding space for pictures, sound, and words</span>
       </div>
+      <div class="ap-timing" id="timing" aria-live="polite">
+        <span class="ap-timing-label">Last click</span>
+        <span class="ap-timing-value" id="timing-value">click a frame or a sound</span>
+      </div>
       <nav>
         <a href="/">Search</a>
         <a href="/heatmap">Matrix</a>
@@ -34,11 +38,10 @@
         <section class="ap-panel ap-info" id="info" aria-live="polite" aria-labelledby="info-title">
           <h2 class="sr-only" id="info-title">Result</h2>
           <div id="info-body"></div>
-          <p class="ap-badge" id="latency-badge" hidden>on ANE · — ms</p>
         </section>
 
         <section class="ap-panel ap-alerts" aria-labelledby="alerts-title">
-          <h2 id="alerts-title">Your alerts</h2>
+          <h2 class="ap-alerts-title" id="alerts-title">Configured alerts</h2>
           <div id="rules"></div>
         </section>
 

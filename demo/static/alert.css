@@ -19,7 +19,35 @@ body.alert-page { height: 100vh; overflow: hidden; }
   padding: 0 clamp(0.9rem, 1.6vw, 1.75rem) clamp(0.8rem, 1.4vh, 1.25rem);
 }
 
-.ap-top { padding: 0.85rem 0 0.7rem; }
+.ap-top { padding: 0.85rem 0 0.7rem; align-items: center; }
+
+/* Header readout: Neural Engine time for the last click. */
+.ap-timing {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  margin: 0 auto;
+  padding: 0.45rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(142, 184, 174, 0.45);
+  background: rgba(142, 184, 174, 0.1);
+  max-width: 100%;
+}
+.ap-timing-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--chip-audio);
+  white-space: nowrap;
+}
+.ap-timing-value {
+  font-family: var(--mono);
+  font-size: clamp(0.95rem, 1.05vw, 1.2rem);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.ap-timing-value b { color: var(--chip-audio); font-weight: 600; }
+
 
 /* One-line how-to with the status messages beside it. */
 .ap-howto {
@@ -95,23 +123,50 @@ body.alert-page { height: 100vh; overflow: hidden; }
 .info-headline.quiet { color: var(--muted); }
 .info-part {
   display: grid;
-  grid-template-columns: 2.4rem 1fr;
-  gap: 0.15rem 0.7rem;
-  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: center;
+  text-align: left;
   padding-top: 0.7rem;
   border-top: 1px solid var(--line);
 }
-.info-icon {
-  grid-row: span 3;
-  display: grid;
-  place-items: center;
-  width: 2.4rem;
-  height: 2.4rem;
+.info-text { min-width: 0; }
+.info-thumb {
+  margin: 0;
+  width: clamp(150px, 11.5vw, 220px);
+  aspect-ratio: 4 / 3;
   border-radius: 10px;
-  background: var(--surface-2);
-  color: var(--copper-2);
+  overflow: hidden;
+  background: #0d0c0a;
+  border: 1px solid rgba(227, 154, 69, 0.45);
 }
-.info-icon svg { width: 1.4rem; height: 1.4rem; }
+.info-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.info-thumb.empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.3rem;
+  color: var(--faint);
+  font-size: 0.8rem;
+  border-style: dashed;
+  border-color: var(--line);
+}
+.info-thumb.empty svg { width: 1.6rem; height: 1.6rem; }
+.info-sound {
+  width: clamp(150px, 11.5vw, 220px);
+  height: 2.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-radius: 10px;
+  border: 1px dashed var(--line);
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+.info-sound svg.kind-icon { width: 1.3rem; height: 1.3rem; }
+.info-sound.on { border: 1px solid var(--chip-audio); background: rgba(142, 184, 174, 0.12); color: var(--chip-audio); }
+.wave-icon { width: 3.6rem; height: 1.6rem; }
 .info-caption { margin: 0; font-size: clamp(1.08rem, 1.15vw, 1.4rem); font-weight: 600; }
 .info-empty { margin: 0; color: var(--faint); font-size: clamp(1rem, 1.05vw, 1.25rem); }
 .info-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.25rem; }
@@ -138,20 +193,19 @@ body.alert-page { height: 100vh; overflow: hidden; }
 .info-none { margin: 0.2rem 0 0; color: var(--muted); font-size: clamp(1rem, 1.05vw, 1.25rem); }
 .info-hint { margin: 0.15rem 0 0; color: var(--faint); font-size: clamp(0.85rem, 0.8vw, 0.98rem); }
 .info-pending { margin: 0.2rem 0 0; color: var(--faint); font-size: 0.98rem; }
-.ap-badge {
-  align-self: flex-start;
-  margin: 0;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  background: rgba(142, 184, 174, 0.14);
-  color: var(--chip-audio);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-}
-
 /* Compact alert rows: two short lines each. */
 .ap-alerts { display: flex; flex-direction: column; gap: 0.45rem; }
-.ap-alerts h2 { margin-bottom: 0.1rem; }
+.ap-alerts { padding-top: 0; overflow: hidden; }
+.ap-alerts-title {
+  margin: 0 -1rem 0.25rem !important;
+  padding: 0.6rem 1rem;
+  background: linear-gradient(90deg, rgba(227, 154, 69, 0.95), rgba(227, 154, 69, 0.55));
+  color: #1a140d;
+  font-family: var(--sans) !important;
+  font-size: clamp(1.15rem, 1.25vw, 1.45rem) !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.01em;
+}
 .arow {
   --rule: var(--copper);
   display: grid;
@@ -339,6 +393,9 @@ body.alert-page { height: 100vh; overflow: hidden; }
   .ap-left { overflow: visible; }
   .ap-frames { grid-template-rows: none; }
   .frame-media { aspect-ratio: 4 / 3; flex: none; }
+  .ap-top { flex-wrap: wrap; }
+  .ap-timing { order: 3; margin: 0; flex-wrap: wrap; }
+  .ap-timing-value { white-space: normal; }
 }
 @media (max-width: 640px) {
   .ap-frames { grid-template-columns: repeat(2, minmax(0, 1fr)); }

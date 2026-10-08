@@ -3,7 +3,8 @@
 const STORAGE_KEY = "anemll-alert-rules-v2";
 const statusNode = document.getElementById("alert-status");
 const errorNode = document.getElementById("alert-error");
-const badge = document.getElementById("latency-badge");
+const timingValue = document.getElementById("timing-value");
+const alertsTitle = document.getElementById("alerts-title");
 const infoNode = document.getElementById("info");
 const infoBody = document.getElementById("info-body");
 const rulesNode = document.getElementById("rules");
@@ -23,6 +24,7 @@ const state = {
   busy: false,
   frameId: null,
   soundId: null,
+  queued: null,
 };
 
 /* ---------- small helpers ---------- */
@@ -247,17 +249,35 @@ function firedChips(result) {
   return parts;
 }
 
+function waveIcon() {
+  const bars = [5, 11, 7, 15, 9, 13, 6, 10, 4];
+  return `<svg class="wave-icon" viewBox="0 0 36 20" aria-hidden="true">${bars.map((h, i) =>
+    `<rect x="${i * 4}" y="${10 - h / 2}" width="2.4" height="${h}" rx="1.2" fill="currentColor"/>`).join("")}</svg>`;
+}
+
+/* The left visual of a result row: the selected photo, or a sound glyph. */
+function infoVisual(kind, item) {
+  if (kind === "frame") {
+    if (item && item.available && item.media_url) {
+      return `<figure class="info-thumb"><img src="${esc(item.media_url)}" alt="${esc(item.caption)}"></figure>`;
+    }
+    return `<div class="info-thumb empty">${cameraIcon()}<span>No frame</span></div>`;
+  }
+  if (item) return `<div class="info-sound on">${speakerIcon()}${waveIcon()}</div>`;
+  return `<div class="info-sound">${speakerIcon()}<span>Off</span></div>`;
+}
+
 function infoPart(kind, id, result) {
-  const icon = kind === "frame" ? cameraIcon() : speakerIcon();
   const label = kind === "frame" ? "Frame" : "Sound";
+  const item = id ? findItem(id) : null;
+  const visual = infoVisual(kind, item);
   if (!id) {
     const empty = kind === "frame" ? "No frame selected" : "No sound playing";
-    return `<div class="info-part"><span class="info-icon">${icon}</span><p class="info-empty">${empty}</p></div>`;
+    return `<div class="info-part info-${kind === "frame" ? "frame" : "audio"}">${visual}<div class="info-text"><p class="info-empty">${empty}</p></div></div>`;
   }
-  const item = findItem(id);
   const caption = `${label}: ${shortCaption(item ? item.caption : id)}`;
   if (!result) {
-    return `<div class="info-part"><span class="info-icon">${icon}</span><p class="info-caption">${esc(caption)}</p><p class="info-pending">Scoring…</p></div>`;
+    return `<div class="info-part info-${kind === "frame" ? "frame" : "audio"}">${visual}<div class="info-text"><p class="info-caption">${esc(caption)}</p><p class="info-pending">Running on the Neural Engine…</p></div></div>`;
   }
   const chips = firedChips(result);
   const pending = (result.rules || []).some((entry) => !ruleDecided(ruleById(entry.id)));
@@ -269,7 +289,7 @@ function infoPart(kind, id, result) {
     `Not an alert: “${esc(entry.label)}” ${formatScore(entry.score)} (${entry.high ? "above" : "below"} ${formatScore(entry.threshold)})`);
   const extra = [...hints.map(esc), ...compare];
   const hintLine = extra.length ? `<p class="info-hint">${extra.join(" · ")}</p>` : "";
-  return `<div class="info-part"><span class="info-icon">${icon}</span><p class="info-caption">${esc(caption)}</p>${verdict}${hintLine}</div>`;
+  return `<div class="info-part info-${kind === "frame" ? "frame" : "audio"}">${visual}<div class="info-text"><p class="info-caption">${esc(caption)}</p>${verdict}${hintLine}</div></div>`;
 }
 
 function renderInfo() {
@@ -292,6 +312,7 @@ function renderInfo() {
 /* ---------- compact alert rows ---------- */
 
 function renderRules() {
+  alertsTitle.textContent = `Configured alerts (${state.rules.length})`;
   rulesNode.innerHTML = state.rules.map((rule) => {
     const ref = rule.type === "photo" ? referenceFor(rule.id) : null;
     const thumb = ref && ref.available
@@ -419,8 +440,9 @@ function selectFrame(item) {
   }
   setError("");
   state.frameId = item.id;
+  delete state.scores[item.id];
   paintAll();
-  ensureScored();
+  clickScore(item.id);
 }
 
 function toggleSound(item) {
@@ -443,29 +465,34 @@ function toggleSound(item) {
     audio.currentTime = 0;
     audio.play().catch(() => {});
   }
+  delete state.scores[item.id];
   paintAll();
-  ensureScored();
+  clickScore(item.id);
 }
 
-/* Score whatever is selected and not scored yet; clicks during a request queue up. */
-async function ensureScored() {
-  if (state.busy) return;
-  const ids = [state.frameId, state.soundId].filter((id) => id && !state.scores[id]);
-  if (!ids.length) return;
-  const names = ids.map((id) => shortCaption(findItem(id).caption)).join(" + ");
-  await score(ids, `Scoring ${names}…`);
-  ensureScored();
+/* One click = one /alert/score request that re-runs the model for that item
+   (fresh=true). A click during a request waits; only the newest waits. */
+async function clickScore(id) {
+  if (state.busy) {
+    state.queued = id;
+    return;
+  }
+  await score([id], `Running ${shortCaption(findItem(id).caption)} on the Neural Engine…`, true);
+  const next = state.queued;
+  state.queued = null;
+  if (next) await clickScore(next);
 }
 
 /* ---------- scoring ---------- */
 
-async function score(ids, label) {
+async function score(ids, label, fresh = false) {
   if (state.busy) return;
   state.busy = true;
   setError("");
   setStatus(label || "Scoring…");
   try {
     if (state.calibrating) await state.calibrating;
+    const started = performance.now();
     const data = await api("/alert/score", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -473,9 +500,11 @@ async function score(ids, label) {
         item_ids: ids,
         rules: state.rules.map(wireRule),
         include_compare: true,
+        fresh,
       }),
     });
-    showLatency(data);
+    const totalMs = performance.now() - started;
+    if (fresh) showTiming(data, totalMs);
     absorb(data);
     setStatus("");
   } catch (err) {
@@ -486,12 +515,27 @@ async function score(ids, label) {
   }
 }
 
-/* Cached embeddings come back as 0 ms; say so instead of claiming 0 ms. */
-function showLatency(data) {
-  showBadge(badge, data);
-  if (data && Number(data.fresh_embeds) === 0) {
-    badge.textContent = latencyBadge(data).replace(/ · \d+ ms$/, " · cached");
-  }
+function formatMs(ms) {
+  const value = Number(ms);
+  if (!Number.isFinite(value)) return "—";
+  if (value >= 10) return `${Math.round(value)} ms`;
+  if (value >= 1) return `${value.toFixed(1)} ms`;
+  return `${value.toFixed(2)} ms`;
+}
+
+/* Header readout for a click: Neural Engine time per tower, the cosine
+   matching, and the whole request as the browser saw it. */
+function showTiming(data, totalMs) {
+  const timing = (data && data.timing) || {};
+  const towers = timing.towers || {};
+  const parts = ["vision", "audio", "text"]
+    .filter((name) => towers[name] != null)
+    .map((name) => `<b>${name}</b> ${formatMs(towers[name])}`);
+  if (timing.match_ms != null) parts.push(`<b>match</b> ${formatMs(timing.match_ms)}`);
+  parts.push(`<b>total</b> ${formatMs(totalMs)}`);
+  const where = data && data.placement === "fullyOnANE" ? "Neural Engine" : (data && data.backend) || "";
+  timingValue.innerHTML = parts.join(" · ");
+  timingValue.title = where ? `Model time on the ${where}; total is the whole request` : "";
 }
 
 function absorb(data) {
@@ -667,7 +711,7 @@ function renderAdvanced() {
       <button type="button" id="add-photo">Add photo alert</button>
       <button type="button" id="reset-alerts">Reset to the four presets</button>
     </div>
-    <p class="adv-note" id="photo-hint">Drop a photo on a frame, or a sound on a clip, to replace that sample. Cosine on L2-normalized vectors; the badge is the embed time for that click.</p>`;
+    <p class="adv-note" id="photo-hint">Drop a photo on a frame, or a sound on a clip, to replace that sample. Cosine on L2-normalized vectors. The readout at the top is the Neural Engine time for the last click.</p>`;
 
   advancedBody.querySelectorAll("[data-name]").forEach((input) => {
     input.addEventListener("input", () => {
@@ -850,7 +894,6 @@ async function resetAll() {
   state.compareThreshold = state.catalog.compare.threshold;
   saveRules();
   await reloadCatalog();
-  ensureScored();
 }
 
 async function reloadCatalog() {

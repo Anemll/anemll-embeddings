@@ -105,7 +105,10 @@ class CoreAIWorkerClient:
         reply = self._request(
             {"cmd": "forward", "tower": tower, "npz": str(npz), "out": str(out)}
         )
-        return np.load(out), float(reply.get("latency_ms") or 0.0)
+        elapsed = float(reply.get("latency_ms") or 0.0)
+        # One line per Neural Engine forward, so a click's inferences can be counted.
+        print(f"[ane] forward tower={tower} {elapsed:.1f} ms", file=sys.stderr, flush=True)
+        return np.load(out), elapsed
 
     def close(self) -> None:
         if self._proc is None:
@@ -373,24 +376,28 @@ class CoreAIBackend:
             raise ValueError(f"audio sample rate {sample_rate} != {AUDIO_SR}")
         limit = self._window_samples()
         if samples.size <= limit:
-            vector, elapsed = self._embed_audio_window(samples)
+            vector, audio_ms, text_ms = self._embed_audio_window(samples)
             return EmbedResult(
                 vector=vector,
-                latency_ms=elapsed,
+                latency_ms=audio_ms + text_ms,
                 backend=self.name,
                 modality="audio",
                 placement=self.placement,
                 slices=1,
+                extra={"audio_ms": round(audio_ms, 3), "text_ms": round(text_ms, 3)},
             )
         vectors = []
-        elapsed = 0.0
+        audio_total = 0.0
+        text_total = 0.0
         for start in range(0, samples.size, limit):
             piece = samples[start : start + limit]
             if piece.size < AUDIO_SR // 10:
                 break
-            vec, ms = self._embed_audio_window(piece)
+            vec, audio_ms, text_ms = self._embed_audio_window(piece)
             vectors.append(vec)
-            elapsed += ms
+            audio_total += audio_ms
+            text_total += text_ms
+        elapsed = audio_total + text_total
         if not vectors:
             raise ValueError(f"audio too short (min {self.min_audio_ms()} ms)")
         mean = np.mean(np.stack(vectors, axis=0), axis=0)
@@ -401,9 +408,10 @@ class CoreAIBackend:
             modality="audio",
             placement=self.placement,
             slices=len(vectors),
+            extra={"audio_ms": round(audio_total, 3), "text_ms": round(text_total, 3)},
         )
 
-    def _embed_audio_window(self, wav: np.ndarray) -> tuple[np.ndarray, float]:
+    def _embed_audio_window(self, wav: np.ndarray) -> tuple[np.ndarray, float, float]:
         ain = self._proc(text="<|audio|>", audio=np.asarray(wav, dtype=np.float32), return_tensors="pt")
         features = ain["input_features"].detach().cpu().numpy()
         src_mask = ain["input_features_mask"].detach().cpu().numpy()
@@ -424,7 +432,7 @@ class CoreAIBackend:
         ids, mask = self._tokenize(expanded)
         embeds = self._scatter(ids, image_soft=None, audio_soft=soft)
         vector, text_ms = self._run_text(embeds, mask)
-        return vector, float(audio_ms) + float(text_ms)
+        return vector, float(audio_ms), float(text_ms)
 
     def _frame_count(self, n_samples: int) -> int:
         wav = np.zeros(max(0, int(n_samples)), dtype=np.float32)
