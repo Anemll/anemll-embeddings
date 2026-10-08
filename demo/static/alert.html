@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Alert · ANE Embeddings</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/alert.css">
 </head>
-<body>
-  <div class="wrap">
-    <header class="top">
+<body class="alert-page">
+  <div class="ap">
+    <header class="top ap-top">
       <div class="brand">
         <strong>ANE Embeddings</strong>
-        <span>Camera alert · same embedding space for pictures, sound, and words</span>
+        <span>Camera alert · one embedding space for pictures, sound, and words</span>
       </div>
       <nav>
         <a href="/">Search</a>
@@ -20,58 +21,47 @@
         <a href="/alert" aria-current="page">Alert</a>
       </nav>
     </header>
-    <p class="banner" id="banner">Loading backend…</p>
 
-    <section class="panel howto" aria-labelledby="howto-title">
-      <div class="toolbar">
-        <h2 id="howto-title">How to play</h2>
-        <span class="ane-badge" id="latency-badge" hidden>on ANE · — ms</span>
+    <div class="ap-howto">
+      <p class="ap-steps"><b>1</b> These are your alerts <b>2</b> Pick a frame and a sound <b>3</b> Watch which alerts fire</p>
+      <p class="ap-line" id="banner" role="status">Loading backend…</p>
+      <p class="ap-line status" id="alert-status" role="status"></p>
+      <p class="ap-line error" id="alert-error" role="alert"></p>
+    </div>
+
+    <main class="ap-main">
+      <div class="ap-left">
+        <section class="ap-panel ap-info" id="info" aria-live="polite" aria-labelledby="info-title">
+          <h2 class="sr-only" id="info-title">Result</h2>
+          <div id="info-body"></div>
+          <p class="ap-badge" id="latency-badge" hidden>on ANE · — ms</p>
+        </section>
+
+        <section class="ap-panel ap-alerts" aria-labelledby="alerts-title">
+          <h2 id="alerts-title">Your alerts</h2>
+          <div id="rules"></div>
+        </section>
+
+        <details class="ap-panel ap-advanced" id="advanced">
+          <summary>Advanced: rules, thresholds, reference photo</summary>
+          <div id="advanced-body"></div>
+        </details>
       </div>
-      <ol class="steps">
-        <li><span>1</span> These are your alerts.</li>
-        <li><span>2</span> Click what the camera sees or hears.</li>
-        <li><span>3</span> Watch which alerts fire.</li>
-      </ol>
-      <div class="row">
-        <button class="primary" type="button" id="score-all">Score everything</button>
-      </div>
-      <p class="legend" title="Score = how similar in meaning">
-        <span class="swatch high"></span> green = alert fires
-        <span class="swatch low"></span> gray = below threshold
-      </p>
-      <p class="hint">Score = how similar in meaning. The model compares meaning, so describe the scene rather than giving a command.</p>
-      <p class="status" id="alert-status" role="status"></p>
-      <p class="error" id="alert-error" role="alert"></p>
-      <p class="hint" id="fetch-hint" hidden></p>
-    </section>
 
-    <section class="panel" aria-labelledby="alerts-title">
-      <h2 id="alerts-title">Your alerts</h2>
-      <p class="hint">Fixed for this demo. The lines are already set, and the page tightens them from these samples. Click a frame or a sound.</p>
-      <div class="rule-list" id="rules"></div>
-    </section>
-
-    <section class="panel" aria-labelledby="feed-title">
-      <h2 id="feed-title">Camera feed</h2>
-      <p class="hint">Click a frame to score it against every alert.</p>
-      <div class="alert-grid" id="frames"></div>
-    </section>
-
-    <section class="panel" aria-labelledby="sounds-title">
-      <h2 id="sounds-title">Sounds</h2>
-      <p class="hint">Click a clip to play it and score it. Each sound also shows how close it is to “a cat meowing”. That extra meter is not one of the alerts above.</p>
-      <div class="sound-row" id="sounds"></div>
-    </section>
-
-    <details class="panel advanced" id="advanced">
-      <summary>Advanced / customize</summary>
-      <div id="advanced-body"></div>
-    </details>
-
-    <footer class="note">
-      Sparky is visual-similarity matching to the reference photo, not identity verification. Another black cat may also match.
-      Cosine on L2-normalized vectors. The badge is the embed time for that click.
-    </footer>
+      <section class="ap-panel ap-feed" aria-labelledby="feed-title">
+        <div class="ap-feed-head">
+          <h2 id="feed-title">Front door cam</h2>
+          <span class="ap-sub">Pick one frame</span>
+        </div>
+        <div class="ap-frames" id="frames" role="radiogroup" aria-labelledby="feed-title"></div>
+        <div class="ap-feed-head">
+          <h2 id="sounds-title">Microphone</h2>
+          <span class="ap-sub">Click a sound to play it; click again to turn it off</span>
+        </div>
+        <div class="ap-sounds" id="sounds" aria-labelledby="sounds-title"></div>
+        <p class="ap-note" id="fetch-hint" hidden></p>
+      </section>
+    </main>
   </div>
   <script src="/static/common.js"></script>
   <script src="/static/alert.js"></script>
