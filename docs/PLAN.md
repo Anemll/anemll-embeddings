@@ -1,5 +1,7 @@
 # EmbeddingGemma 2 → Core ML / ANE conversion plan
 
+> **Status.** This is the original conversion plan (text-first Core ML, multimodal “later”). That work landed. The **primary path is now Core AI multimodal packages** that run fully on the Neural Engine on an M4 Pro / macOS 27.0. Start with the [README](../README.md). Why fp16 and the attention/mask rewrites exist: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Tickets T1–T10 and Phase 2 are done. Some “later” / “non-goal” lines below are historical — do not take them over the README.
+
 Concrete phased plan for converting Google’s **EmbeddingGemma 2** to Core ML for the Apple Neural Engine, using ANEMLL-forge as a **read-only** source of ANE lessons—not as a drop-in converter.
 
 **Checkpoint:** [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (prefer official; ~1.53 GB text safetensors when modality encoders are omitted).  

@@ -19,7 +19,7 @@ from src.export_utils import (  # noqa: E402
     package_stem,
     pad_to_seq_len,
 )
-from src.trace_patches import _rotate_half_chunk  # noqa: E402
+from src.trace_patches import _rotate_half_chunk, repeat_kv_index  # noqa: E402
 
 
 def _fail(msg: str) -> None:
@@ -80,6 +80,20 @@ def test_sliding_window_inclusive() -> None:
 def test_package_stem() -> None:
     if package_stem(512) != "embeddinggemma2-text-s512":
         _fail(package_stem(512))
+    if package_stem(512, precision="FLOAT16") != "embeddinggemma2-text-s512-fp16":
+        _fail(package_stem(512, precision="FLOAT16"))
+
+
+def test_repeat_kv_index_matches_expand() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(1, 2, 8, 4)
+    n_rep = 2
+    ref = x.unsqueeze(2).expand(1, 2, n_rep, 8, 4).reshape(1, 4, 8, 4)
+    got = repeat_kv_index(x, n_rep)
+    if not torch.equal(got, ref):
+        _fail(f"repeat_kv_index {tuple(got.shape)}")
+    if not torch.equal(repeat_kv_index(x, 1), x):
+        _fail("n_rep=1 should be identity")
 
 
 def test_rotate_half_chunk() -> None:
@@ -98,6 +112,7 @@ def main() -> int:
         test_full_bias_keys_only,
         test_sliding_window_inclusive,
         test_package_stem,
+        test_repeat_kv_index_matches_expand,
         test_rotate_half_chunk,
     ]
     for fn in tests:

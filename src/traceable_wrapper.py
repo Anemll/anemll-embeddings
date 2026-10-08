@@ -104,3 +104,33 @@ class TraceableEmbeddingGemma2(nn.Module):
         if self.normalize:
             emb = F.normalize(emb, p=2, dim=-1)
         return emb
+
+
+class TraceableEmbeddingGemma2Embeds(TraceableEmbeddingGemma2):
+    """``inputs_embeds`` [B, S, 512] + mask → L2 embedding [B, 768].
+
+    Same pool-then-project graph as the ids package. Host looks up token
+    rows and scatters vision/audio soft tokens before this graph.
+    """
+
+    def forward(
+        self,
+        inputs_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        # Package I/O may be f16 (ANE-legal). Encoder stays f32 — do not
+        # convert with cast_to_16_bit_precision (that zeroed vision).
+        # Keep mask f16 at I/O so anec.not_equal_zero sees f16, not f32.
+        inputs_embeds = inputs_embeds.to(dtype=torch.float32)
+        masks = self._attention_mapping(attention_mask)
+        out = self.text_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=masks,
+            position_ids=self.position_ids,
+        )
+        hidden = _last_hidden(out)
+        pooled = self.pool(hidden, attention_mask)
+        emb = self.projection(pooled)
+        if self.normalize:
+            emb = F.normalize(emb, p=2, dim=-1)
+        return emb

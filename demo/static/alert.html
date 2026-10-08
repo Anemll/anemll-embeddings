@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alert · ANE Embeddings</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/alert.css">
+</head>
+<body class="alert-page">
+  <div class="ap">
+    <header class="top ap-top">
+      <div class="brand">
+        <strong>ANE Embeddings</strong>
+        <span>Camera alert · one embedding space for pictures, sound, and words</span>
+      </div>
+      <div class="ap-timing" id="timing" aria-live="polite">
+        <span class="ap-timing-label">Last click</span>
+        <span class="ap-timing-value" id="timing-value">click a frame or a sound</span>
+      </div>
+      <nav>
+        <a href="/">Search</a>
+        <a href="/heatmap">Matrix</a>
+        <a href="/heard">Heard</a>
+        <a href="/alert" aria-current="page">Alert</a>
+      </nav>
+    </header>
+
+    <div class="ap-howto">
+      <p class="ap-steps"><b>1</b> These are your alerts <b>2</b> Pick a frame and a sound <b>3</b> Watch which alerts fire</p>
+      <p class="ap-line" id="banner" role="status">Loading backend…</p>
+      <p class="ap-line status" id="alert-status" role="status"></p>
+      <p class="ap-line error" id="alert-error" role="alert"></p>
+    </div>
+
+    <main class="ap-main">
+      <div class="ap-left">
+        <section class="ap-panel ap-info" id="info" aria-live="polite" aria-labelledby="info-title">
+          <h2 class="sr-only" id="info-title">Result</h2>
+          <div id="info-body"></div>
+        </section>
+
+        <section class="ap-panel ap-alerts" aria-labelledby="alerts-title">
+          <h2 class="ap-alerts-title" id="alerts-title">Configured alerts</h2>
+          <div id="rules"></div>
+        </section>
+
+        <details class="ap-panel ap-advanced" id="advanced">
+          <summary>Advanced: rules, thresholds, reference photo</summary>
+          <div id="advanced-body"></div>
+        </details>
+      </div>
+
+      <section class="ap-panel ap-feed" aria-labelledby="feed-title">
+        <div class="ap-feed-head">
+          <h2 id="feed-title">Front door cam</h2>
+          <span class="ap-sub">Pick one frame</span>
+        </div>
+        <div class="ap-frames" id="frames" role="radiogroup" aria-labelledby="feed-title"></div>
+        <div class="ap-feed-head">
+          <h2 id="sounds-title">Microphone</h2>
+          <span class="ap-sub">Click a sound to play it; click again to turn it off</span>
+        </div>
+        <div class="ap-sounds" id="sounds" aria-labelledby="sounds-title"></div>
+        <p class="ap-note" id="fetch-hint" hidden></p>
+      </section>
+    </main>
+  </div>
+  <script src="/static/common.js"></script>
+  <script src="/static/alert.js"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "Full 740M EmbeddingGemma 2 multimodal ST fixtures. Synthetic media is generated under ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/media (not in git). Prefixes apply to text only.",
+  "media_subdir": "fixtures/media",
+  "embeddings_name": "multimodal_embeddings.npy",
+  "meta_name": "multimodal_reference_meta.json",
+  "prompts": [
+    {
+      "id": "mm_text_sq",
+      "kind": "text",
+      "prompt_name": "SearchQuery",
+      "text": "What causes the northern lights?"
+    },
+    {
+      "id": "mm_image",
+      "kind": "image",
+      "prompt_name": null,
+      "text": "<|image|>",
+      "image": ["aurora.png"]
+    },
+    {
+      "id": "mm_image_caption",
+      "kind": "interleaved",
+      "prompt_name": null,
+      "text": "title: aurora | text: Green sky glow. <|image|>",
+      "image": ["aurora.png"]
+    },
+    {
+      "id": "mm_audio",
+      "kind": "audio",
+      "prompt_name": null,
+      "text": "<|audio|>",
+      "audio": "tone_a4.wav"
+    },
+    {
+      "id": "mm_video",
+      "kind": "video",
+      "prompt_name": null,
+      "text": "<|video|>",
+      "video_frames": ["video_f0.png", "video_f1.png", "video_f2.png"]
+    },
+    {
+      "id": "mm_mix",
+      "kind": "interleaved",
+      "prompt_name": null,
+      "text": "tone then picture <|audio|> <|image|>",
+      "audio": "tone_a4.wav",
+      "image": ["aurora.png"]
+    }
+  ]
+}

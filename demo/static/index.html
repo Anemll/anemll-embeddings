@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search · ANE Embeddings</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <strong>ANE Embeddings</strong>
+        <span>EmbeddingGemma 2 · vision, audio, and text on the Neural Engine</span>
+      </div>
+      <nav>
+        <a href="/" aria-current="page">Search</a>
+        <a href="/heatmap">Matrix</a>
+        <a href="/heard">Heard</a>
+        <a href="/alert">Alert</a>
+      </nav>
+    </header>
+    <p class="banner" id="banner">Loading backend…</p>
+    <div class="layout">
+      <section class="panel" id="library-panel">
+        <h2>Library</h2>
+        <p class="hint">Library: drop photos, sounds, or captions to add them.</p>
+        <div class="drop" id="drop">Drop images, audio, or .txt captions anywhere in this panel</div>
+        <form id="caption-form" class="row">
+          <input id="caption" type="text" name="text" placeholder="Add a caption" autocomplete="off">
+          <button class="primary" type="submit">Index text</button>
+        </form>
+        <div class="row">
+          <button type="button" id="samples">Load samples</button>
+          <button type="button" id="refresh">Refresh</button>
+        </div>
+        <p class="status" id="library-status" role="status"></p>
+        <p class="error" id="library-error" role="alert"></p>
+        <div class="cards" id="library"></div>
+      </section>
+      <section class="panel" id="search-panel">
+        <div class="toolbar">
+          <h2>Search</h2>
+          <span class="ane-badge" id="latency-badge" hidden>on ANE · — ms</span>
+        </div>
+        <p class="hint">Search: drop an image or sound, type text, or use the mic to find the closest library items across all modalities.</p>
+        <form id="query-form" class="row">
+          <input id="query" type="text" name="text" placeholder="Search the library" autocomplete="off">
+          <button class="primary" type="submit">Search</button>
+        </form>
+        <div class="row">
+          <label>File <input id="query-file" type="file" accept="image/*,audio/*,.txt,.text"></label>
+          <button type="button" id="mic">Record query</button>
+        </div>
+        <div class="row filters" role="group" aria-label="Result filters">
+          <button type="button" data-filter="" aria-pressed="true">All</button>
+          <button type="button" data-filter="image" aria-pressed="false">Images</button>
+          <button type="button" data-filter="audio" aria-pressed="false">Audio</button>
+          <button type="button" data-filter="text" aria-pressed="false">Text</button>
+          <label>Top <input id="k" type="number" min="1" max="50" value="6"></label>
+        </div>
+        <p class="error" id="error" role="alert"></p>
+        <h3>Your query</h3>
+        <div id="query-preview"><p class="hint">No query yet.</p></div>
+        <h3>Closest matches in the library</h3>
+        <div class="results" id="results"></div>
+      </section>
+    </div>
+    <footer class="note">Cosine on L2-normalized vectors. The badge is the embed time for that query.</footer>
+  </div>
+  <script src="/static/common.js"></script>
+  <script src="/static/search.js"></script>
+</body>
+</html>
