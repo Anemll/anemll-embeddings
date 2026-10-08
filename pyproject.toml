@@ -12,6 +12,7 @@ license = "MIT"
 dependencies = [
     "numpy>=1.26",
     "pillow>=10",
+    "huggingface_hub>=0.23",
 ]
 
 [project.optional-dependencies]
@@ -26,4 +27,4 @@ conversion = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["api*", "model*", "demo*", "samples*"]
+include = ["api*", "model*", "demo*", "samples*", "scripts*"]

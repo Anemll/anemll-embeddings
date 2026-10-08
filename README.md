@@ -16,6 +16,7 @@ One input (for example the phrase “white house”) always gives exactly one ve
 
 ## What’s included
 
+- Public Neural Engine packages on [Hugging Face](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus `scripts/download_models.py` and `scripts/warmup.py`
 - Scripts that export EmbeddingGemma 2’s vision, audio, and text towers to Core AI `.aimodel` packages
 - Host code that tokenizes text, runs those packages, and inserts image/audio tokens into the text model
 - A local demo: search, a similarity heatmap, “search what I heard”, and camera alerts (see [Try the demo](#try-the-demo) and [demo/README.md](demo/README.md))
@@ -28,73 +29,65 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | --- | --- |
 | `model/` | Export / convert EmbeddingGemma 2 to Core AI / ANE: wrappers, ANE graph patches, specialize and inspect tools, parity and cosine checks |
 | `api/` | Importable Python runtime: `from api import Embedder, cosine` — see [api/README.md](api/README.md) |
+| `scripts/` | Download the public Hugging Face packages and warm them up on this Mac |
 | `samples/` | Small runnable examples plus corpus / alert fetch scripts and manifests (no large binaries in git) |
 | `demo/` | FastAPI showcase server and static pages only (imports `api`) |
 | `docs/` | How it works, historical plan, diagrams |
 | `tests/` | Unit and API tests |
 
-**Model weights are not in this repo.** You download EmbeddingGemma 2 yourself and check the license and terms on the model card.
+**Model weights are not in this git repo.** The converted Neural Engine packages are on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `8ceba04`). The host still needs [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (revision `914f7f89142e33e77833254d9c9b90c3cef7303b`) for the tokenizer, processor, and embedding lookup. Both are Apache-2.0 under Google’s terms, not MIT.
 
 ## Requirements
 
 - An Apple Silicon Mac. The numbers below were measured on an **M4 Pro, macOS 27.0**.
 - Python with `torch`, `transformers`, `sentence-transformers`, and `pillow`
 - A Python that can `import coreai.runtime`, pointed at by `ANEMLL_COREAI_PYTHON` (typically the `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge))
-- The official checkpoint: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (~740M, vision + audio + text)
+- The official checkpoint: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (~740M, vision + audio + text) and the converted packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane)
 
 ## Quick start
 
-Set these before any download or export. If you skip them, the scripts fall back to paths on one developer machine and will not find your files.
+Validated on an **M4 Pro, macOS 27.0**. On **macOS 27.2 / M5** the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU; audio still runs on the Neural Engine.
 
-```sh
-export ANEMLL_EMBEDDINGS_MODEL=/path/to/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/path/to/artifacts
-export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
-export HF_HOME=$HOME/.cache/huggingface
-export HUGGINGFACE_HUB_CACHE=$HOME/.cache/huggingface
-```
+You need a Python that can `import coreai.runtime` (typically `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge)).
 
 1. **Install** (in a virtualenv):
 
    ```sh
    python -m pip install -e ".[demo]"
    python -m pip install torch transformers sentence-transformers pillow
+   export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
    ```
 
-2. **Get the weights** (not committed here; read the Hugging Face terms first):
+2. **Download** the public ANE packages and the Google host checkpoint (idempotent). Layout on disk is `ane/<name>/<name>.aimodel/` plus a host copy of `google/embeddinggemma-2`; the script then creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects:
 
    ```sh
-   huggingface-cli download google/embeddinggemma-2 --local-dir "$ANEMLL_EMBEDDINGS_MODEL"
+   python scripts/download_models.py
+   # or: ./scripts/download_models.sh
    ```
 
-3. **Export the packages**, or skip this if you already have them under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`:
+   Copy the `export` lines it prints (or run them). Default dest is `~/.anemll-embeddings` (`--dest` to override). That fetches [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) at `8ceba04` (`vision_s280`, `audio_s280`, `text_embeds_s320`) and [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b`.
+
+3. **Warm up** once on this Mac. There is **no** per-hardware compile to ship: Core AI specializes each tower for the local chip on first load and caches it (`~/Library/Caches/coreai-cache`). The first run is slow; later loads are fast. The script reports whether each tower is fully on the ANE, plus load and first-run time:
 
    ```sh
-   python model/export_coreai_towers.py \
-     --tower vision --tower audio --tower text --tower text_embeds
+   python scripts/warmup.py
    ```
 
-   With no `--tower` flags the script exports vision, audio, and the ids-only text package. Add `--tower text_embeds` if you want captions or mixed image/audio. That writes:
-
-   - `vision_s280.aimodel` — pixels → 280 × 512 image tokens
-   - `audio_s280.aimodel` — 280 × 128 mel frames → 70 × 512 audio tokens
-   - `text_s128.aimodel` — token ids → 768-d vector (plain text)
-   - `text_embeds_s320.aimodel` — already-looked-up tokens, including image/audio, → 768-d vector
-
-   This is not `forge.py convert`. The Core AI Python is used only as the converter.
-
-4. **Run a first embedding** (load each package and do one forward on the Neural Engine):
+4. **Run a sample or the demo:**
 
    ```sh
-   python model/smoke_coreai_towers.py --compute ane \
-     --tower vision --tower audio --tower text --tower text_embeds
+   python samples/embed_sentence.py "a red fox"
+   python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
    ```
 
-   Or compare a few fixture cases against the original PyTorch model:
+To re-export packages yourself (optional; not needed if you used the download script):
 
-   ```sh
-   ANEMLL_COREAI_COMPUTE=ane python model/parity_coreai_host.py
-   ```
+```sh
+python model/export_coreai_towers.py \
+  --tower vision --tower audio --tower text --tower text_embeds
+```
+
+That writes `vision_s280.aimodel` (pixels → 280 × 512 tokens), `audio_s280.aimodel` (280 × 128 mel frames → 70 × 512 tokens), `text_s128.aimodel` (ids-only 768-d; not in the public HF pack), and `text_embeds_s320.aimodel` (looked-up tokens, including image/audio, → 768-d). This is not `forge.py convert`.
 
 ## Python usage
 
@@ -157,8 +150,7 @@ The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 - On macOS 27.2 (M5, newer Neural Engine) the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU. Audio still runs on the Neural Engine.
 - Audio clips must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips error instead of returning a bad vector.
 - There is no video package yet. `<|video|>` fixtures are skipped.
-- Weights are not in git. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms before you download.
-- Default script paths (`ANEMLL_EMBEDDINGS_MODEL`, artifacts, Hugging Face cache, `ANEMLL_COREAI_PYTHON`) point at one developer machine. Set the environment variables above.
+- Weights are not in git. Use `scripts/download_models.py`. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms and the [ANE package card](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) before you download.
 - The demo’s microphone needs `http://127.0.0.1` or HTTPS. A plain `http://<lan-ip>` page cannot record.
 
 ## Try the demo
@@ -166,6 +158,8 @@ The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 This demo shows EmbeddingGemma 2 running on your Mac’s Neural Engine. It turns photos, sounds, and text into embeddings — lists of numbers that capture meaning — so things that mean the same thing land close together, even across types. Everything stays on your Mac.
 
 ```sh
+python scripts/download_models.py
+python scripts/warmup.py
 python -m pip install -r demo/requirements.txt
 python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
 ```
@@ -213,4 +207,4 @@ I/O names are fixed: `input_ids` and `attention_mask` in (`[1, S]`, int32), `emb
 
 The software in this repository is [MIT](LICENSE), Copyright (c) 2026 Anemll LLC.
 
-The model weights — EmbeddingGemma 2 and our Core AI conversions, published at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) — are under Google's license terms for the base model, not MIT.
+The model weights — EmbeddingGemma 2 and the Core AI conversions at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) — are **Apache-2.0 under Google’s terms** for the base model, not MIT. See that card’s `LICENSE` and `NOTICE`.

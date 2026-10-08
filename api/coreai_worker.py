@@ -211,6 +211,7 @@ async def _load_all(packages: dict[str, str], compute: str) -> dict:
         if not pkg.exists():
             raise FileNotFoundError(f"missing {key} package: {pkg}")
         _log(f"load {key} {pkg} spec={spec}")
+        t_load = time.perf_counter()
         if opts is not None:
             model = await AIModel.load(pkg, specialization_options=opts)
         else:
@@ -218,6 +219,7 @@ async def _load_all(packages: dict[str, str], compute: str) -> dict:
         names = list(model.function_names)
         fn_name = entry if entry in names else names[0]
         fn = model.load_function(fn_name)
+        load_ms = (time.perf_counter() - t_load) * 1000.0
         dtypes = _desc_dtypes(fn)
         dummy_key = "text_embeds" if key == "text" else key
         feed_np = dummy_numpy_inputs(dummy_key, dtypes)
@@ -229,13 +231,17 @@ async def _load_all(packages: dict[str, str], compute: str) -> dict:
         loaded[key] = fn
         towers[fn_name] = {
             "loaded": True,
+            "load_ms": load_ms,
             "warmup_ms": warmup_ms,
             "placement": place,
             "simulated": False,
             "entry": fn_name,
             "specialization": spec,
         }
-        _log(f"ready {fn_name} warmup_ms={warmup_ms:.1f} placement={place}")
+        _log(
+            f"ready {fn_name} load_ms={load_ms:.1f} warmup_ms={warmup_ms:.1f} "
+            f"placement={place}"
+        )
     places = [row["placement"] for row in towers.values()]
     overall = places[0] if places and all(item == places[0] for item in places) else "mixed"
     return {"functions": loaded, "towers": towers, "placement": overall, "specialization": spec}
