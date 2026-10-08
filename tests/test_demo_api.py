@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 from pathlib import Path
 
@@ -20,10 +22,18 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from _coreai_run_npy import parity_compute  # noqa: E402
+import demo.coreai_worker as coreai_worker  # noqa: E402
 from demo.backends.coreai import apply_compute_env  # noqa: E402
+from demo.coreai_worker import (  # noqa: E402
+    _manifest_label,
+    _placement,
+    manifest_label_for_package,
+    package_main_hash_hex,
+)
 from demo.feeds import audio_tower_feed  # noqa: E402
+from demo.scripts.fetch_corpus import _trim_with_wave, audio_skip_reason, fetch  # noqa: E402
 from demo.server import create_app  # noqa: E402
-from demo.settings import server_compute  # noqa: E402
+from demo.settings import DEFAULT_PORT, server_compute  # noqa: E402
 
 
 def _fail(msg: str) -> None:
@@ -241,6 +251,9 @@ def test_api(tmp: Path) -> None:
 
 
 def test_compressed_audio(tmp: Path) -> None:
+    if shutil.which("ffmpeg") is None:
+        print("SKIP test_compressed_audio (ffmpeg not installed)")
+        return
     app = create_app(backend="mock", data_dir=tmp / "enc", compute="cpu")
     webm = tmp / "tone.webm"
     ogg = tmp / "tone.ogg"
@@ -279,12 +292,117 @@ def test_compressed_audio(tmp: Path) -> None:
                 _fail(response.text)
 
 
+def _write_tone(path: Path, seconds: float, rate: int = 16000) -> None:
+    n = int(seconds * rate)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "w") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b"\x00\x00" * n)
+
+
+def test_wave_trim_and_missing_converter(tmp: Path) -> None:
+    src = tmp / "long.wav"
+    dest = tmp / "short.wav"
+    _write_tone(src, 10.0)
+    _trim_with_wave(src, dest, seconds=8)
+    with wave.open(str(dest), "r") as handle:
+        if handle.getframerate() != 16000 or handle.getnframes() != 16000 * 8:
+            _fail(f"trim {handle.getframerate()} {handle.getnframes()}")
+    if shutil.which("ffmpeg") or shutil.which("afconvert"):
+        if audio_skip_reason() is not None:
+            _fail("converter present but skip reason set")
+    else:
+        reason = audio_skip_reason() or ""
+        if "afconvert" not in reason:
+            _fail(reason)
+
+
+def test_port_and_artifacts_guard(tmp: Path) -> None:
+    if DEFAULT_PORT != 8766:
+        _fail(f"default port {DEFAULT_PORT}")
+    art = tmp / "artifacts"
+    art.mkdir(parents=True)
+    try:
+        create_app(backend="mock", data_dir=art / "demo", artifacts=art, compute="cpu")
+        _fail("data dir inside artifacts was accepted")
+    except ValueError as exc:
+        if "artifacts" not in str(exc):
+            _fail(str(exc))
+    if (art / "demo").exists():
+        _fail("store was created inside artifacts")
+    saved = os.environ.get("ANEMLL_EMBEDDINGS_ARTIFACTS")
+    os.environ["ANEMLL_EMBEDDINGS_ARTIFACTS"] = str(art)
+    try:
+        fetch(art / "corpus", limit_images=0, limit_audio=0)
+        _fail("corpus dest inside artifacts was accepted")
+    except ValueError as exc:
+        if "artifacts" not in str(exc):
+            _fail(str(exc))
+    finally:
+        if saved is None:
+            os.environ.pop("ANEMLL_EMBEDDINGS_ARTIFACTS", None)
+        else:
+            os.environ["ANEMLL_EMBEDDINGS_ARTIFACTS"] = saved
+    if (art / "corpus").exists():
+        _fail("corpus was created inside artifacts")
+    outside = tmp / "demo-data"
+    create_app(backend="mock", data_dir=outside, artifacts=art, compute="cpu")
+    if not (outside / "index.json").exists() and not outside.is_dir():
+        _fail("outside data dir was not created")
+
+
+class _Silent:
+    _debug_infos = b"{}"
+
+
+def test_package_hash_manifest(tmp: Path) -> None:
+    digest = "ab" * 32
+    pkg = tmp / "vision_s280.aimodel"
+    pkg.mkdir(parents=True)
+    (pkg / "main.hash").write_bytes(bytes.fromhex(digest))
+    if package_main_hash_hex(pkg) != digest:
+        _fail(package_main_hash_hex(pkg) or "no hash")
+    cache = tmp / "coreai-cache"
+    own = cache / "aa" / "bb" / "cc" / digest / "model.aimodelx" / "spec" / "manifest.plist"
+    other = cache / "11" / "22" / "33" / ("cd" * 32) / "model.aimodelx" / "spec" / "manifest.plist"
+    own.parent.mkdir(parents=True)
+    other.parent.mkdir(parents=True)
+    own.write_bytes(b"mps.fullyPlacedOnANE")
+    other.write_bytes(b"gpu only")
+    old = time.time() - 10_000
+    os.utime(own, (old, old))
+    os.utime(other, None)
+    label = manifest_label_for_package(pkg, cache)
+    if label != "fullyOnANE":
+        _fail(f"hash lookup {label}")
+    saved = coreai_worker.CACHE
+    coreai_worker.CACHE = cache
+    try:
+        placed = _placement(_Silent(), time.time(), pkg)
+    finally:
+        coreai_worker.CACHE = saved
+    if placed != "fullyOnANE":
+        _fail(f"placement {placed}")
+    bare = tmp / "nohash.aimodel"
+    bare.mkdir()
+    if package_main_hash_hex(bare) is not None:
+        _fail("missing main.hash")
+    fallback = _manifest_label(time.time() - 5, cache)
+    if fallback != "GPU":
+        _fail(f"fallback {fallback}")
+
+
 def main() -> int:
     tests = [test_compute_defaults, test_audio_keep_mask_not_all_ones]
     with tempfile.TemporaryDirectory(prefix="anemll-demo-") as raw:
         tmp = Path(raw)
         tests.append(lambda: test_api(tmp / "api"))
         tests.append(lambda: test_compressed_audio(tmp))
+        tests.append(lambda: test_wave_trim_and_missing_converter(tmp / "trim"))
+        tests.append(lambda: test_port_and_artifacts_guard(tmp / "guard"))
+        tests.append(lambda: test_package_hash_manifest(tmp / "hash"))
         for fn in tests:
             fn()
             print(f"OK {getattr(fn, '__name__', 'case')}")

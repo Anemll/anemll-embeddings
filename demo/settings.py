@@ -11,6 +11,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# 8765 is AnemllAgentHost on the Mac. Override with --port or ANEMLL_DEMO_PORT.
+DEFAULT_PORT = 8766
+
 
 def server_compute(explicit: str | None = None) -> str:
     """``ane`` unless ``--compute`` or ``ANEMLL_DEMO_COMPUTE`` says ``cpu``."""
@@ -43,3 +46,22 @@ def default_corpus_dir() -> Path:
     if raw:
         return Path(raw)
     return Path.home() / ".anemll-embeddings" / "corpus"
+
+
+def assert_outside_artifacts(path: Path, artifacts: Path | None) -> Path:
+    """Refuse demo writes that would land in the Core AI artifacts tree.
+
+    The artifacts directory holds ``.aimodel`` packages. The index, corpus,
+    and any log the server is asked to keep belong somewhere else.
+    """
+    target = Path(path).expanduser().resolve()
+    if artifacts is None:
+        return target
+    root = Path(artifacts).expanduser().resolve()
+    if target == root or root in target.parents:
+        raise ValueError(
+            f"{target} is inside the Core AI artifacts directory ({root}). "
+            "Keep demo data and logs outside it, for example "
+            "$HOME/.anemll-embeddings/demo."
+        )
+    return target

@@ -30,6 +30,7 @@ from src.coreai_host import (
     AUDIO_FRAMES,
     TEXT_EMBEDS_S,
     crop_audio_soft_to_src,
+    hf_audio_slots_from_frames,
     crop_vision_soft_to_valid,
     expand_media_placeholders,
     interleaved_inputs_embeds,
@@ -188,6 +189,7 @@ class CoreAIBackend:
         self._injected = runner is not None
         self._lock = threading.Lock()
         self._max_samples: int | None = None
+        self._min_audio_ms: int | None = None
         self.placement: str | None = None
         self._towers: list[TowerHealth] = []
         self._ready = False
@@ -390,7 +392,7 @@ class CoreAIBackend:
             vectors.append(vec)
             elapsed += ms
         if not vectors:
-            raise ValueError("audio is too short")
+            raise ValueError(f"audio too short (min {self.min_audio_ms()} ms)")
         mean = np.mean(np.stack(vectors, axis=0), axis=0)
         return EmbedResult(
             vector=_unit(mean),
@@ -406,6 +408,8 @@ class CoreAIBackend:
         features = ain["input_features"].detach().cpu().numpy()
         src_mask = ain["input_features_mask"].detach().cpu().numpy()
         n_src = min(int(features.shape[1]), AUDIO_FRAMES)
+        if hf_audio_slots_from_frames(n_src) < 1:
+            raise ValueError(f"audio too short (min {self.min_audio_ms()} ms)")
         feed = audio_tower_feed(features, src_mask)
         raw, audio_ms = self._runner.forward("audio", feed)
         soft = crop_audio_soft_to_src(raw, n_src)
@@ -421,6 +425,29 @@ class CoreAIBackend:
         embeds = self._scatter(ids, image_soft=None, audio_soft=soft)
         vector, text_ms = self._run_text(embeds, mask)
         return vector, float(audio_ms) + float(text_ms)
+
+    def _frame_count(self, n_samples: int) -> int:
+        wav = np.zeros(max(0, int(n_samples)), dtype=np.float32)
+        ain = self._proc(text="<|audio|>", audio=wav, return_tensors="pt")
+        return int(ain["input_features"].shape[1])
+
+    def min_audio_ms(self) -> int:
+        """Shortest 16 kHz clip that yields one mel frame, in milliseconds."""
+        if self._min_audio_ms is not None:
+            return self._min_audio_ms
+        hi = AUDIO_SR * 2
+        if self._frame_count(hi) < 1:
+            self._min_audio_ms = 2000
+            return self._min_audio_ms
+        lo = 0
+        while lo + 1 < hi:
+            mid = (lo + hi) // 2
+            if self._frame_count(mid) >= 1:
+                hi = mid
+            else:
+                lo = mid
+        self._min_audio_ms = max(1, (1000 * hi + AUDIO_SR - 1) // AUDIO_SR)
+        return self._min_audio_ms
 
     def _window_samples(self) -> int:
         if self._max_samples is not None:

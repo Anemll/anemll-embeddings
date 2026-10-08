@@ -200,7 +200,14 @@ The server loads one backend at startup:
 
 Audio uses the processor keep-mask. Pad frames stay masked. An all-ones mask lets fp16 pad noise into real frames on the ANE. The export’s additive mask constant is `-1e4` (fp16-safe); the host passes the 0/1 mask, not that constant.
 
-Packages and the index live outside git:
+Run the server from its own git worktree so a long-lived demo checkout is not the tree you export from:
+
+```sh
+git worktree add ../anemll-embeddings-demo cursor/ane-demo-showcase-71ec
+cd ../anemll-embeddings-demo
+```
+
+Packages stay in the artifacts directory. The index, fetched corpus, and any logs you redirect stay outside that directory (the server refuses a data or corpus path inside it):
 
 ```sh
 export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
@@ -210,40 +217,40 @@ export ANEMLL_DEMO_DATA=$HOME/.anemll-embeddings/demo
 export ANEMLL_DEMO_CORPUS=$HOME/.anemll-embeddings/corpus
 ```
 
-On a Mac, from the repo root, with the host venv that already has torch and transformers:
+On a Mac, from that worktree, with the host venv that already has torch and transformers:
 
 ```sh
 /Volumes/Models/anemll-embeddings/.venv/bin/python -m pip install -r demo/requirements.txt
 /Volumes/Models/anemll-embeddings/.venv/bin/python -m demo.server \
-  --backend coreai --host 0.0.0.0 --port 8765
+  --backend coreai --host 0.0.0.0 --port 8766
 ```
 
-Then open `http://127.0.0.1:8765`. Other machines on the LAN use `http://<mac-ip>:8765` (the process binds `0.0.0.0`). `GET /health` reports the backend, the three towers, warmup milliseconds, and placement (`fullyOnANE` when the runtime says so). Each page shows that as `on ANE · N ms`.
+The default port is **8766** (`--port` or `ANEMLL_DEMO_PORT`). Port 8765 is AnemllAgentHost on this Mac. Then open `http://127.0.0.1:8766`. Other machines on the LAN use `http://<mac-ip>:8766` (the process binds `0.0.0.0`). `GET /health` reports the backend, the three towers, warmup milliseconds, and placement (`fullyOnANE` when the runtime says so). Each page shows that as `on ANE · N ms`.
 
 This VM has no Neural Engine. Use the mock backend:
 
 ```sh
 python -m pip install -r demo/requirements.txt
-python -m demo.server --backend mock --port 8765
+python -m demo.server --backend mock --port 8766
 python tests/test_demo_api.py
 python tests/test_demo_coreai_masks.py
 ```
 
-Optional corpus (CC0 / CC BY via Openverse, licenses recorded in `manifest.json`, files not committed):
+Optional corpus (CC0 / CC BY via Openverse, licenses recorded in `manifest.json`, files not committed). Audio uses `ffmpeg` when it is installed, otherwise macOS `afconvert` plus a `wave` trim to 8 seconds:
 
 ```sh
 python demo/scripts/fetch_corpus.py --dest "$ANEMLL_DEMO_CORPUS"
-python demo/scripts/seed_index.py --base-url http://127.0.0.1:8765 --corpus "$ANEMLL_DEMO_CORPUS"
+python demo/scripts/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$ANEMLL_DEMO_CORPUS"
 ```
 
 | Variable | Role |
 | --- | --- |
 | `ANEMLL_DEMO_BACKEND` | `mock` (default), `reference`, or `coreai` |
-| `ANEMLL_DEMO_HOST` / `ANEMLL_DEMO_PORT` | Bind address, default `0.0.0.0:8765` |
-| `ANEMLL_DEMO_DATA` | Index `index.npz` + `index.json` + media |
-| `ANEMLL_DEMO_CORPUS` | Fetched demo media |
+| `ANEMLL_DEMO_HOST` / `ANEMLL_DEMO_PORT` | Bind address, default `0.0.0.0:8766`. `--port` overrides. |
+| `ANEMLL_DEMO_DATA` | Index `index.npz` + `index.json` + media. Not inside the artifacts dir. |
+| `ANEMLL_DEMO_CORPUS` | Fetched demo media. Not inside the artifacts dir. |
 | `ANEMLL_DEMO_COMPUTE` | `ane` (default) or `cpu` for the coreai backend |
-| `ANEMLL_EMBEDDINGS_ARTIFACTS` | Directory whose `coreai/` holds the three `.aimodel` packages |
+| `ANEMLL_EMBEDDINGS_ARTIFACTS` | Read-only here: directory whose `coreai/` holds the three `.aimodel` packages |
 | `ANEMLL_EMBEDDINGS_MODEL` | Checkpoint for the host tokenizer, processor, and embed lookup |
 | `ANEMLL_COREAI_PYTHON` | Interpreter with `coreai`. The parity runner still defaults to CPU |
 

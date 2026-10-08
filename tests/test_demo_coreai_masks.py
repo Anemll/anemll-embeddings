@@ -173,9 +173,50 @@ def test_real_masks() -> None:
     backend.close()
 
 
+class _ShortProc(_Proc):
+    """Zero mel frames below 0.2 s, so the host must reject the clip."""
+
+    def __call__(self, text="", images=None, audio=None, return_tensors="pt"):
+        if audio is not None and len(np.asarray(audio)) < 3200:
+            return {
+                "input_features": torch.zeros(1, 0, 128),
+                "input_features_mask": torch.zeros(1, 0),
+            }
+        return super().__call__(text=text, images=images, audio=audio, return_tensors=return_tensors)
+
+
+def test_short_audio_message() -> None:
+    runner = _Runner()
+    backend = CoreAIBackend(
+        artifacts=None,
+        model_path=None,
+        coreai_python=None,
+        compute="ane",
+        runner=runner,
+        processor=_ShortProc(),
+        text_model=_Text(),
+        prompts={},
+    )
+    backend.warmup()
+    try:
+        backend.embed_audio(np.zeros(800, dtype=np.float32), 16000)
+        _fail("short audio was embedded")
+    except ValueError as exc:
+        text = str(exc)
+        if text != "audio too short (min 200 ms)":
+            _fail(text)
+    audio_forwards = [name for name, _feed in runner.feeds if name == "audio"]
+    if audio_forwards:
+        _fail("short audio reached the tower")
+    backend.embed_audio(np.zeros(8000, dtype=np.float32), 16000)
+    backend.close()
+
+
 def main() -> int:
     test_real_masks()
     print("OK test_real_masks")
+    test_short_audio_message()
+    print("OK test_short_audio_message")
     return 0
 
 

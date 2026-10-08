@@ -13,7 +13,7 @@ import httpx
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from demo.settings import default_corpus_dir  # noqa: E402
+from demo.settings import DEFAULT_PORT, default_corpus_dir  # noqa: E402
 
 MIME = {
     ".jpg": "image/jpeg",
@@ -69,7 +69,7 @@ def seed(base_url: str, corpus: Path, *, limit: int | None) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default="http://127.0.0.1:8765")
+    parser.add_argument("--base-url", default=f"http://127.0.0.1:{DEFAULT_PORT}")
     parser.add_argument("--corpus", type=Path, default=default_corpus_dir())
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()

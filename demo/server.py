@@ -34,7 +34,13 @@ from demo.media_io import (
     save_jpeg,
     sniff_modality,
 )
-from demo.settings import default_data_dir, env_path, server_compute
+from demo.settings import (
+    DEFAULT_PORT,
+    assert_outside_artifacts,
+    default_data_dir,
+    env_path,
+    server_compute,
+)
 from demo.store import VectorStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -58,13 +64,17 @@ def create_app(
     compute: str | None = None,
     embedder: Any | None = None,
 ) -> FastAPI:
-    data = Path(data_dir) if data_dir is not None else default_data_dir()
+    art = artifacts if artifacts is not None else env_path("ANEMLL_EMBEDDINGS_ARTIFACTS")
+    data = assert_outside_artifacts(
+        Path(data_dir) if data_dir is not None else default_data_dir(),
+        art,
+    )
     chosen = server_compute(compute)
     store = VectorStore(data)
     if embedder is None:
         embedder = open_backend(
             backend,
-            artifacts=artifacts if artifacts is not None else env_path("ANEMLL_EMBEDDINGS_ARTIFACTS"),
+            artifacts=art,
             model=model if model is not None else env_path("ANEMLL_EMBEDDINGS_MODEL"),
             coreai_python=(
                 coreai_python
@@ -391,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", default=os.environ.get("ANEMLL_DEMO_BACKEND", "mock"))
     parser.add_argument("--host", default=os.environ.get("ANEMLL_DEMO_HOST", "0.0.0.0"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("ANEMLL_DEMO_PORT", "8765")))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("ANEMLL_DEMO_PORT", str(DEFAULT_PORT))))
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--artifacts", type=Path, default=None)
     parser.add_argument("--model", type=Path, default=None)

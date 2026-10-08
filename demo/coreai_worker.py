@@ -83,24 +83,79 @@ def _host_specialization(compute: str):
     return specialization_options(), key
 
 
-def _manifest_label(since: float) -> str | None:
-    if not CACHE.is_dir():
+def package_main_hash_hex(pkg: Path) -> str | None:
+    """Hex folder name Core AI uses for this package under ``coreai-cache``.
+
+    A ``.aimodel`` bundle stores the content hash in ``main.hash``. The cache
+    directory is that digest in hex, so a warm start can find this package's
+    own manifest instead of whatever compile finished most recently.
+    """
+    path = Path(pkg) / "main.hash"
+    if not path.is_file():
         return None
-    mans = [
-        path
-        for path in CACHE.glob("*/*/*/*/model.aimodelx/**/manifest.plist")
-        if path.stat().st_mtime >= since - 1.0
-    ]
-    if not mans:
+    raw = path.read_bytes().strip()
+    if not raw:
         return None
-    newest = max(mans, key=lambda path: path.stat().st_mtime)
-    label = placement_from_cache_manifest(newest.read_bytes())
+    try:
+        text = raw.decode("ascii").strip().lower()
+    except UnicodeDecodeError:
+        text = ""
+    if text and all(ch in "0123456789abcdef" for ch in text) and len(text) >= 8:
+        return text
+    return raw.hex()
+
+
+def _label_from_blob(blob: bytes) -> str:
+    label = placement_from_cache_manifest(blob)
     if label == "ANE":
         return "fullyOnANE"
     return label
 
 
-def _placement(model, started: float) -> str:
+def _manifests_named(cache: Path, digest: str) -> list[Path]:
+    """Manifests whose cache folder is this package hash."""
+    patterns = (
+        f"*/*/*/{digest}/model.aimodelx/**/manifest.plist",
+        f"**/{digest}/model.aimodelx/**/manifest.plist",
+        f"**/{digest}/**/manifest.plist",
+    )
+    for pattern in patterns:
+        found = list(cache.glob(pattern))
+        if found:
+            return found
+    return []
+
+
+def manifest_label_for_package(pkg: Path, cache: Path | None = None) -> str | None:
+    """Placement from this package's own cached compile, if one exists."""
+    root = CACHE if cache is None else cache
+    digest = package_main_hash_hex(pkg)
+    if digest is None or not root.is_dir():
+        return None
+    found = _manifests_named(root, digest)
+    if not found:
+        return None
+    newest = max(found, key=lambda path: path.stat().st_mtime)
+    return _label_from_blob(newest.read_bytes())
+
+
+def _manifest_label(since: float, cache: Path | None = None) -> str | None:
+    """Newest manifest written around this load. Fallback for a missing hash."""
+    root = CACHE if cache is None else cache
+    if not root.is_dir():
+        return None
+    mans = [
+        path
+        for path in root.glob("*/*/*/*/model.aimodelx/**/manifest.plist")
+        if path.stat().st_mtime >= since - 1.0
+    ]
+    if not mans:
+        return None
+    newest = max(mans, key=lambda path: path.stat().st_mtime)
+    return _label_from_blob(newest.read_bytes())
+
+
+def _placement(model, started: float, package: Path) -> str:
     for attr in ("placement", "compute_placement"):
         val = getattr(model, attr, None)
         if val is None:
@@ -115,7 +170,11 @@ def _placement(model, started: float) -> str:
         devices = extract_devices_from_debug(json.loads(blob))
     except Exception as exc:
         _log(f"debug_infos: {type(exc).__name__}: {exc}")
-    label = _manifest_label(started)
+    # Warm starts do not rewrite the cache, so a time window around ``started``
+    # is empty and the globally newest manifest can belong to another compile.
+    label = manifest_label_for_package(package)
+    if label is None:
+        label = _manifest_label(started)
     if label == "fullyOnANE":
         return "fullyOnANE"
     if devices and all(device == "ANE" for device in devices):
@@ -166,7 +225,7 @@ async def _load_all(packages: dict[str, str], compute: str) -> dict:
         t0 = time.perf_counter()
         await fn(inputs=feed)
         warmup_ms = (time.perf_counter() - t0) * 1000.0
-        place = _placement(model, started)
+        place = _placement(model, started, pkg)
         loaded[key] = fn
         towers[fn_name] = {
             "loaded": True,

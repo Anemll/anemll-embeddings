@@ -3,25 +3,29 @@
 
 Images and short sounds come from Openverse (Wikimedia, Flickr, Freesound,
 and similar). Each file's license, creator, and source page are written to
-``manifest.json``. Audio is trimmed to at most 8 seconds and stored as
-16 kHz mono WAV. Nothing is committed.
+``manifest.json``. Audio is stored as 16 kHz mono WAV, trimmed to at most
+8 seconds. ``ffmpeg`` does that in one step. On a Mac without ffmpeg,
+``afconvert`` writes the WAV and the ``wave`` module trims it. If neither
+tool exists, audio topics are skipped with a warning. Nothing is committed.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import time
 import urllib.parse
 import urllib.request
+import wave
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from demo.settings import default_corpus_dir  # noqa: E402
+from demo.settings import assert_outside_artifacts, default_corpus_dir, env_path  # noqa: E402
 
 UA = "anemll-embeddings-demo/1.0 (local educational corpus; contact local)"
 IMAGE_TOPICS = [
@@ -135,31 +139,95 @@ def _pick_audio(rows: list[dict]) -> dict | None:
     return ranked[0][1]
 
 
-def _trim_wav(src: Path, dest: Path) -> None:
+MAX_AUDIO_SECONDS = 8
+
+
+def _audio_tool() -> str | None:
+    if shutil.which("ffmpeg"):
+        return "ffmpeg"
+    if shutil.which("afconvert"):
+        return "afconvert"
+    return None
+
+
+def audio_skip_reason() -> str | None:
+    """Warning text when this machine cannot decode corpus audio."""
+    if _audio_tool() is not None:
+        return None
+    return "skipping audio: neither ffmpeg nor afconvert is available"
+
+
+def _trim_with_wave(src: Path, dest: Path, *, seconds: float = MAX_AUDIO_SECONDS) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(src),
-            "-t",
-            "8",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            str(dest),
-        ],
-        check=False,
-        capture_output=True,
-    )
-    if proc.returncode != 0 or not dest.is_file():
+    with wave.open(str(src), "rb") as reader:
+        rate = int(reader.getframerate())
+        channels = int(reader.getnchannels())
+        width = int(reader.getsampwidth())
+        keep = min(int(reader.getnframes()), int(rate * seconds))
+        frames = reader.readframes(keep)
+    with wave.open(str(dest), "wb") as writer:
+        writer.setnchannels(channels)
+        writer.setsampwidth(width)
+        writer.setframerate(rate)
+        writer.writeframes(frames)
+
+
+def _run_checked(cmd: list[str], label: str) -> None:
+    proc = subprocess.run(cmd, check=False, capture_output=True)
+    if proc.returncode != 0:
         err = proc.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(err or f"ffmpeg rc={proc.returncode}")
+        raise RuntimeError(err or f"{label} rc={proc.returncode}")
+
+
+def _trim_wav(src: Path, dest: Path) -> None:
+    tool = _audio_tool()
+    if tool is None:
+        raise RuntimeError(audio_skip_reason() or "no audio converter")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if tool == "ffmpeg":
+        _run_checked(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(src),
+                "-t",
+                str(MAX_AUDIO_SECONDS),
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                str(dest),
+            ],
+            "ffmpeg",
+        )
+        if not dest.is_file():
+            raise RuntimeError("ffmpeg wrote no wav")
+        return
+    converted = dest.with_name(dest.stem + ".afconvert.wav")
+    _run_checked(
+        [
+            "afconvert",
+            "-f",
+            "WAVE",
+            "-d",
+            "LEI16@16000",
+            "-c",
+            "1",
+            str(src),
+            str(converted),
+        ],
+        "afconvert",
+    )
+    try:
+        if not converted.is_file():
+            raise RuntimeError("afconvert wrote no wav")
+        _trim_with_wave(converted, dest)
+    finally:
+        converted.unlink(missing_ok=True)
 
 
 def _credit(row: dict) -> str:
@@ -171,6 +239,7 @@ def _credit(row: dict) -> str:
 
 
 def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> dict:
+    dest = assert_outside_artifacts(dest, env_path("ANEMLL_EMBEDDINGS_ARTIFACTS"))
     dest.mkdir(parents=True, exist_ok=True)
     items: list[dict] = []
     seen: set[str] = set()
@@ -204,6 +273,10 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
         except Exception as exc:
             print(f"image {topic} failed: {type(exc).__name__}: {exc}")
         time.sleep(0.35)
+    skip = audio_skip_reason()
+    if skip and audio_topics:
+        print(f"warning: {skip}")
+        audio_topics = []
     for index, topic in enumerate(audio_topics, start=1):
         try:
             row = _pick_audio(_search("audio", topic))
