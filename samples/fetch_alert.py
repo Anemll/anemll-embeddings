@@ -27,6 +27,15 @@ sys.path.insert(0, str(REPO_ROOT))
 from demo.alert_catalog import catalog_items  # noqa: E402
 from samples.fetch_corpus import _trim_wav, audio_skip_reason  # noqa: E402
 from demo.settings import assert_outside_artifacts, default_alert_dir, env_path  # noqa: E402
+from samples.download_utils import (  # noqa: E402
+    MAX_AUDIO_BYTES,
+    MAX_IMAGE_BYTES,
+    download,
+    file_record,
+    get_json,
+    utc_now,
+)
+from samples.fetch_corpus import MAX_AUDIO_SECONDS  # noqa: E402
 
 UA = "anemll-embeddings-demo/1.0 (local educational showcase; https://github.com/Anemll/anemll-embeddings)"
 API = "https://commons.wikimedia.org/w/api.php"
@@ -57,16 +66,12 @@ def license_ok(name: str | None) -> bool:
 
 
 def _get(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return get_json(url, user_agent=UA, timeout=60)
 
 
-def _download(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=90) as response:
-        dest.write_bytes(response.read())
+def _download(url: str, dest: Path, *, max_bytes: int = MAX_IMAGE_BYTES) -> dict:
+    """Bounded download; returns url / final_url / bytes / sha256 / fetched_at."""
+    return download(url, dest, user_agent=UA, max_bytes=max_bytes, timeout=90)
 
 
 def _commons_info(titles: list[str]) -> dict[str, dict]:
@@ -98,6 +103,11 @@ def _credit(meta: dict) -> tuple[str, str, str]:
     return creator, license_name, f"{creator} · {license_name}"
 
 
+def _license_url(meta: dict) -> str | None:
+    value = _strip((meta.get("LicenseUrl") or {}).get("value"))
+    return value or None
+
+
 def fetch(dest: Path) -> dict:
     dest = assert_outside_artifacts(dest, env_path("ANEMLL_EMBEDDINGS_ARTIFACTS"))
     items = catalog_items()
@@ -126,14 +136,24 @@ def fetch(dest: Path) -> dict:
             source_url = meta_info.get("url")
             if not source_url:
                 raise RuntimeError(f"{item['commons']} has no download url")
-            _download(source_url, raw)
-            _trim_wav(raw, dest / item["file"])
-            raw.unlink(missing_ok=True)
+            try:
+                fetched = _download(source_url, raw, max_bytes=MAX_AUDIO_BYTES)
+                _trim_wav(raw, dest / item["file"])
+            finally:
+                raw.unlink(missing_ok=True)
+            modifications = (
+                f"converted to 16 kHz mono 16-bit WAV, trimmed to at most {MAX_AUDIO_SECONDS} s"
+            )
         else:
             thumb = meta_info.get("thumburl") or meta_info.get("url")
             if not thumb:
                 raise RuntimeError(f"{item['commons']} has no image url")
-            _download(thumb, dest / item["file"])
+            fetched = _download(thumb, dest / item["file"], max_bytes=MAX_IMAGE_BYTES)
+            modifications = (
+                "Wikimedia 1280 px-wide thumbnail of the original"
+                if meta_info.get("thumburl")
+                else "none (original file)"
+            )
         written.append(
             {
                 "id": item["id"],
@@ -145,6 +165,10 @@ def fetch(dest: Path) -> dict:
                 "creator": creator,
                 "credit": credit,
                 "source": description,
+                "license_url": _license_url(meta),
+                "download": fetched,
+                "stored": file_record(dest / item["file"]),
+                "modifications": modifications,
             }
         )
         print(f"{item['id']} · {license_name} · {item['commons']}")
@@ -159,6 +183,7 @@ def fetch(dest: Path) -> dict:
             "Sparky's reference and test frame are two photos of the same black cat "
             "(Nikolai Bulykin, Medeo, file numbers 1 and 5). Keep the credit with each file."
         ),
+        "fetched_at": utc_now(),
         "items": written,
     }
     dest.mkdir(parents=True, exist_ok=True)

@@ -8,6 +8,7 @@ photos) and dots them with cached image and audio vectors.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 import time
 from functools import partial
@@ -212,8 +213,9 @@ def _parse_rules(raw: Any) -> list[dict[str, Any]]:
             except (TypeError, ValueError) as exc:
                 raise HTTPException(400, f"rule {rule_id} threshold must be a number") from exc
         chip = str(row.get("chip") or name).strip()[:40]
-        color = str(row.get("color") or "#e39a45")
-        if len(color) > 20:
+        color = str(row.get("color") or "#e39a45").strip()
+        # Echoed into a CSS custom property in the page: hex colours only.
+        if not re.fullmatch(r"#[0-9a-fA-F]{3,8}", color):
             color = "#e39a45"
         parsed.append(
             {

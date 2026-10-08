@@ -38,7 +38,11 @@ except ImportError:
 # -1e4 is enough to zero softmax while staying in a later FP16 range.
 MASK_NEG = -1.0e4
 DEFAULT_SEQ_LEN = 512
-DEFAULT_ARTIFACTS = Path("/Volumes/Models/anemll-embeddings/artifacts")
+DEFAULT_ARTIFACTS = (
+    Path(os.environ["ANEMLL_EMBEDDINGS_HOME"]).expanduser()
+    if os.environ.get("ANEMLL_EMBEDDINGS_HOME")
+    else Path.home() / ".anemll-embeddings"
+) / "artifacts"
 
 
 def artifacts_root() -> Path:

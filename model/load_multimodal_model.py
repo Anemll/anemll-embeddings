@@ -41,7 +41,7 @@ def load_multimodal_sentence_transformer(
     device: str | None = None,
     vision: bool = True,
     audio: bool = True,
-    trust_remote_code: bool = True,
+    trust_remote_code: bool = False,
 ) -> tuple[SentenceTransformer, dict[str, Any]]:
     """Load EmbeddingGemma 2 with vision/audio towers unless disabled."""
     ensure_hf_cache_env()

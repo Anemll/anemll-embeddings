@@ -4,6 +4,15 @@ This project turns Google’s EmbeddingGemma 2 into Apple Core AI packages that 
 
 The Neural Engine is the dedicated chip on Apple Silicon for this kind of work. These packages are built so the hot path stays on that chip: no mid-graph hop to the GPU or CPU.
 
+**Where that holds today:**
+
+| Mac | macOS | Placement |
+| --- | --- | --- |
+| M4 Pro, M3 Ultra | 27.0 | All three towers fully on the Neural Engine (validated) |
+| M5 | 27.2 | **Audio only** on the Neural Engine. The Core AI ANE pre-check rejects the vision and text packages (`invalid MLIR-MPS program`), so they fall back to the GPU. Embeddings still match the reference (cosine 0.99994–0.99997). |
+
+Run `python scripts/warmup.py --require-ane` to check your own Mac; it exits non-zero unless every tower is fully on the Neural Engine.
+
 ## What is an embedding?
 
 An embedding is a list of numbers that captures meaning. This model writes a list of 768 numbers for each photo, sound, or sentence. Things that mean the same thing land close together, even across types: a photo of a fox, a bark, and the words “a red fox” can match each other. Search then ranks by how close those lists are (cosine similarity on length-normalized vectors).
@@ -40,24 +49,44 @@ One input (for example the phrase “white house”) always gives exactly one ve
 
 ## Requirements
 
-- An Apple Silicon Mac. The numbers below were measured on an **M4 Pro, macOS 27.0**.
-- Python with `torch`, `torchvision`, `transformers`, `sentence-transformers`, and `pillow`
-- A Python that can `import coreai.runtime`, pointed at by `ANEMLL_COREAI_PYTHON` (typically the `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge))
+- An Apple Silicon Mac running macOS 27. Fully-ANE placement is validated on **M4 Pro and M3 Ultra, macOS 27.0**; see the table above for M5 / macOS 27.2.
+- A host Python 3.10 or newer (tested: 3.12) for this repo: `pip install -e ".[runtime]"` installs `torch` 2.14, `torchvision` 0.29, and `transformers` 5.19. Exact tested versions are in [`constraints.txt`](constraints.txt). `sentence-transformers` 6.1 is only needed for the reference model, fixtures, and export (`.[reference]`).
+- A **second** Python that can `import coreai.runtime` (Python 3.13 with `coreai-core` 1.0.0b2), found through `ANEMLL_COREAI_PYTHON` or the default locations. See [Core AI runtime](#core-ai-runtime).
 - The public ANE packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus the slim Google host files (tokenizer / processor / 256 MiB embed table). The full ~740M checkpoint is only for re-export.
+
+## Core AI runtime
+
+The `.aimodel` packages run in a small resident worker under a separate interpreter that has Apple's `coreai-core` runtime. The host venv (torch, transformers) never imports it. For inference that interpreter only needs `coreai-core` and `numpy`:
+
+```sh
+python3.13 -m venv ~/.anemll-embeddings/coreai-venv
+~/.anemll-embeddings/coreai-venv/bin/python -m pip install "coreai-core==1.0.0b2" numpy
+~/.anemll-embeddings/coreai-venv/bin/python -c "import coreai.runtime; print('ok')"
+```
+
+(`uv venv --python 3.13 …` works too, but a `uv` venv has no `pip`; use `uv pip install --python ~/.anemll-embeddings/coreai-venv/bin/python …`.)
+
+The runtime looks for that interpreter in this order and stops with setup instructions if none exists:
+
+1. `--coreai-python PATH` / `Embedder(coreai_python=...)`
+2. `$ANEMLL_COREAI_PYTHON` (must exist if set; a typo is an error, not a silent fallback)
+3. `~/.anemll-embeddings/coreai-venv/bin/python` (the setup above; `$ANEMLL_EMBEDDINGS_HOME` moves it)
+4. `anemll-forge/coreai/.venv/bin/python` in a checkout next to this repo, then `~/anemll-forge/coreai/.venv/bin/python`
+
+Re-exporting the packages (`model/export_coreai_towers.py`) needs the fuller authoring stack instead: the `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge) with `coreai-core` 1.0.0b2, `coreai-torch` 0.4.2, `coreai-opt` 0.2.1, and `torch` 2.11 on Python 3.13. Point `ANEMLL_COREAI_PYTHON` at it for export.
 
 ## Quick start
 
-Validated on an **M4 Pro, macOS 27.0**. On **macOS 27.2 / M5** the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU; audio still runs on the Neural Engine.
+Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS 27.2** vision and text fall back to the GPU (see the table at the top).
 
-You need a Python that can `import coreai.runtime` (typically `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge)).
-
-1. **Install** (in a virtualenv):
+1. **Install** the host side (in a virtualenv, Python 3.12 tested) and the [Core AI runtime](#core-ai-runtime):
 
    ```sh
-   python -m pip install -e ".[demo,runtime]"
-   # or: python -m pip install -e ".[demo]"
-   #     python -m pip install torch torchvision transformers sentence-transformers pillow
-   export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
+   python -m pip install -e ".[runtime,demo]" -c constraints.txt
+   # add ,reference for the Sentence-Transformers reference model / fixtures / export
+
+   python3.13 -m venv ~/.anemll-embeddings/coreai-venv
+   ~/.anemll-embeddings/coreai-venv/bin/python -m pip install "coreai-core==1.0.0b2" numpy
    ```
 
 2. **Download** the public ANE packages and the slim host files from **one** Hugging Face repo (`anemll/anemll-embeddinggemma-2-ane`, including `host/`). This is the inference script only — it does **not** pull `model.safetensors` (1.49 GB). If `host/` is missing on the pin, it falls back to Google’s slim files. No Hugging Face login or token. The script needs `huggingface_hub`, which `pip install -e .` (or `.[demo]`) already installs. Full flag list and examples: [scripts/README.md](scripts/README.md).
@@ -65,7 +94,7 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
    ```sh
    python scripts/download_models.py
    # or: ./scripts/download_models.sh
-   # custom dest: python scripts/download_models.py --dest /Volumes/Models/anemll-embeddings
+   # custom dest: python scripts/download_models.py --dest /path/to/fast/disk/anemll-embeddings
    ```
 
    **What gets downloaded** (about **1.49 GB** on disk):
@@ -91,25 +120,29 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
        text_embeds_s320.aimodel -> …/ane/text_embeds_s320/text_embeds_s320.aimodel
    ```
 
-   `api.Embedder` reads `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/<name>.aimodel` (those symlinks) and loads `embed_tokens.safetensors` when present, falling back to a full checkpoint if you already have one. Put the printed exports in `~/.zshrc` or a file you `source`:
+   `api.Embedder`, the samples, `warmup.py`, and the demo use this default layout **without any exports**: when `ANEMLL_EMBEDDINGS_ARTIFACTS` / `ANEMLL_EMBEDDINGS_MODEL` are unset they read `~/.anemll-embeddings/artifacts` and `~/.anemll-embeddings/embeddinggemma-2` (or the same under `$ANEMLL_EMBEDDINGS_HOME`). The host side loads `embed_tokens.safetensors` when present, falling back to a full checkpoint if you already have one. If you used `--dest` or keep the Core AI interpreter somewhere else, put the printed exports (shell-quoted) in `~/.zshrc` or a file you `source`:
 
    ```sh
    # example output of scripts/download_models.py
    export ANEMLL_EMBEDDINGS_ARTIFACTS=/Users/you/.anemll-embeddings/artifacts
    export ANEMLL_EMBEDDINGS_MODEL=/Users/you/.anemll-embeddings/embeddinggemma-2
-   export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
+   export ANEMLL_COREAI_PYTHON=/Users/you/.anemll-embeddings/coreai-venv/bin/python
    ```
+
+   Every fresh download is checked against SHA-256 digests tracked in this repo (`scripts/download_common.py`: tower `main.mlirb` and every `host/` file) before it is marked complete. `--verify` re-checks files already on disk.
 
    | Flag | Default | Meaning |
    | --- | --- | --- |
    | `--dest PATH` | `~/.anemll-embeddings` | Parent directory (`ANEMLL_EMBEDDINGS_HOME` overrides the default) |
    | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=47d05aa218a227e887858fe571f8deb2f2a1d532`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
-   | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON` or the forge venv if present | Value printed for `ANEMLL_COREAI_PYTHON` |
+   | `--verify` | off | Re-hash files already on disk against the pinned digests |
+   | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then the [default locations](#core-ai-runtime) | Value printed for `ANEMLL_COREAI_PYTHON` |
 
 3. **Warm up** once on this Mac. There is **no** per-hardware compile to ship: Core AI specializes each tower for the local chip on first load and caches it (`$CFFIXED_USER_HOME/Library/Caches/coreai-cache`, or `~/Library/Caches/coreai-cache`). Cold first load is slow; later (warm) loads are fast.
 
    ```sh
-   python scripts/warmup.py
+   python scripts/warmup.py                 # report placement
+   python scripts/warmup.py --require-ane   # exit 3 unless every tower is fully on the ANE
    ```
 
    ```
@@ -135,8 +168,9 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
    **Troubleshooting**
 
    - A **cold** first warmup of ~111 s on M3 Ultra is normal (compile + write the cache). A **warm** load is ~0.06–0.1 s per tower.
-   - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect: `export CFFIXED_USER_HOME=/path/to/writable/home` (cache becomes `$CFFIXED_USER_HOME/Library/Caches/coreai-cache`), or pass `--cache-dir`.
-   - On macOS 27.2 / M5, vision and text may print a GPU-fallback / `invalid MLIR-MPS program` message. Audio still runs on the ANE.
+   - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect Core AI's home: `python scripts/warmup.py --coreai-home /path/to/writable/home` (same as `export CFFIXED_USER_HOME=…`; the cache becomes `<home>/Library/Caches/coreai-cache`). Core AI has no free-form cache path, so `--cache-dir` only accepts a path ending in `Library/Caches/coreai-cache` and rejects anything else. Set `CFFIXED_USER_HOME` for later runs too (samples, demo) so they reuse that cache.
+   - "no Core AI Python found" / "cannot import coreai.runtime": set up the [Core AI runtime](#core-ai-runtime) or set `ANEMLL_COREAI_PYTHON`.
+   - On macOS 27.2 / M5, vision and text report `no (GPU)`; that is the known pre-check rejection, and `--require-ane` exits 3 there. Audio still runs on the ANE.
    - Rerunning `download_models.py` or `warmup.py` is safe. Download skips files that already match the pinned revision.
    - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.
 
@@ -144,7 +178,8 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
 
    ```sh
    python samples/embed_sentence.py "a red fox"
-   python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
+   python -m demo.server --backend coreai --port 8766            # this Mac only (127.0.0.1)
+   python -m demo.server --backend coreai --host 0.0.0.0 --port 8766   # LAN testing, see below
    ```
 
 ## Re-export the packages yourself
@@ -173,7 +208,7 @@ export ANEMLL_EMBEDDINGS_MODEL=/Users/you/.anemll-embeddings/embeddinggemma-2-fu
 export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
 ```
 
-Conversion also needs `torch`, `transformers`, `sentence-transformers`, and a Python that can `import coreai.runtime`. That writes `vision_s280.aimodel` (pixels → 280 × 512 tokens), `audio_s280.aimodel` (280 × 128 mel frames → 70 × 512 tokens), `text_s128.aimodel` (ids-only 768-d; not in the public HF pack), and `text_embeds_s320.aimodel` (looked-up tokens, including image/audio, → 768-d). This is not `forge.py convert`.
+Conversion also needs `pip install -e ".[runtime,reference]"` and the forge authoring interpreter (see [Core AI runtime](#core-ai-runtime)). That writes `vision_s280.aimodel` (pixels → 280 × 512 tokens), `audio_s280.aimodel` (280 × 128 mel frames → 70 × 512 tokens), `text_s128.aimodel` (ids-only 768-d; not in the public HF pack), and `text_embeds_s320.aimodel` (looked-up tokens, including image/audio, → 768-d). This is not `forge.py convert`.
 
 ## Python usage
 
@@ -189,7 +224,7 @@ print(cosine(q, d))                                  # float in [-1, 1]
 embedder.close()
 ```
 
-`python -m pip install -e .` makes `from api import Embedder` work from any working directory. From a repo checkout, keep the repo root on `PYTHONPATH` (the samples do this). The demo pages call this same `Embedder`. `Embedder(compute="ane")` reads `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON` when those constructor arguments are omitted.
+`python -m pip install -e .` makes `from api import Embedder` work from any working directory. From a repo checkout, keep the repo root on `PYTHONPATH` (the samples do this). The demo pages call this same `Embedder`. When constructor arguments are omitted, `Embedder(compute="ane")` reads `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON`, then falls back to the `~/.anemll-embeddings` download layout and the [Core AI runtime](#core-ai-runtime) locations. It raises `CoreAIPythonNotFound` with setup steps when no Core AI interpreter exists.
 
 The host path in `api/coreai_host.py` runs `vision_s280` / `audio_s280`, scatters those tokens into the text sequence, then runs `text_embeds_s320`. `model/parity_coreai_host.py` is the full loop. The older Sentence-Transformers wrapper still lives at `model/embed_wrapper.py` for export and fixture work.
 
@@ -232,12 +267,13 @@ The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 
 ## Limitations
 
-- Validated on an M4 Pro running macOS 27.0.
+- Fully-ANE placement is validated on M4 Pro and M3 Ultra running macOS 27.0.
 - On macOS 27.2 (M5, newer Neural Engine) the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU. Audio still runs on the Neural Engine.
 - Audio clips must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips error instead of returning a bad vector.
 - There is no video package yet. `<|video|>` fixtures are skipped.
 - Weights are not in git. Use `scripts/download_models.py` for inference (~1.49 GB). Use `scripts/download_export_assets.py` only if you will re-convert. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms and the [ANE package card](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) before you download.
 - The demo’s microphone needs `http://127.0.0.1` or HTTPS. A plain `http://<lan-ip>` page cannot record.
+- The demo has no authentication. It binds to `127.0.0.1` by default; `--host 0.0.0.0` is for testing on a trusted LAN only.
 
 ## Try the demo
 
@@ -246,11 +282,20 @@ This demo shows EmbeddingGemma 2 running on your Mac’s Neural Engine. It turns
 ```sh
 python scripts/download_models.py
 python scripts/warmup.py
-python -m pip install -r demo/requirements.txt
-python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
+python -m pip install -e ".[runtime,demo]" -c constraints.txt
+python -m demo.server --backend coreai --port 8766
 ```
 
-Then open **http://127.0.0.1:8766**. Default port is **8766**. Without `--backend coreai` the server uses `mock` (fake vectors, no Neural Engine).
+Then open **http://127.0.0.1:8766**. Default port is **8766**. Without `--backend coreai` the server uses `mock` (fake vectors, no Neural Engine). With the default `~/.anemll-embeddings` download and Core AI venv no exports are needed; otherwise set `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON` as printed by `download_models.py`.
+
+**Reaching the demo from another machine.** The server binds to `127.0.0.1` unless you ask otherwise. For testing between Macs on a network you trust, bind all interfaces explicitly:
+
+```sh
+python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
+# or: ANEMLL_DEMO_HOST=0.0.0.0 python -m demo.server --backend coreai
+```
+
+The server then prints a warning: there is no authentication, so anyone who can reach the port can add, delete, and read indexed items and uploads. Requests are capped at 40 MB for uploads and 256 KB for JSON (`ANEMLL_DEMO_MAX_UPLOAD_MB`, `ANEMLL_DEMO_MAX_JSON_KB`); larger ones get `413`.
 
 Load a small public corpus (optional):
 

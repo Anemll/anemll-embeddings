@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sys
 import uuid
 import wave
 from contextlib import asynccontextmanager
@@ -24,6 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+from api.runtime_paths import default_artifacts, default_model
 from api.types import EmbedResult
 from demo.backends import open_backend
 from demo.media_io import (
@@ -36,13 +38,18 @@ from demo.media_io import (
     sniff_modality,
 )
 from demo.alert_routes import mount_alert
+from demo.limits import BodySizeLimit
 from demo.settings import (
     DEFAULT_PORT,
     assert_outside_artifacts,
+    bind_warning,
     default_alert_dir,
     default_data_dir,
     env_path,
+    max_json_bytes,
+    max_upload_bytes,
     server_compute,
+    server_host,
 )
 from demo.store import VectorStore
 
@@ -68,8 +75,11 @@ def create_app(
     coreai_python: Path | None = None,
     compute: str | None = None,
     embedder: Any | None = None,
+    max_upload: int | None = None,
+    max_json: int | None = None,
 ) -> FastAPI:
-    art = artifacts if artifacts is not None else env_path("ANEMLL_EMBEDDINGS_ARTIFACTS")
+    # Same defaults as ``Embedder``: env var, then ~/.anemll-embeddings/... if downloaded.
+    art = artifacts if artifacts is not None else default_artifacts()
     data = assert_outside_artifacts(
         Path(data_dir) if data_dir is not None else default_data_dir(),
         art,
@@ -85,7 +95,7 @@ def create_app(
         embedder = open_backend(
             backend,
             artifacts=art,
-            model=model if model is not None else env_path("ANEMLL_EMBEDDINGS_MODEL"),
+            model=model if model is not None else default_model(),
             coreai_python=(
                 coreai_python
                 if coreai_python is not None
@@ -103,6 +113,11 @@ def create_app(
             app.state.backend.close()
 
     app = FastAPI(title="anemll embeddings demo", lifespan=lifespan)
+    app.add_middleware(
+        BodySizeLimit,
+        max_upload=max_upload if max_upload is not None else max_upload_bytes(),
+        max_other=max_json if max_json is not None else max_json_bytes(),
+    )
     app.state.backend = embedder
     app.state.store = store
     app.state.compute = chosen
@@ -437,7 +452,13 @@ def _form_file(form):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", default=os.environ.get("ANEMLL_DEMO_BACKEND", "mock"))
-    parser.add_argument("--host", default=os.environ.get("ANEMLL_DEMO_HOST", "0.0.0.0"))
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="bind address (default: $ANEMLL_DEMO_HOST or 127.0.0.1). "
+        "Use 0.0.0.0 to reach the demo from other machines on a trusted LAN; "
+        "there is no authentication.",
+    )
     parser.add_argument("--port", type=int, default=int(os.environ.get("ANEMLL_DEMO_PORT", str(DEFAULT_PORT))))
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--alert-dir", type=Path, default=None)
@@ -459,7 +480,11 @@ def main(argv: list[str] | None = None) -> int:
         coreai_python=args.coreai_python,
         compute=args.compute,
     )
-    uvicorn.run(app, host=args.host, port=args.port)
+    host = server_host(args.host)
+    warning = bind_warning(host, args.port)
+    if warning:
+        print(warning, file=sys.stderr, flush=True)
+    uvicorn.run(app, host=host, port=args.port)
     return 0
 
 

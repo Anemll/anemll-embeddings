@@ -20,9 +20,9 @@ embedder.close()
 | `0.60–0.85` | Related — UPS photo vs `a brown UPS delivery truck` 0.727, bark vs `a dog barking` 0.721 |
 | ~`0` | Unrelated |
 
-On a Mac run `python scripts/download_models.py` (one-repo inference, about 1.49 GB; prefers `host/` on the ANE repo; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)), then put the printed `export` lines in `~/.zshrc` or a file you `source`. `Embedder(compute="ane")` reads those when the constructor arguments are omitted and loads the slim embed table when `embed_tokens.safetensors` is present. Then `python scripts/warmup.py` once so Core AI specializes the towers for this chip and caches them — there is no per-hardware compile to ship. Validated on M4 Pro / macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
+On a Mac run `python scripts/download_models.py` (one-repo inference, about 1.49 GB; prefers `host/` on the ANE repo; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)), and set up the [Core AI runtime](../README.md#core-ai-runtime) (a Python 3.13 venv with `coreai-core` 1.0.0b2). `Embedder(compute="ane")` reads `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON` when the constructor arguments are omitted, falls back to the default `~/.anemll-embeddings` layout and `~/.anemll-embeddings/coreai-venv`, and raises `CoreAIPythonNotFound` with setup steps if no Core AI interpreter exists. It loads the slim embed table when `embed_tokens.safetensors` is present. Then `python scripts/warmup.py` once so Core AI specializes the towers for this chip and caches them — there is no per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra, macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
 
-`python -m pip install -e .` then `from api import Embedder` works anywhere. From a checkout, keep the repo root on `PYTHONPATH`.
+`python -m pip install -e ".[runtime]" -c constraints.txt` then `from api import Embedder` works anywhere. From a checkout, keep the repo root on `PYTHONPATH`.
 
 ---
 

@@ -19,13 +19,22 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 CACHE = Path.home() / "Library/Caches/coreai-cache"
 
 
-def _coreai_python() -> Path:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    return Path(raw) if raw else DEFAULT_COREAI_PY
+def _coreai_python(required: bool = True) -> Path | None:
+    """Core AI interpreter: ``ANEMLL_COREAI_PYTHON``, then documented locations.
+
+    Exits with setup instructions when none exists (see ``api/runtime_paths.py``).
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from api.runtime_paths import CoreAIPythonNotFound, resolve_coreai_python
+
+    try:
+        return resolve_coreai_python(required=required)
+    except CoreAIPythonNotFound as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
 
 
 def _have_coreai() -> bool:
@@ -43,7 +52,7 @@ def _reexec_if_needed() -> None:
     if not py.is_file():
         raise SystemExit(
             "ERROR: coreai runtime missing and ANEMLL_COREAI_PYTHON not found at "
-            f"{py}. Point it at forge coreai/.venv/bin/python."
+            f"{py}. Point it at a venv with coreai-core (see README, Core AI runtime)."
         )
     print(f"re-exec {py} (coreai runtime)")
     os.execv(str(py), [str(py), *sys.argv])
@@ -317,7 +326,7 @@ def main() -> int:
     towers = args.tower or ["vision", "text", "audio"]
     out_dir = Path(args.artifacts) / "coreai"
     print(f"out_dir={out_dir} towers={towers} compute={args.compute} isolated={args.isolated}")
-    print(f"ANEMLL_COREAI_PYTHON={_coreai_python()} coreai_here={_have_coreai()}")
+    print(f"ANEMLL_COREAI_PYTHON={_coreai_python(required=False)} coreai_here={_have_coreai()}")
     if args.isolated:
         import subprocess
 

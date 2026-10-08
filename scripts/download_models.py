@@ -26,6 +26,8 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.download_common import (  # noqa: E402
     ANE_INFERENCE_ALLOW,
     ANE_REPO,
+    ANE_REVISION,
+    HOST_SHA256,
     BASE_REPO,
     BASE_REVISION,
     HOST_FOLDER,
@@ -46,9 +48,49 @@ from scripts.download_common import (  # noqa: E402
     install_host,
     link_coreai,
     revision_matches,
+    host_checksums,
     snapshot,
+    tower_checksums,
+    verify_sha256,
     write_revision,
 )
+
+
+def _check(problems: list[str], what: str) -> None:
+    if problems:
+        raise SystemExit(
+            f"{what} failed checksum verification:\n  "
+            + "\n  ".join(problems)
+            + "\nDelete the folder or re-run with --force."
+        )
+
+
+def verify_ane(ane_dir: Path, rev: str) -> str:
+    """Check tower ``main.mlirb`` digests against the git-tracked table."""
+    if rev != ANE_REVISION:
+        print(f"note: checksums are pinned for {ANE_REVISION}; not verifying towers at override {rev}")
+        return "unpinned"
+    _check(verify_sha256(tower_checksums(ane_dir)), "ANE towers")
+    return "ok"
+
+
+def verify_mirrored_host(folder: Path, rev: str) -> str:
+    if rev != ANE_REVISION:
+        return "unpinned"
+    files, conflicts = host_checksums(folder)
+    _check(conflicts + verify_sha256(files), f"host/ ({folder})")
+    return "ok"
+
+
+def verify_google_host(folder: Path) -> str:
+    """Verbatim Google files must match the mirrored copies' digests."""
+    files = {
+        folder / name: digest
+        for name, digest in HOST_SHA256.items()
+        if name in INFERENCE_HOST_ALLOW and (folder / name).is_file()
+    }
+    _check(verify_sha256(files), f"Google host files ({folder})")
+    return "ok"
 
 
 def download_ane(ane_dir: Path, *, force: bool) -> str:
@@ -60,6 +102,8 @@ def download_ane(ane_dir: Path, *, force: bool) -> str:
     if not all_bundles_complete(ane_dir):
         missing = [name for name in TOWERS if not (ane_dir / name / f"{name}.aimodel").exists()]
         raise SystemExit(f"download finished but packages incomplete: {', '.join(missing)}")
+    # Verify before the revision marker, so a bad download is never trusted later.
+    verify_ane(ane_dir, rev)
     write_revision(ane_dir, rev)
     return "downloaded"
 
@@ -85,6 +129,7 @@ def download_host(model_dir: Path, *, ane_dir: Path, force: bool) -> str:
         return "skipped"
     mirrored = ane_dir / HOST_FOLDER
     if fetch_mirrored_host(ane_dir):
+        verify_mirrored_host(mirrored, ane_revision())
         status = install_host(mirrored, model_dir)
         write_revision(model_dir, ane_revision())
         print(f"using mirrored {ANE_REPO}/{HOST_FOLDER} ({status})")
@@ -100,6 +145,7 @@ def download_host(model_dir: Path, *, ane_dir: Path, force: bool) -> str:
         allow_patterns=INFERENCE_HOST_ALLOW,
         ignore_patterns=INFERENCE_HOST_IGNORE,
     )
+    verify_google_host(model_dir)
     write_revision(model_dir, BASE_REVISION)
     return "google-fallback"
 
@@ -116,6 +162,12 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="re-download even when the pinned revision is already present",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="re-hash files already on disk against the pinned SHA-256 table "
+        "(fresh downloads are always verified)",
     )
     parser.add_argument(
         "--coreai-python",
@@ -145,6 +197,10 @@ def main(argv: list[str] | None = None) -> int:
         embed_status = ensure_slim_embed(model_dir, force=bool(args.force))
     if not (model_dir / SLIM_EMBED_NAME).is_file():
         raise SystemExit(f"missing {model_dir / SLIM_EMBED_NAME}")
+    if args.verify:
+        print(f"verify towers: {verify_ane(ane_dir, rev)}")
+        if (ane_dir / HOST_FOLDER).is_dir():
+            print(f"verify host/: {verify_mirrored_host(ane_dir / HOST_FOLDER, rev)}")
     links = link_coreai(artifacts, ane_dir)
     py = (
         str(args.coreai_python.expanduser())

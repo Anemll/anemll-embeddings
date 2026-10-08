@@ -5,8 +5,11 @@ Copies the Google host files ``api.Embedder`` needs (tokenizer, processor /
 preprocessor configs, ``config.json``) verbatim, extracts the embedding table
 from ``model.safetensors``, and writes checksums plus ``host/SOURCE.md``.
 
-Writes **only** under ``--dest`` (default ``hf/``). Never writes
-``embed_tokens.safetensors`` (or anything else) into ``--src``.
+``--dest`` is the Hub staging root (default ``hf/`` in this repo); the
+files land in ``<dest>/host/``. Writes **only** under ``<dest>/host/``.
+Never writes ``embed_tokens.safetensors`` (or anything else) into ``--src``.
+Without ``--src`` the slim Google files are fetched into a temporary
+directory that is deleted when the script exits.
 
 ``--license`` and ``--notice`` are required files (default:
 ``hf/LICENSE`` and ``hf/NOTICE`` in this repo). They are copied into
@@ -23,9 +26,11 @@ Does **not** upload. Run on the Mac that will push the folder to the Hub:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shutil
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -172,22 +177,26 @@ def stage_host(*, src: Path, host: Path, license_src: Path, notice_src: Path) ->
     return rows
 
 
-def resolve_src(src: Path | None) -> tuple[Path, str]:
+@contextlib.contextmanager
+def resolve_src(src: Path | None) -> Iterator[tuple[Path, str]]:
+    """Yield ``(source_dir, kind)``. A downloaded source is removed on exit."""
     if src is not None:
         root = src.expanduser().resolve()
         if not root.is_dir():
             raise SystemExit(f"--src is not a directory: {root}")
-        return root, "local"
-    tmp = Path(tempfile.mkdtemp(prefix="anemll-host-src-"))
-    print(f"download slim host {BASE_REPO} @{BASE_REVISION} → {tmp}")
-    snapshot(
-        BASE_REPO,
-        BASE_REVISION,
-        tmp,
-        allow_patterns=INFERENCE_HOST_ALLOW,
-        ignore_patterns=INFERENCE_HOST_IGNORE,
-    )
-    return tmp, "downloaded"
+        yield root, "local"
+        return
+    with tempfile.TemporaryDirectory(prefix="anemll-host-src-") as raw:
+        tmp = Path(raw)
+        print(f"download slim host {BASE_REPO} @{BASE_REVISION} → {tmp} (temporary)")
+        snapshot(
+            BASE_REPO,
+            BASE_REVISION,
+            tmp,
+            allow_patterns=INFERENCE_HOST_ALLOW,
+            ignore_patterns=INFERENCE_HOST_IGNORE,
+        )
+        yield tmp, "downloaded"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -202,7 +211,8 @@ def main(argv: list[str] | None = None) -> int:
         "--dest",
         type=Path,
         default=REPO_ROOT / "hf",
-        help="HF upload staging root (only this tree is written; host/ lives here)",
+        help="HF upload staging root (default: hf/ in this repo). "
+        "Files are written to <dest>/host/ only.",
     )
     parser.add_argument(
         "--license",
@@ -229,9 +239,9 @@ def main(argv: list[str] | None = None) -> int:
             "defaults are hf/LICENSE and hf/NOTICE in this repo)."
         )
 
-    src, src_kind = resolve_src(args.src)
     host = dest / HOST_FOLDER
-    rows = stage_host(src=src, host=host, license_src=license_src, notice_src=notice_src)
+    with resolve_src(args.src) as (src, src_kind):
+        rows = stage_host(src=src, host=host, license_src=license_src, notice_src=notice_src)
     if not host_payload_complete(host):
         raise SystemExit(f"host/ incomplete at {host}")
 
@@ -245,7 +255,8 @@ def main(argv: list[str] | None = None) -> int:
     for row in rows:
         print(f"  {row['origin']:16} {row['bytes']:12}  {row['file']}")
     print()
-    print("Wrote only under", dest, "(source snapshot was not modified).")
+    note = "temporary download removed" if src_kind == "downloaded" else "source was not modified"
+    print("Wrote only under", host, f"({note}).")
     print("Do not upload from this script. Upload hf/ (card + host/) from a Mac.")
     return 0
 

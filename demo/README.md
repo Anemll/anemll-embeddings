@@ -6,32 +6,43 @@ The pages are plain HTML. There is no front-end build step.
 
 ## Start the server
 
-You need the public Core AI packages (`vision_s280`, `audio_s280`, `text_embeds_s320`) plus the slim host files. `python scripts/download_models.py` fetches them from one repo (about 1.49 GB, `host/` on the ANE pack, no full `model.safetensors`; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)) and creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects. No Hugging Face login. Put the printed `export` lines in `~/.zshrc` or a file you `source`.
+You need the public Core AI packages (`vision_s280`, `audio_s280`, `text_embeds_s320`) plus the slim host files. `python scripts/download_models.py` fetches them from one repo (about 1.49 GB, `host/` on the ANE pack, no full `model.safetensors`; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)) and creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects. No Hugging Face login. With the default `~/.anemll-embeddings` layout and the [Core AI venv](../README.md#core-ai-runtime) no exports are needed; with a custom `--dest`, put the printed `export` lines in `~/.zshrc` or a file you `source`.
 
 ```sh
+python -m pip install -e ".[runtime,demo]" -c constraints.txt
 python scripts/download_models.py
-# copy the export lines it prints, then:
 python scripts/warmup.py
 export ANEMLL_DEMO_DATA=$HOME/.anemll-embeddings/demo
 export ANEMLL_DEMO_CORPUS=$HOME/.anemll-embeddings/corpus
 export ANEMLL_DEMO_ALERT=$HOME/.anemll-embeddings/alert
 
-python -m pip install -r demo/requirements.txt
-python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
+python -m demo.server --backend coreai --port 8766                 # this Mac only
+python -m demo.server --backend coreai --host 0.0.0.0 --port 8766  # trusted LAN, see below
 ```
 
-First `warmup.py` load compiles each tower for this Mac and caches it. There is no separate per-hardware compile to ship. Validated on M4 Pro / macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU.
+First `warmup.py` load compiles each tower for this Mac and caches it. There is no separate per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra, macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU (the `/health` badge shows it).
+
+### Network exposure
+
+The demo has **no authentication**: anyone who can reach the port can add, delete, and read indexed items, uploads, and alert rules. It therefore binds to **`127.0.0.1`** by default. To try it from another device on a network you trust, opt in explicitly with `--host 0.0.0.0` (or `ANEMLL_DEMO_HOST=0.0.0.0`); the server prints a warning to stderr whenever it binds a non-loopback address. Do not expose it to the internet. Browsers only allow the microphone on `http://127.0.0.1` or HTTPS, so recording does not work from a plain `http://<lan-ip>` page.
+
+Request bodies are capped (larger requests get **413**): uploads (multipart) at `ANEMLL_DEMO_MAX_UPLOAD_MB` (default **40**), JSON and other bodies at `ANEMLL_DEMO_MAX_JSON_KB` (default **256**). Decoded images are capped at 64 megapixels and audio at 600 s; `ffmpeg` decoding times out after 60 s.
+
+User-supplied labels, rule names, and media URLs are rendered as text (escaped), never as HTML.
 
 `python -m demo` and `python -m demo.server` are the same command. Then open **http://127.0.0.1:8766**. The server embeds through the public [`api.Embedder`](../api/README.md) (`embed_text` / `embed_image` / `embed_audio` + `cosine`). This package only serves the pages.
 
 | Flag / env | Default | Meaning |
 | --- | --- | --- |
 | `--backend` / `ANEMLL_DEMO_BACKEND` | `mock` | **`coreai`** = real Neural Engine packages. `reference` = full checkpoint on CPU. `mock` = fake vectors so the UI runs without Core AI. |
-| `--host` / `ANEMLL_DEMO_HOST` | `0.0.0.0` | Bind address. Open the UI at `127.0.0.1` if you want the microphone. |
+| `--host` / `ANEMLL_DEMO_HOST` | `127.0.0.1` | Bind address. `0.0.0.0` = all interfaces (trusted LAN only; prints a warning). The microphone needs `127.0.0.1` or HTTPS. |
 | `--port` / `ANEMLL_DEMO_PORT` | **8766** | 8765 is often taken by AnemllAgentHost. |
 | `--compute` / `ANEMLL_DEMO_COMPUTE` | `ane` | Neural Engine. Use `cpu` to force the CPU path. The demo does **not** read shell `ANEMLL_COREAI_COMPUTE`. |
 | `--data-dir` / `ANEMLL_DEMO_DATA` | `~/.anemll-embeddings/demo` | Index and saved media. Must not sit inside the artifacts directory. |
 | `--alert-dir` / `ANEMLL_DEMO_ALERT` | `~/.anemll-embeddings/alert` | Camera-alert frames, sounds, and Sparky’s reference photo. Must not sit inside the artifacts directory. |
+| `ANEMLL_DEMO_MAX_UPLOAD_MB` | `40` | Max multipart upload body; larger → 413. |
+| `ANEMLL_DEMO_MAX_JSON_KB` | `256` | Max JSON / other request body; larger → 413. |
+| `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, `ANEMLL_COREAI_PYTHON` | `~/.anemll-embeddings/…` layout | Same lookup as `api.Embedder` (see the [README](../README.md#core-ai-runtime)). |
 
 `GET http://127.0.0.1:8766/health` reports the backend, the three towers, warmup time, and placement (`fullyOnANE` when the runtime says so). Each page shows that as a badge: `on ANE · N ms`.
 
@@ -46,7 +57,7 @@ python -m demo.server --backend mock --port 8766
 
 ## Load the sample corpus
 
-Optional. Downloads a small CC0 / CC BY set (fox, rain, piano, and similar) via Openverse. Licenses go in `manifest.json`. Nothing is committed.
+Optional. Downloads a small CC0 / CC BY set (fox, rain, piano, and similar) via Openverse. `manifest.json` records, per item, the license and license URL, creator, the source and final download URL, fetch time, SHA-256 and size of what was stored, and any modification (audio is converted and trimmed). Downloads are size-capped and time out. Openverse search results change over time, so a later run can pick different items; the manifest is the record of what you got. Nothing is committed.
 
 ```sh
 python samples/fetch_corpus.py --dest "$ANEMLL_DEMO_CORPUS"

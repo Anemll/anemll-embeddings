@@ -87,12 +87,20 @@ One download from this repo is enough for inference (towers + `host/`).
 
 ```bash
 git clone https://github.com/Anemll/anemll-embeddings && cd anemll-embeddings
-python -m pip install -e .
-python -m pip install torch torchvision transformers sentence-transformers pillow
-python scripts/download_models.py
-# prints the export lines; add them to ~/.zshrc or source them
-python scripts/warmup.py
+python -m pip install -e ".[runtime]" -c constraints.txt
+
+# Core AI runtime (separate interpreter that runs the .aimodel packages)
+python3.13 -m venv ~/.anemll-embeddings/coreai-venv
+~/.anemll-embeddings/coreai-venv/bin/python -m pip install "coreai-core==1.0.0b2" numpy
+
+python scripts/download_models.py   # verifies SHA-256 of towers + host/
+python scripts/warmup.py --require-ane
 ```
+
+With the default `~/.anemll-embeddings` layout no exports are needed. With a
+custom `--dest`, add the printed export lines to `~/.zshrc` or source them.
+`--require-ane` exits non-zero on Macs where a tower is not fully on the
+Neural Engine (currently vision and text on M5 / macOS 27.2).
 
 This card is commit `47d05aa218a227e887858fe571f8deb2f2a1d532` (towers + `host/`).
 `download_models.py` prefers `host/` here. If a pin does not have that

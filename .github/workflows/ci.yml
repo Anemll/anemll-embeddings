@@ -1,0 +1,44 @@
+# Unit suite on macOS (Apple Silicon runner). No Core AI here: the tests use
+# the mock backend and stubbed workers. Neural Engine placement and parity are
+# hardware checks run by hand: python scripts/warmup.py --require-ane
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (tested constraints)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" -c constraints.txt
+      - name: Dependency check
+        run: python -m pip check
+      - name: Compile
+        run: python -m compileall -q api model scripts samples demo tests
+      - name: Wheel contents
+        run: |
+          python -m pip wheel --no-deps -w dist .
+          python - <<'PY'
+          import glob, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          need = ["demo/static/index.html", "demo/static/common.js", "api/runtime_paths.py"]
+          missing = [n for n in need if n not in names]
+          assert not missing, f"wheel is missing {missing}"
+          print("wheel ok:", len(names), "files")
+          PY
+      - name: Tests
+        run: python -m pytest tests -q

@@ -11,7 +11,7 @@
     "numpy": "2.5.3"
   },
   "load": {
-    "model_path": "/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2",
+    "model_path": "google-embeddinggemma-2",
     "torch_dtype": "bfloat16",
     "device": "mps",
     "text_only": true,

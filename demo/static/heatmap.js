@@ -43,20 +43,24 @@ function renderMatrix(payload) {
     });
     table.appendChild(tr);
   });
-  matrix.innerHTML = "";
-  matrix.appendChild(table);
+  matrix.replaceChildren(table);
 }
 
 async function loadChecks() {
   const data = await api("/items");
-  checks.innerHTML = "";
+  checks.replaceChildren();
   (data.items || []).forEach((item, index) => {
+    // Labels are user input: build DOM nodes, never parse them as HTML.
     const label = document.createElement("label");
-    label.innerHTML = `<input type="checkbox" value="${item.id}" ${index < 6 ? "checked" : ""}> ${chip(item.modality)} ${labelOf(item)}`;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = String(item.id);
+    box.checked = index < 6;
+    label.append(box, " ", chipNode(item.modality), " ", labelOf(item));
     checks.appendChild(label);
   });
   if (!checks.children.length) {
-    checks.innerHTML = "<p class='hint'>Index a few items on the Search page first.</p>";
+    checks.appendChild(el("p", "hint", "Index a few items on the Search page first."));
   }
 }
 

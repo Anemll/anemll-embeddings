@@ -6,11 +6,10 @@ fixed prompt set in tests/fixtures/prompts.json, and writes small numpy + JSON
 fixtures under tests/fixtures/ for Core ML parity checks.
 
 Environment:
-  HF_HOME / HUGGINGFACE_HUB_CACHE  — keep under TB36 hf-cache
-  ANEMLL_EMBEDDINGS_MODEL          — override model dir (default: TB36 checkpoint)
-  ANEMLL_EMBEDDINGS_VENV note      — runtime venv should be local (not SMB); see README
-  ANEMLL_EMBEDDINGS_ARTIFACTS      — /Volumes/Models/anemll-embeddings/artifacts
-                                     (do NOT put compile artifacts on TB36/SAN512/internal)
+  ANEMLL_HF_CACHE                  — optional HF cache dir (sets HF_HOME if unset)
+  ANEMLL_EMBEDDINGS_MODEL          — model dir (default: ~/.anemll-embeddings/embeddinggemma-2-full)
+  ANEMLL_EMBEDDINGS_ARTIFACTS      — compile artifacts (default: ~/.anemll-embeddings/artifacts);
+                                     keep them outside the git checkout
 """
 
 from __future__ import annotations
@@ -153,7 +152,8 @@ def main() -> int:
             "sentence_transformers": __import__("sentence_transformers").__version__,
             "numpy": np.__version__,
         },
-        "load": load_meta,
+        # Directory name only: an absolute local path is machine-specific.
+        "load": {**load_meta, "model_path": Path(load_meta["model_path"]).name},
         "normalize_embeddings": args.normalize,
         "prompts_file": str(args.prompts.relative_to(REPO_ROOT)),
         "prompt_ids": ids,

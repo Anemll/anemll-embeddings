@@ -28,6 +28,14 @@ from PIL import Image
 from api.feeds import assert_text_mask_preserved, audio_tower_feed, vision_tower_feed
 from api.host_embed import load_slim_host
 from api.mock import MockBackend
+from api.runtime_paths import (
+    COREAI_SETUP_HINT,
+    CoreAIPythonNotFound,
+    current_python_has_coreai,
+    resolve_coreai_python,
+)
+from api.runtime_paths import default_artifacts as _default_artifacts
+from api.runtime_paths import default_model as _default_model
 from api.types import DIM, EmbedResult, TowerHealth
 from api.coreai_host import (
     AUDIO_FRAMES,
@@ -104,14 +112,21 @@ class CoreAIWorkerClient:
         folder = Path(self._tmp.name)
         npz = folder / f"in_{self._seq}.npz"
         out = folder / f"out_{self._seq}.npy"
-        np.savez(npz, **{key: np.ascontiguousarray(val) for key, val in feed.items()})
-        reply = self._request(
-            {"cmd": "forward", "tower": tower, "npz": str(npz), "out": str(out)}
-        )
-        elapsed = float(reply.get("latency_ms") or 0.0)
-        # One line per Neural Engine forward, so a click's inferences can be counted.
-        print(f"[ane] forward tower={tower} {elapsed:.1f} ms", file=sys.stderr, flush=True)
-        return np.load(out), elapsed
+        # IPC files live only for one forward. Without this cleanup every
+        # image request would leave a few MB behind until shutdown.
+        try:
+            np.savez(npz, **{key: np.ascontiguousarray(val) for key, val in feed.items()})
+            reply = self._request(
+                {"cmd": "forward", "tower": tower, "npz": str(npz), "out": str(out)}
+            )
+            elapsed = float(reply.get("latency_ms") or 0.0)
+            # One line per Neural Engine forward, so a click's inferences can be counted.
+            print(f"[ane] forward tower={tower} {elapsed:.1f} ms", file=sys.stderr, flush=True)
+            result = np.load(out)
+            return result, elapsed
+        finally:
+            npz.unlink(missing_ok=True)
+            out.unlink(missing_ok=True)
 
     def close(self) -> None:
         if self._proc is None:
@@ -207,15 +222,22 @@ class CoreAIBackend:
         if self._runner is None:
             if self.artifacts is None:
                 raise FileNotFoundError(
-                    "coreai backend needs ANEMLL_EMBEDDINGS_ARTIFACTS "
-                    "(directory that contains coreai/vision_s280.aimodel)"
+                    "coreai backend found no Core AI packages. Run "
+                    "`python scripts/download_models.py` (writes "
+                    "~/.anemll-embeddings/artifacts, used automatically), or set "
+                    "ANEMLL_EMBEDDINGS_ARTIFACTS to the directory that contains "
+                    "coreai/vision_s280.aimodel"
                 )
             packages = package_paths(self.artifacts)
             missing = [str(path) for path in packages.values() if not path.exists()]
             if missing:
-                raise FileNotFoundError("missing Core AI packages: " + ", ".join(missing))
+                raise FileNotFoundError(
+                    "missing Core AI packages: "
+                    + ", ".join(missing)
+                    + " (run `python scripts/download_models.py`)"
+                )
             self._runner = CoreAIWorkerClient(
-                packages, compute=self.compute, python=self.coreai_python
+                packages, compute=self.compute, python=worker_python(self.coreai_python)
             )
             self._owns_runner = True
         report = self._runner.startup()
@@ -268,15 +290,16 @@ class CoreAIBackend:
 
         if self.model_path is None or not Path(self.model_path).is_dir():
             raise FileNotFoundError(
-                "coreai backend needs ANEMLL_EMBEDDINGS_MODEL "
-                "(EmbeddingGemma 2 checkpoint for the host embed lookup and processor)"
+                "coreai backend found no host model (tokenizer, processor, embed "
+                "table). Run `python scripts/download_models.py` (writes "
+                "~/.anemll-embeddings/embeddinggemma-2, used automatically), or set "
+                "ANEMLL_EMBEDDINGS_MODEL"
             )
         slim = load_slim_host(self.model_path)
         if slim is not None:
             self._text, self._prompts = slim
-            self._proc = AutoProcessor.from_pretrained(
-                str(self.model_path), trust_remote_code=True
-            )
+            # Gemma 3n processors are built into Transformers 5; no remote code.
+            self._proc = AutoProcessor.from_pretrained(str(self.model_path))
             return
         from model.embed_wrapper import EmbeddingGemma2Wrapper
         from model.load_text_model import load_sentence_transformer
@@ -287,7 +310,7 @@ class CoreAIBackend:
         wrapper = EmbeddingGemma2Wrapper.from_sentence_transformer(st, normalize=True).eval()
         self._text = wrapper.text_model
         self._prompts = {str(k): str(v) for k, v in (getattr(st, "prompts", {}) or {}).items()}
-        self._proc = AutoProcessor.from_pretrained(str(self.model_path), trust_remote_code=True)
+        self._proc = AutoProcessor.from_pretrained(str(self.model_path))
 
     def _prompt(self, text: str, role: str) -> str:
         if role == "query":
@@ -478,21 +501,42 @@ class CoreAIBackend:
         return self._max_samples
 
 
-def _env_path(name: str) -> Path | None:
-    raw = os.environ.get(name)
-    return Path(raw) if raw else None
-
-
 def default_artifacts() -> Path | None:
-    return _env_path("ANEMLL_EMBEDDINGS_ARTIFACTS")
+    """``$ANEMLL_EMBEDDINGS_ARTIFACTS``, else ``~/.anemll-embeddings/artifacts`` if present."""
+    return _default_artifacts()
 
 
 def default_model() -> Path | None:
-    return _env_path("ANEMLL_EMBEDDINGS_MODEL")
+    """``$ANEMLL_EMBEDDINGS_MODEL``, else ``~/.anemll-embeddings/embeddinggemma-2`` if present."""
+    return _default_model()
 
 
 def default_coreai_python() -> Path | None:
-    return _env_path("ANEMLL_COREAI_PYTHON")
+    """``$ANEMLL_COREAI_PYTHON`` as given, else the first documented location that exists."""
+    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
+    if raw:
+        return Path(raw).expanduser()
+    return resolve_coreai_python(required=False)
+
+
+def worker_python(explicit: Path | str | None) -> Path | None:
+    """Interpreter for ``api/coreai_worker.py``, checked before spawning it.
+
+    ``None`` means "this interpreter", which is only valid when it can import
+    ``coreai.runtime`` itself. Otherwise raise with setup instructions rather
+    than letting the worker die with a bare import error.
+    """
+    if explicit is not None:
+        return resolve_coreai_python(explicit, required=True)
+    found = resolve_coreai_python(required=False)
+    if found is not None:
+        return found
+    if current_python_has_coreai():
+        return None
+    raise CoreAIPythonNotFound(
+        f"no Core AI Python found and {sys.executable} cannot import coreai.runtime.\n"
+        f"{COREAI_SETUP_HINT}"
+    )
 
 
 TextRole = Literal["query", "document", "SearchQuery", "Document"]
@@ -540,11 +584,15 @@ class Embedder:
         Args:
             artifacts: Directory that contains ``coreai/vision_s280.aimodel``
                 (and the audio / text-embeds packages). Defaults to
-                ``ANEMLL_EMBEDDINGS_ARTIFACTS``.
+                ``ANEMLL_EMBEDDINGS_ARTIFACTS``, then
+                ``~/.anemll-embeddings/artifacts`` when it exists.
             model: EmbeddingGemma 2 checkpoint directory (host tokenizer and
-                embedding table). Defaults to ``ANEMLL_EMBEDDINGS_MODEL``.
+                embedding table). Defaults to ``ANEMLL_EMBEDDINGS_MODEL``, then
+                ``~/.anemll-embeddings/embeddinggemma-2`` when it exists.
             coreai_python: Interpreter that can ``import coreai.runtime``.
-                Defaults to ``ANEMLL_COREAI_PYTHON``.
+                Defaults to ``ANEMLL_COREAI_PYTHON``, then the documented
+                locations in ``api/runtime_paths.py``. Raises
+                ``CoreAIPythonNotFound`` with setup steps if none exists.
             compute: ``"ane"`` (Neural Engine) or ``"cpu"``.
             backend: ``"coreai"``, ``"mock"``, or ``"reference"``.
         """

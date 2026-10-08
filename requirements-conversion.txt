@@ -1,5 +1,4 @@
-# Conversion extras for the local venv at
-# /Volumes/Models/anemll-embeddings/.venv
-# (torch / transformers / sentence-transformers already installed).
+# Conversion extras for the conversion venv
+# (install the runtime + reference extras first: pip install -e ".[runtime,reference]").
 # Public wheel first — do not assume forge's patched 9.1.dev1.
 coremltools==9.0

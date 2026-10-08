@@ -84,7 +84,7 @@ function renderLibrary(items) {
     const card = document.createElement("article");
     card.className = "card";
     const audio = item.modality === "audio" && item.media_url
-      ? `<audio controls src="${item.media_url}"></audio>`
+      ? `<audio controls src="${escapeHtml(item.media_url)}"></audio>`
       : "";
     card.innerHTML = `
       ${mediaBlock(item)}
@@ -159,7 +159,7 @@ function renderHits(hits) {
     row.className = "hit";
     const percent = similarityPercent(hit.score);
     const audio = hit.modality === "audio" && hit.media_url
-      ? `<audio controls src="${hit.media_url}"></audio>`
+      ? `<audio controls src="${escapeHtml(hit.media_url)}"></audio>`
       : "";
     row.innerHTML = `
       ${mediaBlock(hit)}

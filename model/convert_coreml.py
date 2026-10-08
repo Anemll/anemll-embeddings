@@ -119,7 +119,7 @@ def main() -> int:
     if ct is None:
         print(
             "ERROR: coremltools is not installed in this venv.\n"
-            "  /Volumes/Models/anemll-embeddings/.venv/bin/python -m pip install "
+            "  python -m pip install "
             "'coremltools==9.0'"
         )
         return 1

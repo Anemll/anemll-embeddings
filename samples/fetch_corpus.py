@@ -26,6 +26,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from demo.settings import assert_outside_artifacts, default_corpus_dir, env_path  # noqa: E402
+from samples.download_utils import (  # noqa: E402
+    MAX_AUDIO_BYTES,
+    MAX_IMAGE_BYTES,
+    download,
+    file_record,
+    get_json,
+    utc_now,
+)
 
 UA = "anemll-embeddings-demo/1.0 (local educational corpus; contact local)"
 IMAGE_TOPICS = [
@@ -74,16 +82,12 @@ ALLOWED = {"cc0", "by", "pdm", "publicdomain"}
 
 
 def _get_json(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=45) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return get_json(url, user_agent=UA, timeout=45)
 
 
-def _download(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=60) as response:
-        dest.write_bytes(response.read())
+def _download(url: str, dest: Path, *, max_bytes: int = MAX_IMAGE_BYTES) -> dict:
+    """Bounded download; returns url / final_url / bytes / sha256 / fetched_at."""
+    return download(url, dest, user_agent=UA, max_bytes=max_bytes, timeout=60)
 
 
 def _license_ok(row: dict) -> bool:
@@ -254,7 +258,7 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
             seen.add(row["url"])
             ext = ".png" if row["url"].lower().split("?")[0].endswith(".png") else ".jpg"
             rel = f"images/{index:02d}-{topic.replace(' ', '-')}{ext}"
-            _download(row["url"], dest / rel)
+            fetched = _download(row["url"], dest / rel, max_bytes=MAX_IMAGE_BYTES)
             items.append(
                 {
                     "file": rel,
@@ -263,10 +267,14 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
                     "topic": topic,
                     "license": row.get("license"),
                     "license_version": row.get("license_version"),
+                    "license_url": row.get("license_url"),
                     "creator": row.get("creator"),
                     "credit": _credit(row),
                     "source": row.get("foreign_landing_url") or row.get("url"),
                     "provider": "Openverse",
+                    "download": fetched,
+                    "stored": file_record(dest / rel),
+                    "modifications": "none (stored as downloaded)",
                 }
             )
             print(f"image {topic} · {row.get('license')} · {row.get('title')}")
@@ -286,9 +294,11 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
             seen.add(row["url"])
             raw = dest / "audio" / f"{index:02d}-raw"
             wav_rel = f"audio/{index:02d}-{topic.replace(' ', '-')}.wav"
-            _download(row["url"], raw)
-            _trim_wav(raw, dest / wav_rel)
-            raw.unlink(missing_ok=True)
+            try:
+                fetched = _download(row["url"], raw, max_bytes=MAX_AUDIO_BYTES)
+                _trim_wav(raw, dest / wav_rel)
+            finally:
+                raw.unlink(missing_ok=True)
             items.append(
                 {
                     "file": wav_rel,
@@ -297,11 +307,18 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
                     "topic": topic,
                     "license": row.get("license"),
                     "license_version": row.get("license_version"),
+                    "license_url": row.get("license_url"),
                     "creator": row.get("creator"),
                     "credit": _credit(row),
                     "source": row.get("foreign_landing_url") or row.get("url"),
                     "provider": "Openverse",
                     "duration_ms": row.get("duration"),
+                    "download": fetched,
+                    "stored": file_record(dest / wav_rel),
+                    "modifications": (
+                        f"converted to 16 kHz mono 16-bit WAV, trimmed to at most "
+                        f"{MAX_AUDIO_SECONDS} s"
+                    ),
                 }
             )
             print(f"audio {topic} · {row.get('license')} · {row.get('title')}")
@@ -315,6 +332,11 @@ def fetch(dest: Path, *, limit_images: int | None, limit_audio: int | None) -> d
             "Keep the credit line with each file."
         ),
         "source": "https://api.openverse.org/",
+        "fetched_at": utc_now(),
+        "reproducibility": (
+            "Openverse search results change over time; a re-run may pick different "
+            "files. Each item records its final URL and SHA-256 as fetched."
+        ),
         "items": items,
     }
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2))

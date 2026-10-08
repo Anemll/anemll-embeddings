@@ -2,9 +2,9 @@
 """Generate ST reference embeddings for full 740M multimodal EmbeddingGemma 2.
 
 Writes synthetic media + embeddings under ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/
-(not TB36, not git). Does not overwrite the FLOAT32 text Core ML tree.
+(not in git). Does not overwrite the FLOAT32 text Core ML tree.
 
-Environment matches T1: HF caches on TB36, artifacts on /Volumes/Models.
+Environment matches T1 (see ``model/gen_reference_fixtures.py``).
 """
 
 from __future__ import annotations

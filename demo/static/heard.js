@@ -14,11 +14,18 @@ function setError(err) {
   errorBox.textContent = err ? String(err.message || err) : "";
 }
 
+function audioNode(url) {
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.src = String(url);
+  return audio;
+}
+
 function renderTimeline(items) {
-  timeline.innerHTML = "";
+  timeline.replaceChildren();
   const rows = (items || []).slice().sort((a, b) => Number(a.t_start) - Number(b.t_start));
   if (!rows.length) {
-    timeline.innerHTML = "<p class='hint'>No chunks yet.</p>";
+    timeline.appendChild(el("p", "hint", "No chunks yet."));
     return;
   }
   rows.forEach((item) => {
@@ -27,9 +34,8 @@ function renderTimeline(items) {
     row.dataset.id = item.id;
     const start = Number(item.t_start || 0).toFixed(1);
     const end = Number(item.t_end || 0).toFixed(1);
-    row.innerHTML = `
-      <div>${start}s – ${end}s</div>
-      <audio controls src="${item.media_url}"></audio>`;
+    row.append(el("div", "", `${start}s – ${end}s`));
+    if (item.media_url) row.appendChild(audioNode(item.media_url));
     timeline.appendChild(row);
   });
 }
@@ -121,23 +127,20 @@ document.getElementById("find-form").addEventListener("submit", async (event) =>
     });
     showBadge(searchBadge, data.query);
     hits.clear();
-    results.innerHTML = "";
+    results.replaceChildren();
     (data.results || []).forEach((hit) => {
       hits.add(hit.id);
-      const row = document.createElement("article");
-      row.className = "hit";
-      row.innerHTML = `
-        <div class="placeholder">${Number(hit.t_start || 0).toFixed(1)}s</div>
-        <div class="meta">
-          ${chip("audio")}
-          <strong>${labelOf(hit)}</strong>
-          <p>cosine ${Number(hit.score).toFixed(3)}</p>
-          ${hit.media_url ? `<audio controls src="${hit.media_url}"></audio>` : ""}
-        </div>`;
+      // Labels are user input: DOM nodes + textContent only.
+      const row = el("article", "hit");
+      const meta = el("div", "meta");
+      meta.append(chipNode("audio"), " ", el("strong", "", labelOf(hit)),
+        el("p", "", `cosine ${Number(hit.score).toFixed(3)}`));
+      if (hit.media_url) meta.appendChild(audioNode(hit.media_url));
+      row.append(el("div", "placeholder", `${Number(hit.t_start || 0).toFixed(1)}s`), meta);
       results.appendChild(row);
     });
     if (!results.children.length) {
-      results.innerHTML = "<p class='hint'>No chunks in this session yet.</p>";
+      results.appendChild(el("p", "hint", "No chunks in this session yet."));
     }
     await refresh();
   } catch (err) {

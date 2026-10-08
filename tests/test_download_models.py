@@ -251,7 +251,10 @@ def test_download_host_prefers_mirrored(tmp: Path) -> None:
     def fake(**kwargs):
         calls.append(kwargs)
 
-    with patch("scripts.download_common._hf_snapshot_download", fake):
+    # Dummy payload: checksum verification is covered in test_release_hardening.
+    with patch("scripts.download_common._hf_snapshot_download", fake), patch(
+        "scripts.download_models.verify_mirrored_host", lambda *a, **k: "skipped"
+    ):
         status = download_host(tmp / "embeddinggemma-2", ane_dir=ane, force=True)
     if status != "anemll-host":
         _fail(f"status {status}")

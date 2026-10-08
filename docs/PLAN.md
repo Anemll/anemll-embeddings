@@ -6,8 +6,8 @@ Concrete phased plan for converting Google’s **EmbeddingGemma 2** to Core ML f
 
 **Checkpoint:** [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (prefer official; ~1.53 GB text safetensors when modality encoders are omitted).  
 **Reference stack:** Sentence-Transformers `SentenceTransformer("google/embeddinggemma-2", …)`.  
-**Forge reference (read-only):** `/Users/anemll/anemll-forge` — especially `docs/WORKFLOW.md`, `docs/TECHNIQUES.md`, `docs/ENVIRONMENT.md`, `docs/ANE_COMPILE_MODE_POLICY.md`, `ANE_DELTANET_NUMERICS.md`, `forge.py` `convert` → `scripts/qwen38_ane_model.py` / `qwen38_ane_chunk.py`, `tools/coreml/`.  
-**Weights location:** `/Volumes/TB36/Models/anemll-embeddings` (TrueNAS SMB **TB36**). Checkpoint dir: `…/google-embeddinggemma-2`. HF cache: `…/hf-cache`. Do **not** download into this git repo, onto flash USB `/Volumes/SAN512` (slow; may hold a partial ~702M copy), or onto a full internal SSD. Do **not** download models as part of planning work.
+**Forge reference (read-only):** an [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge) checkout — especially `docs/WORKFLOW.md`, `docs/TECHNIQUES.md`, `docs/ENVIRONMENT.md`, `docs/ANE_COMPILE_MODE_POLICY.md`, `ANE_DELTANET_NUMERICS.md`, `forge.py` `convert` → `scripts/qwen38_ane_model.py` / `qwen38_ane_chunk.py`, `tools/coreml/`.  
+**Weights location:** outside this git repo, on a fast local or attached disk with room for the checkpoint, the Hugging Face cache, and the compiled artifacts. Point `ANEMLL_EMBEDDINGS_MODEL`, `ANEMLL_EMBEDDINGS_ARTIFACTS`, and (optionally) `HF_HOME` / `ANEMLL_HF_CACHE` at it. The default is `~/.anemll-embeddings/` (see `scripts/download_export_assets.py`). Do **not** download into the git checkout or onto slow removable media. Do **not** download models as part of planning work.
 
 ---
 
@@ -42,7 +42,7 @@ Sentence-Transformers graph (conceptual): Transformer → mean Pooling (`embeddi
 1. Keep this checkout lean: code, configs, fixed prompt fixtures, docs. Weights and `.mlpackage` / `.mlmodelc` stay gitignored on the network volume.
 2. Conversion venv (separate from forge’s Qwen/Core AI stack): Python 3.11, `torch`, `transformers`, `sentence-transformers`, `safetensors`, `coremltools` 9.x (public wheel first; note forge’s research env used a patched `9.1.dev1` with FP8 work—**do not assume that patch is required** for a text encoder).
 3. Record `python -c '…'` / `forge.py doctor`-style version dumps when the forge checkout is available, but **do not** merge forge’s Core AI Python 3.13 / `coreai-*` pins into this project.
-4. Network volume confirmed: `/Volumes/TB36/Models/anemll-embeddings`. Set `HF_HOME` / `HUGGINGFACE_HUB_CACHE` to `…/hf-cache` before any download ticket.
+4. Weights directory chosen (see **Weights location** above). Set `HF_HOME` / `ANEMLL_HF_CACHE` to a cache on that disk before any download ticket.
 
 ---
 
@@ -159,7 +159,7 @@ Small, numbered, independently mergeable:
 9. **T9 — MRL host path:** Truncate+renorm helper matching ST `truncate_dim`; parity at 128/256/512.
 10. **T10 — FP16 hazard report:** Explicit experiment: what happens if convert forces FP16 compute; document NaN/cosine collapse; decide FP32 islands or other mitigation before any release claim.
 11. **T11 — GELU A/B:** Native vs approximate GELU on ANE; pick recipe; note in PLAN results subsection.
-12. **T12 — Network volume + HF cache docs:** README pins TB36 paths; keep caches there; no model bytes in git.
+12. **T12 — Weights + HF cache docs:** README documents where weights and caches live; no model bytes in git.
 
 ---
 
@@ -171,14 +171,14 @@ Only after Phase 1 cosine/placement gates pass on text.
 2. **Load sizes:** text+image ~440M (`audio_config=None`); text+audio ~570M (`vision_config=None`); full 740M.
 3. **Token budgets:** images ~280 tokens default (configurable 70–1120); video frames ~140; audio ~25 tokens/s; shared 8K window—ANE shapes must reflect the chosen budget.
 4. **Prefixes:** still text-only; media has no task prefix.
-5. **Validation:** extend fixtures with tiny synthetic image/audio **paths on the network volume** (not in git); cross-modal cosine vs ST; keep text regression suite green.
+5. **Validation:** extend fixtures with tiny synthetic image/audio **paths outside the repo** (not in git); cross-modal cosine vs ST; keep text regression suite green.
 6. **Reuse forge?** Still no—multimodal encoders are not Qwen DeltaNet chunks. Possibly revisit Core AI later if Core ML hits a hard ceiling; that is a separate decision.
 
 ---
 
 ## Open questions
 
-- ~~Confirmed network volume~~ → `/Volumes/TB36/Models/anemll-embeddings` (+ `hf-cache`).
+- ~~Weights location~~ → outside the repo; default `~/.anemll-embeddings/` (+ HF cache).
 - Exact HF revision pin for reproducibility (commit hash, not only `main`).
 - Whether first ship keeps **normalize inside** the `.mlpackage` or on host.
 - Whether embedding **gather stays on ANE** or moves host-side for size/placement.
