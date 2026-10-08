@@ -299,14 +299,14 @@ def main() -> int:
         "--tower",
         action="append",
         choices=tuple(TOWER_PACKAGES),
-        help="Repeatable. Default: vision, text, audio.",
+        help="Repeatable. Default: vision, text, audio. text_embeds is the caption / mixed-media package.",
     )
     parser.add_argument("--artifacts", type=Path, default=artifacts_root())
     parser.add_argument(
         "--compute",
         choices=("cpu", "ane", "default"),
         default="cpu",
-        help="Specialization. Default cpu. ANE: isolate per tower (SIGABRT).",
+        help="Specialization. Default cpu. Use ane for the Neural Engine (pair with --isolated if one tower abort should not kill the rest).",
     )
     parser.add_argument(
         "--isolated",

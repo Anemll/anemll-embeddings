@@ -409,7 +409,7 @@ def main() -> int:
         "--tower",
         action="append",
         choices=("vision", "audio", "text", "text_embeds"),
-        help="Repeatable. Default: vision, audio, text.",
+        help="Repeatable. Default: vision, audio, text (ids). Add text_embeds for captions / mixed media.",
     )
     parser.add_argument("--seq-len", type=int, default=128, help="Ids text package S (default 128).")
     parser.add_argument(
