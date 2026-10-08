@@ -1,14 +1,14 @@
 """Cosine scoring for the camera-alert rules.
 
-Vectors are L2-normalized, so cosine is a dot product. A text rule with a
-baseline frame (the empty street) reports the margin over that frame: the
-street itself is 0 and stays quiet while the threshold is positive. Other
-rules report cosine directly.
+Vectors are L2-normalized, so cosine is a dot product. The significant rule
+is not a text match: it is how far a frame has moved from the empty-street
+photo, ``1 - cosine(frame, street)``. The street itself is 0.
 
-Once every item in a rule's scope has a score, the suggested threshold is:
-
-- baseline rules: half the smallest positive margin
-- every other rule: the midpoint between the best score and the second best
+Once every item in a rule's scope has a score, the suggested threshold is
+the midpoint between the lowest true positive and the highest negative.
+That sits in the gap (UPS vs FedEx, Sparky vs the next cat, bark vs meow).
+A text rule that only names a baseline frame, with no positive ids, still
+uses half the smallest positive margin.
 """
 
 from __future__ import annotations
@@ -17,7 +17,13 @@ from typing import Any
 
 import numpy as np
 
-from demo.alert_catalog import MARGIN_PLACEHOLDER, PHOTO_PLACEHOLDER, TEXT_PLACEHOLDER
+from demo.alert_catalog import (
+    DOG_THRESHOLD,
+    MEOW_THRESHOLD,
+    PHOTO_THRESHOLD,
+    SIGNIFICANT_THRESHOLD,
+    UPS_THRESHOLD,
+)
 from demo.types import DIM
 
 
@@ -62,12 +68,50 @@ def suggest_margin(margins: list[float]) -> float | None:
     return min(positive) / 2.0
 
 
+def suggest_split(scores: dict[str, float], positive_ids: list[str]) -> float | None:
+    """Midpoint of the lowest true positive and the highest negative.
+
+    Returns None until both classes have a score. The line is halfway across
+    the gap, so a thin margin (bark vs meow, UPS vs FedEx) stays visible.
+    """
+    wanted = {str(item_id) for item_id in positive_ids}
+    positives: list[float] = []
+    negatives: list[float] = []
+    for item_id, score in scores.items():
+        value = float(score)
+        if str(item_id) in wanted:
+            positives.append(value)
+        else:
+            negatives.append(value)
+    if not positives or not negatives:
+        return None
+    return (min(positives) + max(negatives)) / 2.0
+
+
+def change_score(similarity: float, *, baseline: bool) -> float:
+    """1 - cosine against the empty street. The street frame itself is 0."""
+    if baseline:
+        return 0.0
+    return max(0.0, 1.0 - float(similarity))
+
+
 def placeholder_threshold(rule: dict[str, Any]) -> float:
-    if rule.get("baseline_id"):
-        return MARGIN_PLACEHOLDER
+    """Shipped M4 lines, used when a request does not send a threshold."""
+    known = {
+        "significant": SIGNIFICANT_THRESHOLD,
+        "ups": UPS_THRESHOLD,
+        "sparky": PHOTO_THRESHOLD,
+        "dog": DOG_THRESHOLD,
+        "meow-query": MEOW_THRESHOLD,
+    }
+    rule_id = str(rule.get("id") or "")
+    if rule_id in known:
+        return known[rule_id]
+    if rule.get("type") == "change":
+        return SIGNIFICANT_THRESHOLD
     if rule.get("type") == "photo":
-        return PHOTO_PLACEHOLDER
-    return TEXT_PLACEHOLDER
+        return PHOTO_THRESHOLD
+    return UPS_THRESHOLD
 
 
 def rule_value(raw: float, baseline_raw: float | None) -> float:

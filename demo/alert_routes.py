@@ -16,11 +16,11 @@ from fastapi.responses import FileResponse
 from PIL import Image
 
 from demo.alert_catalog import (
+    CHANGE_LABELS,
     FRAMES,
     MEOW_COMPARE,
     REFERENCES,
     SOUNDS,
-    catalog_items,
     default_rules,
 )
 from demo.alert_library import (
@@ -31,6 +31,7 @@ from demo.alert_library import (
 )
 from demo.alert_score import (
     average_unit,
+    change_score,
     cosine,
     fires,
     placeholder_threshold,
@@ -38,6 +39,7 @@ from demo.alert_score import (
     scope_ids,
     suggest_margin,
     suggest_midpoint,
+    suggest_split,
 )
 from demo.media_io import AUDIO_SR, load_image_bytes
 
@@ -178,8 +180,8 @@ def _parse_rules(raw: Any) -> list[dict[str, Any]]:
             raise HTTPException(400, f"duplicate rule {rule_id}")
         seen.add(rule_id)
         rule_type = str(row.get("type") or "")
-        if rule_type not in {"text", "photo"}:
-            raise HTTPException(400, f"rule {rule_id} type must be text or photo")
+        if rule_type not in {"text", "photo", "change"}:
+            raise HTTPException(400, f"rule {rule_id} type must be text, photo, or change")
         name = str(row.get("name") or "").strip()
         if not name or len(name) > 80:
             raise HTTPException(400, f"rule {rule_id} needs a name")
@@ -192,6 +194,9 @@ def _parse_rules(raw: Any) -> list[dict[str, Any]]:
         baseline = row.get("baseline_id")
         if baseline:
             baseline = valid_id(str(baseline))
+        if rule_type == "change" and not baseline:
+            raise HTTPException(400, f"rule {rule_id} needs a baseline frame")
+        positive_ids = _positive_ids(row.get("positive_ids"))
         threshold = row.get("threshold")
         if threshold is None or threshold == "":
             threshold_value = None
@@ -211,13 +216,23 @@ def _parse_rules(raw: Any) -> list[dict[str, Any]]:
                 "name": name,
                 "chip": chip,
                 "text": text or None,
+                "label": str(row.get("label") or "").strip() or None,
                 "baseline_id": baseline,
                 "scope": scope,
                 "threshold": threshold_value,
+                "positive_ids": positive_ids,
                 "color": color,
             }
         )
     return parsed
+
+
+def _positive_ids(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 24:
+        raise HTTPException(400, "positive_ids must be a list of sample ids")
+    return [valid_id(str(item_id)) for item_id in raw]
 
 
 def _known_frame(item_id: str) -> str:
@@ -368,6 +383,9 @@ async def _score(
                 refs.append(vector)
             rule_vectors[rule["id"]] = average_unit(refs)
             rule_notes[rule["id"]] = None
+        elif rule["type"] == "change":
+            # Compared with the baseline frame below, not with a text query.
+            rule_notes[rule["id"]] = None
         else:
             raise HTTPException(400, f"unknown rule type {rule['type']}")
 
@@ -375,12 +393,18 @@ async def _score(
     if compare_on:
         compare_vec = await embed_query(str(MEOW_COMPARE["text"]))
 
+    label_vectors: list[tuple[str, Any]] = []
+    if any(rule["type"] == "change" for rule in rules):
+        for label in CHANGE_LABELS:
+            label_vectors.append((str(label["caption"]), await embed_query(str(label["text"]))))
+
     raw_by_rule: dict[str, dict[str, float]] = {}
+    cosine_by_rule: dict[str, dict[str, float]] = {}
+    hints: dict[str, dict[str, str]] = {}
     for rule in rules:
         raw_by_rule[rule["id"]] = {}
-        probe = rule_vectors.get(rule["id"])
-        if probe is None:
-            continue
+        cosine_by_rule[rule["id"]] = {}
+        hints[rule["id"]] = {}
         ids = scope_ids(available, str(rule["scope"]))
         for item_id in ids:
             # A single click embeds that frame (and the empty-street baseline).
@@ -388,8 +412,31 @@ async def _score(
             # cached, or when this request asked for them.
             if item_id not in vectors:
                 await cached_media(item_id)
+        if rule["type"] == "change":
+            baseline_id = str(rule["baseline_id"])
+            base_vec = vectors.get(baseline_id)
+            if base_vec is None:
+                continue
+            for item_id in ids:
+                vector = vectors.get(item_id)
+                if vector is None:
+                    continue
+                similarity = cosine(vector, base_vec)
+                cosine_by_rule[rule["id"]][item_id] = similarity
+                raw_by_rule[rule["id"]][item_id] = change_score(similarity, baseline=item_id == baseline_id)
+                if label_vectors:
+                    caption = max(label_vectors, key=lambda pair: cosine(vector, pair[1]))[0]
+                    hints[rule["id"]][item_id] = f"Looks most like {caption}"
+            continue
+        probe = rule_vectors.get(rule["id"])
+        if probe is None:
+            continue
         for item_id, vector in vectors.items():
-            raw_by_rule[rule["id"]][item_id] = cosine(vector, probe)
+            if item_id not in ids and item_id not in target_ids:
+                continue
+            similarity = cosine(vector, probe)
+            cosine_by_rule[rule["id"]][item_id] = similarity
+            raw_by_rule[rule["id"]][item_id] = similarity
 
     suggestions: dict[str, float] = {}
     thresholds: dict[str, float] = {}
@@ -397,14 +444,23 @@ async def _score(
         raws = raw_by_rule.get(rule["id"]) or {}
         scope = scope_ids(available, str(rule["scope"]))
         complete = bool(scope) and all(item_id in raws for item_id in scope)
-        baseline_id = rule.get("baseline_id")
-        if baseline_id and baseline_id in raws:
-            base_raw = raws[baseline_id]
-            values = [rule_value(raws[item_id], base_raw) for item_id in scope if item_id in raws and item_id != baseline_id]
-            suggested = suggest_margin(values) if complete else None
+        positives = [str(item_id) for item_id in (rule.get("positive_ids") or [])]
+        if rule["type"] == "change" and not positives and rule.get("baseline_id"):
+            positives = [item_id for item_id in scope if item_id != rule["baseline_id"]]
+        scoped = {item_id: raws[item_id] for item_id in scope if item_id in raws}
+        if rule["type"] != "change" and rule.get("baseline_id") and rule["baseline_id"] in raws:
+            base_raw = raws[str(rule["baseline_id"])]
+            scoped = {
+                item_id: rule_value(raws[item_id], base_raw)
+                for item_id in scope
+                if item_id in raws
+            }
+        if positives and complete:
+            suggested = suggest_split(scoped, positives)
+        elif rule.get("baseline_id") and rule["type"] != "change" and complete:
+            suggested = suggest_margin([value for item_id, value in scoped.items() if item_id != rule["baseline_id"]])
         else:
-            values = [raws[item_id] for item_id in scope if item_id in raws]
-            suggested = suggest_midpoint(values) if complete else None
+            suggested = suggest_midpoint(list(scoped.values())) if complete else None
         if suggested is not None:
             suggestions[rule["id"]] = _num(suggested)
         sent = rule.get("threshold")
@@ -423,7 +479,7 @@ async def _score(
             if item_id in vectors:
                 compare_scores[item_id] = cosine(vectors[item_id], compare_vec)
         if audio_ids and all(item_id in compare_scores for item_id in audio_ids):
-            compare_suggestion = suggest_midpoint([compare_scores[item_id] for item_id in audio_ids])
+            compare_suggestion = suggest_split(compare_scores, list(MEOW_COMPARE.get("positive_ids") or []))
             if compare_suggestion is not None:
                 compare_suggestion = _num(compare_suggestion)
 
@@ -453,9 +509,18 @@ async def _score(
                     }
                 )
                 continue
-            baseline_id = rule.get("baseline_id")
-            baseline_raw = raws.get(baseline_id) if baseline_id else None
-            value = rule_value(raws[item_id], baseline_raw if baseline_id else None)
+            if rule["type"] == "change":
+                value = float(raws[item_id])
+                raw_value = cosine_by_rule.get(rule["id"], {}).get(item_id, value)
+                detail = rule.get("label") or "different from the usual empty street"
+                hint = hints.get(rule["id"], {}).get(item_id)
+            else:
+                baseline_id = rule.get("baseline_id")
+                baseline_raw = raws.get(baseline_id) if baseline_id else None
+                value = rule_value(raws[item_id], baseline_raw if baseline_id else None)
+                raw_value = raws[item_id]
+                detail = "margin over the empty street" if baseline_id else None
+                hint = None
             threshold = thresholds[rule["id"]]
             rule_rows.append(
                 {
@@ -464,10 +529,12 @@ async def _score(
                     "chip": rule["chip"],
                     "color": rule["color"],
                     "score": _num(value),
-                    "raw": _num(raws[item_id]),
+                    "raw": _num(raw_value),
                     "threshold": _num(threshold),
+                    "margin": _num(value - threshold),
                     "high": fires(value, threshold),
-                    "detail": "margin over the empty street" if baseline_id else None,
+                    "detail": detail,
+                    "hint": hint,
                 }
             )
         comparisons = []

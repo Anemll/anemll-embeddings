@@ -551,13 +551,28 @@ footer.note {
   font-size: 0.78rem;
   color: var(--muted);
 }
-.meter-top .num { margin-left: auto; font-family: var(--mono); color: var(--ink); }
+.meter-top .num { margin-left: auto; font-family: var(--mono); color: var(--ink); white-space: nowrap; }
+.margin { font-family: var(--mono); }
+.margin.up { color: #3dba7a; }
+.margin.down { color: #8d8680; }
 .verdict { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.04em; }
 .rule-meter.high .verdict { color: #3dba7a; }
 .rule-meter.low .verdict { color: #8d8680; }
+.rule-meter .score { position: relative; height: 10px; overflow: visible; }
 .rule-meter.high .score span { background: #3dba7a; }
 .rule-meter.low .score span { background: #6d675e; }
-.rule-meter .score span { width: 0; transition: width 0.45s ease; }
+.rule-meter .score span { width: 0; transition: width 0.45s ease; border-radius: 99px; }
+.threshold-tick {
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: #f4efe6;
+  pointer-events: none;
+}
+.change-hint { margin: 0.2rem 0 0; color: var(--faint); font-size: 0.75rem; }
 
 .compare-block {
   margin-top: 0.45rem;

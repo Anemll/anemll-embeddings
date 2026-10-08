@@ -1,6 +1,6 @@
 /* Camera alert: preset rules, click a frame or a sound, see what fires. */
 
-const STORAGE_KEY = "anemll-alert-rules-v1";
+const STORAGE_KEY = "anemll-alert-rules-v2";
 const statusNode = document.getElementById("alert-status");
 const errorNode = document.getElementById("alert-error");
 const badge = document.getElementById("latency-badge");
@@ -17,6 +17,7 @@ const state = {
   compareThreshold: null,
   compareLocked: false,
   compareFitted: false,
+  calibrating: null,
   busy: false,
 };
 
@@ -79,9 +80,10 @@ function saveRules() {
 function thresholdLabel(rule) {
   const number = formatScore(rule.threshold);
   if (rule.locked) return `Threshold ${number} · custom`;
-  if (rule.fitted) return `Threshold ${number} · set from this set`;
-  if (rule.baseline_id) return `Threshold ${number} · margin over the empty street`;
-  return `Threshold ${number} · placeholder until everything is scored`;
+  if (rule.type === "change" && rule.fitted) return `Threshold ${number} · halfway to the closest change`;
+  if (rule.fitted) return `Threshold ${number} · midway between a hit and the closest miss`;
+  if (rule.type === "change") return `Threshold ${number} · different from the usual empty street`;
+  return `Threshold ${number} · set from the M4 samples`;
 }
 
 function formatScore(score) {
@@ -95,10 +97,21 @@ function formatScore(score) {
 
 function barWidth(score, threshold) {
   if (score == null || Number.isNaN(Number(score))) return 0;
-  const value = Math.max(Number(score), 0);
+  const value = Number(score);
   const line = Number(threshold);
-  const denom = Math.max(line > 0 ? line / 0.66 : 0.2, value, 0.05);
-  return Math.max(0, Math.min(100, (value / denom) * 100));
+  // The tick stays at the middle. ±0.08 around the line fills the bar, so a
+  // thin gap (UPS vs FedEx, bark vs meow) is wide enough to see.
+  const half = 0.08;
+  if (!Number.isFinite(line)) return Math.max(0, Math.min(100, Math.max(value, 0) * 100));
+  const pos = 0.5 + (value - line) / (2 * half);
+  return Math.max(0, Math.min(100, pos * 100));
+}
+
+function formatMargin(score, threshold) {
+  const delta = Number(score) - Number(threshold);
+  if (!Number.isFinite(delta)) return "";
+  const text = Math.abs(delta).toFixed(3);
+  return delta >= 0 ? `+${text}` : `-${text}`;
 }
 
 function ruleById(id) {
@@ -106,7 +119,9 @@ function ruleById(id) {
 }
 
 function ruleDecided(rule) {
-  return Boolean(rule && (rule.fitted || rule.locked));
+  if (!rule) return false;
+  if (rule.locked || rule.fitted) return true;
+  return rule.pending !== true;
 }
 
 function applyThresholds() {
@@ -130,7 +145,7 @@ function applyThresholds() {
     (item.comparisons || []).forEach((entry) => {
       if (state.compareThreshold == null || entry.score == null) return;
       entry.threshold = state.compareThreshold;
-      entry.high = Boolean(state.compareFitted) && entry.score >= state.compareThreshold;
+      entry.high = entry.score >= state.compareThreshold;
     });
   });
 }
@@ -140,13 +155,21 @@ function meterMarkup(entry, label, decided) {
   const tone = entry.score == null || !decided ? "" : (entry.high ? "high" : "low");
   const width = barWidth(entry.score, entry.threshold);
   const number = entry.score == null ? "—" : formatScore(entry.score);
-  return `<div class="rule-meter ${tone}" title="Score = how similar in meaning">
+  const margin = entry.score == null || !decided ? "" : formatMargin(entry.score, entry.threshold);
+  const marginClass = entry.high ? "up" : "down";
+  const title = margin
+    ? `Score ${number}. Threshold ${formatScore(entry.threshold)}. Margin ${margin}.`
+    : "Score = how similar in meaning";
+  const hint = entry.hint ? `<p class="change-hint">${esc(entry.hint)}</p>` : "";
+  const tick = decided ? `<i class="threshold-tick" title="threshold"></i>` : "";
+  return `<div class="rule-meter ${tone}" title="${esc(title)}">
     <div class="meter-top">
       <span>${esc(label)}</span>
       <span class="verdict">${verdict}</span>
-      <span class="num">${number}</span>
+      <span class="num">${number}${margin ? ` <span class="margin ${marginClass}">${margin}</span>` : ""}</span>
     </div>
-    <div class="score" title="Score = how similar in meaning"><span data-width="${width}"></span></div>
+    <div class="score" title="${esc(title)}"><span data-width="${width}"></span>${tick}</div>
+    ${hint}
   </div>`;
 }
 
@@ -193,23 +216,26 @@ function referenceThumbs(rule) {
   return `<div class="ref-row">${thumbs.join("")}</div>`;
 }
 
+function ruleKind(rule) {
+  if (rule.type === "photo") return "Photo";
+  if (rule.type === "change") return "Change";
+  return "Text";
+}
+
 function renderRules() {
   rulesNode.innerHTML = state.rules.map((rule) => {
-    const kind = rule.type === "photo" ? "Photo" : "Text";
     const query = rule.type === "photo"
       ? referenceThumbs(rule)
-      : `<p class="rule-query">“${esc(rule.text || "")}”</p>`;
-    const extra = rule.baseline_id
-      ? `<p class="hint">Fires when a frame is closer to this description than the empty street.</p>`
-      : "";
+      : rule.type === "change"
+        ? `<p class="rule-query">${esc(rule.label || "different from the usual empty street")}</p>`
+        : `<p class="rule-query">“${esc(rule.text || "")}”</p>`;
     const honesty = rule.type === "photo"
       ? `<p class="hint">Visual similarity to the reference photo, not identity verification. Another black cat may also match.</p>`
       : "";
     return `<article class="rule-card" style="--rule:${esc(rule.color)}">
-      <div class="rule-kicker"><span class="type-badge">${kind}</span></div>
+      <div class="rule-kicker"><span class="type-badge">${ruleKind(rule)}</span></div>
       <h3>${esc(rule.name)}</h3>
       ${query}
-      ${extra}
       ${honesty}
       <p class="threshold-line" data-threshold-label="${esc(rule.id)}">${esc(thresholdLabel(rule))}</p>
     </article>`;
@@ -248,7 +274,7 @@ function paintTile(tile, item) {
     return;
   }
   const meters = (result.rules || []).map((entry) => meterMarkup(entry, entry.chip || entry.name, ruleDecided(ruleById(entry.id)))).join("");
-  const compare = (result.comparisons || []).map((entry) => meterMarkup(entry, entry.label, state.compareFitted)).join("");
+  const compare = (result.comparisons || []).map((entry) => meterMarkup(entry, entry.label, true)).join("");
   const compareBlock = compare ? `<div class="compare-block"><p>Compared with “a cat meowing”</p>${compare}</div>` : "";
   scoreRoot.innerHTML = `${chipsMarkup(result)}${meters}${compareBlock}`;
   animateMeters(scoreRoot);
@@ -314,6 +340,7 @@ async function score(ids, label) {
   setStatus(label || "Scoring…");
   document.getElementById("score-all").disabled = true;
   try {
+    if (state.calibrating) await state.calibrating;
     const data = await api("/alert/score", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -342,24 +369,31 @@ function wireRule(rule) {
     name: rule.name,
     chip: rule.chip || rule.name,
     text: rule.text,
+    label: rule.label || null,
     baseline_id: rule.baseline_id || null,
     scope: rule.scope || "all",
     threshold: rule.threshold,
+    positive_ids: rule.positive_ids || [],
     color: rule.color,
   };
 }
 
-function absorb(data) {
+function takeThresholds(data) {
   Object.entries(data.suggested_thresholds || {}).forEach(([id, value]) => {
     const rule = ruleById(id);
     if (!rule || rule.locked || value == null) return;
     rule.threshold = Number(value);
     rule.fitted = true;
+    rule.pending = false;
   });
   if (data.compare_threshold != null && !state.compareLocked) {
     state.compareThreshold = Number(data.compare_threshold);
     state.compareFitted = true;
   }
+}
+
+function absorb(data) {
+  takeThresholds(data);
   (data.items || []).forEach((item) => {
     state.scores[item.id] = item;
   });
@@ -367,6 +401,35 @@ function absorb(data) {
   saveRules();
   renderRules();
   paintAll();
+}
+
+async function calibrate() {
+  const ids = [...state.catalog.frames, ...state.catalog.sounds]
+    .filter((item) => item.available)
+    .map((item) => item.id);
+  if (ids.length < 2) return;
+  setStatus("Setting alert lines from the samples…");
+  try {
+    const data = await api("/alert/score", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        item_ids: ids,
+        rules: state.rules.map(wireRule),
+        include_compare: true,
+      }),
+    });
+    takeThresholds(data);
+    applyThresholds();
+    saveRules();
+    renderRules();
+    syncThresholdLabels();
+    paintAll();
+  } catch (err) {
+    /* The shipped M4 lines still score a click if measuring this set fails. */
+  } finally {
+    if (!state.busy) setStatus("");
+  }
 }
 
 function bindDrop(node, handler) {
@@ -421,18 +484,20 @@ async function replaceItem(item, file) {
 
 function renderAdvanced() {
   const cards = state.rules.map((rule) => {
-    const textField = rule.type === "text"
-      ? `<label>Description
-          <input data-text="${esc(rule.id)}" type="text" value="${esc(rule.text || "")}">
-        </label>`
-      : `<label>Reference photos (1–3)
+    const textField = rule.type === "photo"
+      ? `<label>Reference photos (1–3)
           <input data-photos="${esc(rule.id)}" type="file" accept="image/*" multiple>
-        </label>${referenceThumbs(rule)}`;
+        </label>${referenceThumbs(rule)}`
+      : rule.type === "change"
+        ? `<p class="hint">Fires when a frame differs from the empty-street photo. The score is 1 − cosine against that photo, not a text match.</p>`
+        : `<label>Description
+          <input data-text="${esc(rule.id)}" type="text" value="${esc(rule.text || "")}">
+        </label>`;
     const baseline = rule.type === "text"
       ? `<label class="check"><input data-baseline="${esc(rule.id)}" type="checkbox" ${rule.baseline_id ? "checked" : ""}> Compare against the empty street</label>`
       : "";
     return `<fieldset class="adv-rule" style="--rule:${esc(rule.color)}">
-      <legend><span class="type-badge">${rule.type === "photo" ? "Photo" : "Text"}</span> ${esc(rule.name)}</legend>
+      <legend><span class="type-badge">${ruleKind(rule)}</span> ${esc(rule.name)}</legend>
       <label>Name <input data-name="${esc(rule.id)}" type="text" value="${esc(rule.name)}"></label>
       ${textField}
       <label>Scope
@@ -472,6 +537,8 @@ function renderAdvanced() {
       const rule = ruleById(input.dataset.text);
       rule.text = input.value;
       rule.fitted = false;
+      rule.locked = false;
+      rule.pending = true;
       saveRules();
       renderRules();
       scheduleRescore();
@@ -556,10 +623,11 @@ function renderAdvanced() {
       text: "a bicycle leaning by the door",
       baseline_id: null,
       scope: "all",
-      threshold: 0.15,
+      threshold: 0.65,
       color: "#c4b4e0",
-      locked: true,
+      locked: false,
       fitted: false,
+      pending: true,
     });
     saveRules();
     renderRules();
@@ -587,10 +655,11 @@ function renderAdvanced() {
           text: null,
           baseline_id: null,
           scope: "image",
-          threshold: 0.35,
+          threshold: 0.75,
           color: "#d7c16e",
           locked: false,
           fitted: false,
+          pending: true,
         });
         state.catalog.references.push({
           id: `${id}-ref`,
@@ -676,6 +745,9 @@ async function boot() {
     renderRules();
     renderTiles();
     renderAdvanced();
+    state.calibrating = calibrate().finally(() => {
+      state.calibrating = null;
+    });
   } catch (err) {
     setError(err.message || String(err));
   }

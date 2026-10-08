@@ -34,7 +34,7 @@ from demo.coreai_worker import (  # noqa: E402
 from demo.feeds import audio_tower_feed  # noqa: E402
 from demo.scripts.fetch_corpus import _trim_with_wave, audio_skip_reason, fetch  # noqa: E402
 from demo.alert_catalog import default_rules  # noqa: E402
-from demo.alert_score import suggest_margin, suggest_midpoint  # noqa: E402
+from demo.alert_score import change_score, suggest_margin, suggest_midpoint, suggest_split  # noqa: E402
 from demo.scripts.fetch_alert import license_ok  # noqa: E402
 from demo.server import create_app  # noqa: E402
 from demo.settings import DEFAULT_PORT, server_compute  # noqa: E402
@@ -447,6 +447,20 @@ def test_alert(tmp: Path) -> None:
         _fail("midpoint")
     if abs(suggest_margin([0.0, 0.04, 0.2]) - 0.02) > 1e-9:
         _fail("margin threshold")
+    mac_ups = {"ups": 0.724, "fedex": 0.573, "door": 0.536, "sparky": 0.417, "ginger": 0.399, "street": 0.454}
+    mac_photo = {"sparky": 0.896, "ginger": 0.602, "door": 0.572, "ups": 0.555, "street": 0.552, "fedex": 0.513}
+    mac_dog = {"bark": 0.714, "meow": 0.649}
+    mac_change = {"street": 0.0, "ups": 0.40, "fedex": 0.22, "door": 0.51, "sparky": 0.33, "ginger": 0.28}
+    if abs(suggest_split(mac_ups, ["ups"]) - (0.724 + 0.573) / 2) > 1e-9:
+        _fail("ups split")
+    if abs(suggest_split(mac_photo, ["sparky"]) - (0.896 + 0.602) / 2) > 1e-9:
+        _fail("sparky split")
+    if abs(suggest_split(mac_dog, ["bark"]) - (0.714 + 0.649) / 2) > 1e-9:
+        _fail("dog split")
+    if abs(suggest_split(mac_change, ["ups", "fedex", "door", "sparky", "ginger"]) - 0.11) > 1e-9:
+        _fail("change split")
+    if change_score(0.4, baseline=False) != 0.6 or change_score(1.0, baseline=True) != 0.0:
+        _fail("change score")
     if license_ok("CC BY-SA 4.0") and license_ok("CC0") and license_ok("Public domain"):
         pass
     else:
@@ -470,6 +484,17 @@ def test_alert(tmp: Path) -> None:
             _fail(str(names))
         if body["compare"]["text"] != "a cat meowing":
             _fail("meow compare")
+        shipped = {rule["id"]: rule for rule in body["rules"]}
+        if shipped["significant"]["type"] != "change":
+            _fail("significant should be a change detector")
+        if shipped["significant"]["label"] != "different from the usual empty street":
+            _fail(shipped["significant"].get("label"))
+        if abs(shipped["ups"]["threshold"] - 0.649) > 1e-9:
+            _fail("ups default")
+        if abs(shipped["sparky"]["threshold"] - 0.749) > 1e-9:
+            _fail("sparky default")
+        if abs(shipped["dog"]["threshold"] - 0.682) > 1e-9:
+            _fail("dog default")
         sparky_ref = next(row for row in body["references"] if row["rule_id"] == "sparky")
         if not sparky_ref["available"] or client.get(sparky_ref["media_url"]).status_code != 200:
             _fail("sparky reference")
@@ -488,6 +513,7 @@ def test_alert(tmp: Path) -> None:
             "Sparky (test photo)",
             "Neighbor's cat",
             "Sound: dog barking",
+            "different from the usual empty street",
         ):
             if snippet not in page and snippet not in (REPO_ROOT / "demo" / "static" / "alert.js").read_text():
                 # Captions are rendered by alert.js from the catalog, not baked into the HTML.
@@ -499,6 +525,22 @@ def test_alert(tmp: Path) -> None:
         for rule in rules:
             if rule["id"] == "sparky":
                 rule["threshold"] = 0.99
+        alone = client.post(
+            "/alert/score",
+            json={"item_ids": ["ups"], "rules": rules, "include_compare": False},
+        )
+        if alone.status_code != 200:
+            _fail(alone.text)
+        ups_only = alone.json()["items"][0]
+        ups_sig = _rule_row(ups_only, "significant")
+        if abs(ups_sig["threshold"] - 0.05) > 1e-9 or ups_sig["score"] <= 0:
+            _fail(f"fresh ups significant {ups_sig}")
+        if ups_sig["high"] != (ups_sig["score"] >= ups_sig["threshold"]):
+            _fail("fresh high flag")
+        if not str(ups_sig.get("hint") or "").startswith("Looks most like"):
+            _fail(f"missing what-changed hint {ups_sig}")
+        if "significant" in alone.json()["suggested_thresholds"]:
+            _fail("one frame must not refit the line")
         scored = client.post("/alert/score", json={"rules": rules, "include_compare": True})
         if scored.status_code != 200:
             _fail(scored.text)
@@ -509,6 +551,20 @@ def test_alert(tmp: Path) -> None:
         street = _rule_row(by_id["street"], "significant")
         if abs(street["score"]) > 1e-4 or street["high"]:
             _fail(f"empty street should sit on the baseline, got {street}")
+        if abs(street["raw"] - 1.0) > 1e-3:
+            _fail(f"street should match itself, got {street}")
+        event_ids = ("ups", "fedex", "door", "sparky", "ginger")
+        event_scores = []
+        for frame_id in event_ids:
+            row = _rule_row(by_id[frame_id], "significant")
+            if abs(row["score"] - max(0.0, 1.0 - row["raw"])) > 1e-4 or row["score"] <= 0:
+                _fail(f"change score {frame_id} {row}")
+            event_scores.append(row["score"])
+        sig_line = payload["suggested_thresholds"].get("significant")
+        if sig_line is None or abs(sig_line - (min(event_scores) / 2.0)) > 1e-4:
+            _fail(f"significant line {sig_line} vs {event_scores}")
+        if any(score < sig_line for score in event_scores) or street["score"] >= sig_line:
+            _fail("significant should fire on every event and not the street")
         sparky = _rule_row(by_id["sparky"], "sparky")
         ginger = _rule_row(by_id["ginger"], "sparky")
         if abs(sparky["score"] - 1.0) > 1e-3 or not sparky["high"]:

@@ -13,14 +13,30 @@ from __future__ import annotations
 
 from typing import Any
 
-# Placeholder thresholds until every item in the rule's scope has a score.
-# Text–image cosines are modest; 0.15 is only a starting line. The baseline
-# rule uses a margin over the empty street, so 0.02 means "a little more
-# like the sentence than the empty street." Photo matching starts at 0.35.
-# Score everything replaces these with a threshold fit to this set.
-TEXT_PLACEHOLDER = 0.15
-MARGIN_PLACEHOLDER = 0.02
-PHOTO_PLACEHOLDER = 0.35
+# Lines measured on an M4 Pro with EmbeddingGemma 2 fully on the Neural
+# Engine (build f14fc48), then placed halfway between the lowest hit and
+# the highest miss:
+#   UPS truck 0.724 vs FedEx 0.573 → 0.649
+#   Sparky photo 0.896 vs ginger 0.602 → 0.749
+#   bark 0.714 vs meow 0.649 → 0.682
+#   meow 0.685 vs bark 0.634 on "a cat meowing" → 0.660
+# Significant is no longer that text query. It is 1 - cosine against the
+# empty-street frame. 0.05 only holds the rule card until the page measures
+# this set and moves the line halfway from 0 to the smallest real change.
+SIGNIFICANT_THRESHOLD = 0.05
+UPS_THRESHOLD = 0.649
+PHOTO_THRESHOLD = 0.749
+DOG_THRESHOLD = 0.682
+MEOW_THRESHOLD = 0.660
+
+# Best-matching caption for the "what changed" hint. Firing ignores these.
+CHANGE_LABELS: list[dict[str, str]] = [
+    {"id": "truck", "text": "a truck", "caption": "a truck"},
+    {"id": "person", "text": "a person", "caption": "a person"},
+    {"id": "cat", "text": "a cat", "caption": "a cat"},
+    {"id": "dog", "text": "a dog", "caption": "a dog"},
+    {"id": "empty", "text": "an empty street", "caption": "an empty street"},
+]
 
 FRAMES: list[dict[str, Any]] = [
     {
@@ -108,13 +124,15 @@ REFERENCES: list[dict[str, Any]] = [
 DEFAULT_RULES: list[dict[str, Any]] = [
     {
         "id": "significant",
-        "type": "text",
+        "type": "change",
         "name": "Anything significant",
         "chip": "Significant",
-        "text": "a person, animal, or vehicle in front of a house",
+        "text": None,
+        "label": "different from the usual empty street",
         "baseline_id": "street",
         "scope": "image",
-        "threshold": MARGIN_PLACEHOLDER,
+        "threshold": SIGNIFICANT_THRESHOLD,
+        "positive_ids": ["ups", "fedex", "door", "sparky", "ginger"],
         "color": "#7dbea8",
     },
     {
@@ -125,7 +143,8 @@ DEFAULT_RULES: list[dict[str, Any]] = [
         "text": "a brown UPS delivery truck",
         "baseline_id": None,
         "scope": "image",
-        "threshold": TEXT_PLACEHOLDER,
+        "threshold": UPS_THRESHOLD,
+        "positive_ids": ["ups"],
         "color": "#e39a45",
     },
     {
@@ -136,7 +155,8 @@ DEFAULT_RULES: list[dict[str, Any]] = [
         "text": None,
         "baseline_id": None,
         "scope": "image",
-        "threshold": PHOTO_PLACEHOLDER,
+        "threshold": PHOTO_THRESHOLD,
+        "positive_ids": ["sparky"],
         "color": "#e2c57a",
     },
     {
@@ -147,7 +167,8 @@ DEFAULT_RULES: list[dict[str, Any]] = [
         "text": "a dog barking",
         "baseline_id": None,
         "scope": "audio",
-        "threshold": TEXT_PLACEHOLDER,
+        "threshold": DOG_THRESHOLD,
+        "positive_ids": ["bark"],
         "color": "#e09a8a",
     },
 ]
@@ -159,7 +180,8 @@ MEOW_COMPARE: dict[str, Any] = {
     "text": "a cat meowing",
     "label": "a cat meowing",
     "scope": "audio",
-    "threshold": TEXT_PLACEHOLDER,
+    "threshold": MEOW_THRESHOLD,
+    "positive_ids": ["meow"],
 }
 
 
