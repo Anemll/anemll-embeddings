@@ -17,7 +17,7 @@ embedder.close()
 | --- | --- |
 | `1.0` | Same input |
 | `0.85–1.0` | Same thing, different wording or viewpoint |
-| `0.60–0.85` | Related — demo alerts live here (UPS ~0.65, bark ~0.68, Sparky ~0.75) |
+| `0.60–0.85` | Related — UPS photo vs `a brown UPS delivery truck` 0.727, bark vs `a dog barking` 0.721 |
 | ~`0` | Unrelated |
 
 On a Mac set `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON`. `Embedder(compute="ane")` reads those when the constructor arguments are omitted. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).

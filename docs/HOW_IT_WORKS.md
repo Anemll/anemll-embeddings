@@ -60,17 +60,18 @@ On an M4 Pro, macOS 27.0, the shipped packages report:
 
 Inputs: aurora image, `tone_a4` audio, caption + image soft tokens (269 tokens). Reference is the patched PyTorch eager model in FP32 on CPU.
 
-End-to-end host cosine against the Sentence-Transformers fixtures is a separate number (the gap predates the fp16 ANE work and sits in the host pipeline):
+End-to-end `Embedder(compute="ane")` on the same M4 Pro (cosine between two embeddings, after warmup):
 
-| Case | before (FP32, GPU) | fp16, CPU | fp16, ANE |
-| --- | --- | --- | --- |
-| image | 0.9859 | 0.9861 | 0.9860 |
-| caption | 0.9466 | 0.9465 | 0.9462 |
-| audio | 0.8708 | 0.8700 | 0.8669 |
-| mix | 0.8987 | 0.8970 | 0.8983 |
-| text (`text_s128`) | 0.9951 | 0.9951 | 0.99996 |
+| Pair | Cosine |
+| --- | --- |
+| text `a red fox` vs `a red fox in the snow` | 0.901 |
+| text `a red fox` vs `a delivery truck` | 0.694 |
+| UPS photo vs `a brown UPS delivery truck` | 0.727 |
+| UPS photo vs `a cat` | 0.513 |
+| bark vs `a dog barking` | 0.721 |
+| bark vs `a cat meowing` | 0.661 |
 
-Vision attention is most of each ~21 ms layer (~15 ms) and is at its floor for exact fp16 with the 12 tilings that still match. A 140-soft-token budget ran 108 ms fully on the ANE (cosine 0.99994 to its own FP32 reference) but changes the embedding (cosine 0.958 to s280), so it is not shipped.
+About **35 ms** per sentence, **380 ms** per photo, **50 ms** per sound.
 
 ## Older Core ML text path
 
@@ -81,3 +82,19 @@ Vision attention is most of each ~21 ms layer (~15 ms) and is at its floor for e
 - M4 Pro / macOS 27.0 is the validated setup.
 - On macOS 27.2 (M5, newer ANE) the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU. Audio still runs on the ANE.
 - Audio shorter than one mel frame (about 9 ms at 16 kHz) cannot produce a soft token.
+
+## History
+
+These figures are from earlier host-vs-Sentence-Transformers fixture runs and an unshipped vision budget. They are **not** the product numbers above.
+
+End-to-end host cosine against the Sentence-Transformers fixtures (the gap predates the fp16 ANE work and sits in the host pipeline):
+
+| Case | before (FP32, GPU) | fp16, CPU | fp16, ANE |
+| --- | --- | --- | --- |
+| image | 0.9859 | 0.9861 | 0.9860 |
+| caption | 0.9466 | 0.9465 | 0.9462 |
+| audio | 0.8708 | 0.8700 | 0.8669 |
+| mix | 0.8987 | 0.8970 | 0.8983 |
+| text (`text_s128`) | 0.9951 | 0.9951 | 0.99996 |
+
+Vision attention is most of each ~21 ms layer (~15 ms) and is at its floor for exact fp16 with the 12 tilings that still match. A 140-soft-token budget ran 108 ms fully on the ANE (cosine 0.99994 to its own FP32 reference) but changes the embedding (cosine 0.958 to s280), so it is not shipped.
