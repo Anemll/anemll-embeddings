@@ -6,7 +6,7 @@ The pages are plain HTML. There is no front-end build step.
 
 ## Start the server
 
-You need the public Core AI packages (`vision_s280`, `audio_s280`, `text_embeds_s320`) plus the Google host checkpoint. The download script fetches [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (`8ceba04`) and [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (`914f7f89142e33e77833254d9c9b90c3cef7303b`), then creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects.
+You need the public Core AI packages (`vision_s280`, `audio_s280`, `text_embeds_s320`) plus the Google host checkpoint. `python scripts/download_models.py` fetches them (about 2.8 GB; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)) and creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects. No Hugging Face login. Put the printed `export` lines in `~/.zshrc` or a file you `source`.
 
 ```sh
 python scripts/download_models.py

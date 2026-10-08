@@ -20,7 +20,7 @@ embedder.close()
 | `0.60–0.85` | Related — UPS photo vs `a brown UPS delivery truck` 0.727, bark vs `a dog barking` 0.721 |
 | ~`0` | Unrelated |
 
-On a Mac run `python scripts/download_models.py`, then copy the `export` lines it prints (`ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, `ANEMLL_COREAI_PYTHON`). `Embedder(compute="ane")` reads those when the constructor arguments are omitted. Then `python scripts/warmup.py` once so Core AI specializes the towers for this chip and caches them — there is no per-hardware compile to ship. Validated on M4 Pro / macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
+On a Mac run `python scripts/download_models.py` (sizes, flags, and example output: [scripts/README.md](../scripts/README.md)), then put the printed `export` lines in `~/.zshrc` or a file you `source`. `Embedder(compute="ane")` reads those when the constructor arguments are omitted. Then `python scripts/warmup.py` once so Core AI specializes the towers for this chip and caches them — there is no per-hardware compile to ship. Validated on M4 Pro / macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
 
 `python -m pip install -e .` then `from api import Embedder` works anywhere. From a checkout, keep the repo root on `PYTHONPATH`.
 

@@ -29,7 +29,7 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | --- | --- |
 | `model/` | Export / convert EmbeddingGemma 2 to Core AI / ANE: wrappers, ANE graph patches, specialize and inspect tools, parity and cosine checks |
 | `api/` | Importable Python runtime: `from api import Embedder, cosine` — see [api/README.md](api/README.md) |
-| `scripts/` | Download the public Hugging Face packages and warm them up on this Mac |
+| `scripts/` | Download the public Hugging Face packages and warm them up on this Mac — see [scripts/README.md](scripts/README.md) |
 | `samples/` | Small runnable examples plus corpus / alert fetch scripts and manifests (no large binaries in git) |
 | `demo/` | FastAPI showcase server and static pages only (imports `api`) |
 | `docs/` | How it works, historical plan, diagrams |
@@ -58,20 +58,72 @@ You need a Python that can `import coreai.runtime` (typically `coreai/.venv` fro
    export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
    ```
 
-2. **Download** the public ANE packages and the Google host checkpoint (idempotent). Layout on disk is `ane/<name>/<name>.aimodel/` plus a host copy of `google/embeddinggemma-2`; the script then creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects:
+2. **Download** the public ANE packages and the Google host checkpoint. No Hugging Face login or token — both repos are public and ungated. The script needs `huggingface_hub`, which `pip install -e .` (or `.[demo]`) already installs. Full flag list and examples: [scripts/README.md](scripts/README.md).
 
    ```sh
    python scripts/download_models.py
    # or: ./scripts/download_models.sh
+   # custom dest: python scripts/download_models.py --dest /Volumes/Models/anemll-embeddings
    ```
 
-   Copy the `export` lines it prints (or run them). Default dest is `~/.anemll-embeddings` (`--dest` to override). That fetches [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) at `8ceba04` (`vision_s280`, `audio_s280`, `text_embeds_s320`) and [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b`.
+   **What gets downloaded** (about **2.8 GB** on disk):
 
-3. **Warm up** once on this Mac. There is **no** per-hardware compile to ship: Core AI specializes each tower for the local chip on first load and caches it (`~/Library/Caches/coreai-cache`). The first run is slow; later loads are fast. The script reports whether each tower is fully on the ANE, plus load and first-run time:
+   | What | Source | Size |
+   | --- | --- | --- |
+   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 8ceba04` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
+   | Host checkpoint (tokenizer, processor, embed table) | [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b` | **~1.53 GB** (`model.safetensors` 1.49 GB / 1,488,915,288 bytes, plus `tokenizer.json` 32 MB, `tokenizer.model` 4.7 MB, and small config/processor files) |
+
+   On-disk layout under `~/.anemll-embeddings` (default `--dest`; or `$ANEMLL_EMBEDDINGS_HOME`):
+
+   ```
+   ~/.anemll-embeddings/
+     ane/
+       vision_s280/vision_s280.aimodel/
+       audio_s280/audio_s280.aimodel/
+       text_embeds_s320/text_embeds_s320.aimodel/
+     embeddinggemma-2/                 # Google host checkpoint
+     artifacts/coreai/
+       vision_s280.aimodel -> …/ane/vision_s280/vision_s280.aimodel
+       audio_s280.aimodel -> …/ane/audio_s280/audio_s280.aimodel
+       text_embeds_s320.aimodel -> …/ane/text_embeds_s320/text_embeds_s320.aimodel
+   ```
+
+   `api.Embedder` reads `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/<name>.aimodel` (those symlinks). Put the printed exports in `~/.zshrc` or a file you `source`:
+
+   ```sh
+   # example output of scripts/download_models.py
+   export ANEMLL_EMBEDDINGS_ARTIFACTS=/Users/you/.anemll-embeddings/artifacts
+   export ANEMLL_EMBEDDINGS_MODEL=/Users/you/.anemll-embeddings/embeddinggemma-2
+   export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
+   ```
+
+   | Flag | Default | Meaning |
+   | --- | --- | --- |
+   | `--dest PATH` | `~/.anemll-embeddings` | Parent directory (`ANEMLL_EMBEDDINGS_HOME` overrides the default) |
+   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in the script (`8ceba04` / `914f7f8…`); there is no `--revision` flag. |
+   | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON` or the forge venv if present | Value printed for `ANEMLL_COREAI_PYTHON` |
+
+3. **Warm up** once on this Mac. There is **no** per-hardware compile to ship: Core AI specializes each tower for the local chip on first load and caches it (`~/Library/Caches/coreai-cache`). The first run is slow; later loads are fast.
 
    ```sh
    python scripts/warmup.py
    ```
+
+   ```
+   # example output of scripts/warmup.py (M4 Pro / macOS 27.0)
+   tower                  on ANE                load_ms   first_run_ms
+   vision_s280            yes                    4521.0          337.0
+   audio_s280             yes                     890.1           10.8
+   text_embeds_s320       yes                    2100.4           34.8
+   overall_placement=fullyOnANE  wall_ms=7800.0
+   ```
+
+   **Troubleshooting**
+
+   - A slow first warmup is normal (compile + cache). The next load should be much faster.
+   - On macOS 27.2 / M5, vision and text may print a GPU-fallback / `invalid MLIR-MPS program` message. Audio still runs on the ANE.
+   - Rerunning `download_models.py` or `warmup.py` is safe. Download skips files that already match the pinned revision.
+   - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.
 
 4. **Run a sample or the demo:**
 
