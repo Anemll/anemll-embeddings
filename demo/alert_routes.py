@@ -381,8 +381,10 @@ async def _score(
             return cached
 
         def _run(query: str, role: str) -> tuple[Any, float]:
-            result = app.state.backend.embed_text(query, role=role)
-            return result.vector, float(result.latency_ms)
+            vector = app.state.backend.embed_text(query, role=role)
+            last = getattr(app.state.backend, "last", None)
+            latency = float(last.latency_ms) if last is not None else 0.0
+            return vector, latency
 
         vector, spent = await asyncio.to_thread(library.embed_text, text, "query", _run)
         _remember(spent)

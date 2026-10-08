@@ -19,10 +19,11 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
+from PIL import Image
 
 from api.feeds import assert_text_mask_preserved, audio_tower_feed, vision_tower_feed
 from api.mock import MockBackend
@@ -475,6 +476,9 @@ def default_coreai_python() -> Path | None:
     return Path(raw) if raw else None
 
 
+TextRole = Literal["query", "document", "SearchQuery", "Document"]
+
+
 def _public_role(role: str) -> str:
     key = (role or "query").strip()
     if key in {"query", "SearchQuery"}:
@@ -485,29 +489,52 @@ def _public_role(role: str) -> str:
 
 
 class Embedder:
-    """Tiny public wrapper: load towers and embed text / image / audio.
+    """Load the embedding towers and return one 768-d unit vector per input.
 
-    ``backend="coreai"`` (default) loads the ``.aimodel`` packages through
-    :class:`CoreAIBackend`. ``backend="mock"`` is a deterministic stand-in
-    for machines without Core AI. ``backend="reference"`` runs the full
-    Sentence-Transformers checkpoint on CPU.
+    ``backend="coreai"`` (default) runs the ``.aimodel`` packages on the
+    Neural Engine. ``backend="mock"`` is a deterministic stand-in when Core
+    AI is not installed. ``backend="reference"`` is the full checkpoint on
+    CPU.
 
-        from api import Embedder
-        embedder = Embedder(artifacts=..., model=..., compute="ane")
-        vec = embedder.embed_text("a red fox")
+        from api import Embedder, cosine
+        embedder = Embedder(compute="ane")
+        q = embedder.embed_text("a red fox")          # shape (768,)
+        d = embedder.embed_text("a fox", role="document")
+        print(cosine(q, d))
+        embedder.close()
+
+    See `api/README.md` for copy-paste examples. The demo uses this class
+    for every page (`demo/server.py`, `demo/alert_routes.py`).
     """
 
     def __init__(
         self,
-        artifacts: Path | None = None,
-        model: Path | None = None,
-        coreai_python: Path | None = None,
+        artifacts: Path | str | None = None,
+        model: Path | str | None = None,
+        coreai_python: Path | str | None = None,
         compute: str = "ane",
         backend: str = "coreai",
         **kwargs: Any,
     ) -> None:
+        """Create an embedder.
+
+        Args:
+            artifacts: Directory that contains ``coreai/vision_s280.aimodel``
+                (and the audio / text-embeds packages). Defaults to
+                ``ANEMLL_EMBEDDINGS_ARTIFACTS``.
+            model: EmbeddingGemma 2 checkpoint directory (host tokenizer and
+                embedding table). Defaults to ``ANEMLL_EMBEDDINGS_MODEL``.
+            coreai_python: Interpreter that can ``import coreai.runtime``.
+                Defaults to ``ANEMLL_COREAI_PYTHON``.
+            compute: ``"ane"`` (Neural Engine) or ``"cpu"``.
+            backend: ``"coreai"``, ``"mock"``, or ``"reference"``.
+        """
         key = (backend or "coreai").strip().lower()
         self.name = key
+        self.last: EmbedResult | None = None
+        art = Path(artifacts) if artifacts is not None else None
+        ckpt = Path(model) if model is not None else None
+        py = Path(coreai_python) if coreai_python is not None else None
         if key == "mock":
             self._impl = MockBackend()
         elif key == "reference":
@@ -515,36 +542,85 @@ class Embedder:
             # importing it here would pull that stack into every Embedder().
             from demo.backends.reference import ReferenceBackend
 
-            self._impl = ReferenceBackend(model_path=model)
+            self._impl = ReferenceBackend(model_path=ckpt)
         elif key == "coreai":
             self._impl = CoreAIBackend(
-                artifacts=artifacts,
-                model_path=model,
-                coreai_python=coreai_python,
+                artifacts=art,
+                model_path=ckpt,
+                coreai_python=py,
                 compute=compute,
                 **kwargs,
             )
         else:
             raise ValueError(f"unknown backend {backend!r} (expected mock, reference, or coreai)")
 
-    def warmup(self) -> dict:
+    @property
+    def placement(self) -> str | None:
+        """Device label from the last warmup (``fullyOnANE``, ``mock``, …)."""
+        return getattr(self._impl, "placement", None)
+
+    def warmup(self) -> dict[str, Any]:
+        """Load towers once. ``embed_*`` calls this automatically."""
         return self._impl.warmup()
 
-    def health(self) -> dict:
+    def health(self) -> dict[str, Any]:
+        """Backend name, placement, and per-tower warmup (same shape as ``GET /health``)."""
         return self._impl.health()
 
     def close(self) -> None:
+        """Release the worker process (no-op for mock)."""
         self._impl.close()
 
-    def embed_text(self, text: str, *, role: str = "query") -> np.ndarray:
-        self._impl.warmup()
-        return np.asarray(self._impl.embed_text(text, role=_public_role(role)).vector, dtype=np.float32)
+    def embed_text(self, text: str, *, role: TextRole | str = "query") -> np.ndarray:
+        """Embed a sentence.
 
-    def embed_image(self, image: Any) -> np.ndarray:
+        Args:
+            text: Raw string. Do not add the ``SearchQuery`` / ``Document``
+                prefix yourself; ``role`` does that.
+            role: ``"query"`` (search) or ``"document"`` (index). The
+                Sentence-Transformers names ``SearchQuery`` / ``Document``
+                are accepted too.
+
+        Returns:
+            L2-normalized ``float32`` vector of shape ``(768,)``.
+        """
         self._impl.warmup()
-        return np.asarray(self._impl.embed_image(image).vector, dtype=np.float32)
+        result = self._impl.embed_text(text, role=_public_role(str(role)))
+        return self._take(result)
+
+    def embed_image(self, image: Image.Image) -> np.ndarray:
+        """Embed an RGB PIL image.
+
+        Returns:
+            L2-normalized ``float32`` vector of shape ``(768,)``.
+        """
+        self._impl.warmup()
+        result = self._impl.embed_image(image)
+        return self._take(result)
 
     def embed_audio(self, wav: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+        """Embed a mono waveform.
+
+        Args:
+            wav: Samples as float32, typically in ``[-1, 1]``.
+            sample_rate: Must be 16 kHz for the Core AI audio tower. The
+                demo resamples uploads before calling this.
+
+        Returns:
+            L2-normalized ``float32`` vector of shape ``(768,)``.
+
+        Raises:
+            ValueError: clip too short to produce one mel frame (~9 ms).
+        """
         self._impl.warmup()
-        return np.asarray(self._impl.embed_audio(wav, sample_rate).vector, dtype=np.float32)
+        result = self._impl.embed_audio(np.asarray(wav, dtype=np.float32), int(sample_rate))
+        return self._take(result)
+
+    def _take(self, result: EmbedResult) -> np.ndarray:
+        self.last = result
+        vec = np.asarray(result.vector, dtype=np.float32).reshape(-1)
+        if vec.shape != (DIM,):
+            raise RuntimeError(f"embedding shape {vec.shape} != ({DIM},)")
+        return vec
+
 

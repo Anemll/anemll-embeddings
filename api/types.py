@@ -1,4 +1,8 @@
-"""Shared result types for demo backends."""
+"""Result metadata from the last ``Embedder.embed_*`` call.
+
+Most callers only need the ``(768,)`` vector that ``embed_*`` returns.
+``EmbedResult`` is the extra timing/placement the demo badges show.
+"""
 
 from __future__ import annotations
 

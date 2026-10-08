@@ -19,8 +19,7 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api import Embedder  # noqa: E402
-from demo.alert_score import change_score  # noqa: E402
+from api import Embedder, cosine  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,12 +40,11 @@ def main(argv: list[str] | None = None) -> int:
     rule = embedder.embed_text(args.rule, role="query")
     embedder.close()
 
-    score = float(frame @ rule)
-    significance = change_score(score, baseline=False)
+    score = cosine(frame, rule)
     fired = score >= float(args.threshold)
     print(f"rule={args.rule!r}")
     print(f"cosine={score:.4f}  threshold={args.threshold:.3f}  fired={fired}")
-    print(f"1-cosine (significance-style)={significance:.4f}")
+    print(f"1-cosine (significance-style)={1.0 - score:.4f}")
     return 0
 
 

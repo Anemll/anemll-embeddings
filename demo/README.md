@@ -20,7 +20,7 @@ python -m pip install -r demo/requirements.txt
 python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
 ```
 
-`python -m demo` and `python -m demo.server` are the same command. Then open **http://127.0.0.1:8766**. The server imports embeddings from `api` (`from api import Embedder` is the library surface; this package only serves the pages).
+`python -m demo` and `python -m demo.server` are the same command. Then open **http://127.0.0.1:8766**. The server embeds through the public [`api.Embedder`](../api/README.md) (`embed_text` / `embed_image` / `embed_audio` + `cosine`). This package only serves the pages.
 
 | Flag / env | Default | Meaning |
 | --- | --- | --- |

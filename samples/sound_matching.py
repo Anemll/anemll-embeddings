@@ -17,7 +17,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api import Embedder  # noqa: E402
+from api import Embedder, cosine  # noqa: E402
 
 AUDIO_SR = 16000
 DEFAULT_LABELS = ("a dog barking", "a cat meowing", "piano music", "rain")
@@ -41,10 +41,6 @@ def _tone(seconds: float = 0.4, freq: float = 440.0, rate: int = AUDIO_SR) -> np
     return (0.2 * np.sin(2.0 * np.pi * freq * t)).astype(np.float32)
 
 
-def _cosine(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.dot(a, b))
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wav", type=Path, help="16-bit WAV clip")
@@ -61,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     embedder = Embedder(backend=args.backend)
     query = embedder.embed_audio(wav, rate)
     ranked = sorted(
-        ((_cosine(query, embedder.embed_text(label, role="document")), label) for label in labels),
+        ((cosine(query, embedder.embed_text(label, role="document")), label) for label in labels),
         reverse=True,
     )
     embedder.close()

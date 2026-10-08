@@ -161,7 +161,7 @@ def test_api(tmp: Path) -> None:
         if b"latency-badge" not in client.get("/heard").content:
             _fail("heard page")
         alert_page = client.get("/alert")
-        if alert_page.status_code != 200 or b"Score everything" not in alert_page.content:
+        if alert_page.status_code != 200 or b"Configured alerts" not in alert_page.content:
             _fail("alert page")
         if b'href="/alert"' not in client.get("/").content:
             _fail("alert nav")
@@ -500,15 +500,13 @@ def test_alert(tmp: Path) -> None:
             _fail("sparky reference")
         page = client.get("/alert").text
         for snippet in (
-            "These are your alerts.",
-            "Click what the camera sees or hears.",
-            "Watch which alerts fire.",
-            "Score everything",
-            "Your alerts",
-            "Camera feed",
-            "Sounds",
-            "Advanced / customize",
-            "green = alert fires",
+            "These are your alerts",
+            "Pick a frame and a sound",
+            "Watch which alerts fire",
+            "Configured alerts",
+            "Front door cam",
+            "Microphone",
+            "Advanced: rules, thresholds, reference photo",
             "Front door cam: UPS truck",
             "Sparky (test photo)",
             "Neighbor's cat",

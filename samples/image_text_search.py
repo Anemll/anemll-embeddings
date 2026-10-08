@@ -11,13 +11,12 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api import Embedder  # noqa: E402
+from api import Embedder, cosine  # noqa: E402
 
 DEFAULT_CAPTIONS = (
     "a red fox in snow",
@@ -25,10 +24,6 @@ DEFAULT_CAPTIONS = (
     "a delivery truck on a street",
     "piano music",
 )
-
-
-def _cosine(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.dot(a, b))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     embedder = Embedder(backend=args.backend)
     query = embedder.embed_image(image)
     ranked = sorted(
-        ((_cosine(query, embedder.embed_text(text, role="document")), text) for text in captions),
+        ((cosine(query, embedder.embed_text(text, role="document")), text) for text in captions),
         reverse=True,
     )
     embedder.close()

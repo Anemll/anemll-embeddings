@@ -27,7 +27,7 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | Path | What lives there |
 | --- | --- |
 | `model/` | Export / convert EmbeddingGemma 2 to Core AI / ANE: wrappers, ANE graph patches, specialize and inspect tools, parity and cosine checks |
-| `api/` | Importable Python runtime: load the `.aimodel` towers and embed text / image / audio (`from api import Embedder`) |
+| `api/` | Importable Python runtime: `from api import Embedder, cosine` — see [api/README.md](api/README.md) |
 | `samples/` | Small runnable examples plus corpus / alert fetch scripts and manifests (no large binaries in git) |
 | `demo/` | FastAPI showcase server and static pages only (imports `api`) |
 | `docs/` | How it works, historical plan, diagrams |
@@ -98,23 +98,21 @@ export HUGGINGFACE_HUB_CACHE=$HOME/.cache/huggingface
 
 ## Python usage
 
-The public runtime loads the three `.aimodel` towers and returns one 768-d unit vector. Set `ANEMLL_EMBEDDINGS_MODEL` and `ANEMLL_EMBEDDINGS_ARTIFACTS` first (and `ANEMLL_COREAI_PYTHON` on a Mac).
+Copy-paste examples (text–text, image–text, audio–text, camera-alert threshold) live in **[api/README.md](api/README.md)**. Short version:
 
 ```python
-from api import Embedder
+from api import Embedder, cosine
 
 embedder = Embedder(compute="ane")  # or Embedder(backend="mock") without Core AI
-text = embedder.embed_text("a red fox")          # role="query" (SearchQuery)
-image = embedder.embed_image(pil_image)
-audio = embedder.embed_audio(wav_f32, 16000)
+q = embedder.embed_text("a red fox")                 # shape (768,), L2 == 1
+d = embedder.embed_text("a red fox in snow", role="document")
+print(cosine(q, d))                                  # float in [-1, 1]
 embedder.close()
 ```
 
-`python -m pip install -e .` makes `from api import Embedder` work from any working directory. From a repo checkout, keep the repo root on `PYTHONPATH` (the samples do this).
+`python -m pip install -e .` makes `from api import Embedder` work from any working directory. From a repo checkout, keep the repo root on `PYTHONPATH` (the samples do this). The demo pages call this same `Embedder`.
 
-`SearchQuery` / `Document` are task prefixes the original model expects. `embed_text(..., role="query")` and `role="SearchQuery"` are the same; `role="document"` matches `Document`.
-
-The host path in `api/coreai_host.py` runs `vision_s280` / `audio_s280`, scatters those tokens into the text sequence, then runs `text_embeds_s320`. Plain text can use `text_s128` (ids only). `model/parity_coreai_host.py` is the full loop. The older Sentence-Transformers wrapper still lives at `model/embed_wrapper.py` for export and fixture work.
+The host path in `api/coreai_host.py` runs `vision_s280` / `audio_s280`, scatters those tokens into the text sequence, then runs `text_embeds_s320`. `model/parity_coreai_host.py` is the full loop. The older Sentence-Transformers wrapper still lives at `model/embed_wrapper.py` for export and fixture work.
 
 Examples: `python samples/embed_sentence.py --backend mock`, `python samples/image_text_search.py --backend mock`, `python samples/sound_matching.py --backend mock`, `python samples/camera_alert_rule.py --backend mock`.
 

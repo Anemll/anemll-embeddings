@@ -12,7 +12,7 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api import DIM, Embedder  # noqa: E402
+from api import DIM, Embedder, cosine, similarity  # noqa: E402
 
 
 def _fail(msg: str) -> None:
@@ -33,6 +33,23 @@ def test_embed_text_image_audio() -> None:
     again = Embedder(backend="mock").embed_text("a red fox", role="query")
     if not np.allclose(text, again, atol=1e-6):
         _fail("mock text embed is not deterministic")
+    same = cosine(text, again)
+    if abs(same - 1.0) > 1e-5:
+        _fail(f"cosine(self) {same}")
+    if cosine(text, image) == same and cosine(text, audio) == same:
+        _fail("mock modalities should not all match")
+    if similarity(text, text) != cosine(text, text):
+        _fail("similarity should alias cosine")
+    if embedder.last is None or embedder.last.vector.shape != (DIM,):
+        _fail("Embedder.last should record the last embed")
+
+
+def test_cosine_rejects_bad_shape() -> None:
+    try:
+        cosine(np.zeros(3, dtype=np.float32), np.zeros(3, dtype=np.float32))
+    except ValueError:
+        return
+    _fail("expected ValueError for a non-768 vector")
 
 
 def test_unknown_backend() -> None:
@@ -45,6 +62,7 @@ def test_unknown_backend() -> None:
 
 def main() -> int:
     test_embed_text_image_audio()
+    test_cosine_rejects_bad_shape()
     test_unknown_backend()
     print("ok")
     return 0
