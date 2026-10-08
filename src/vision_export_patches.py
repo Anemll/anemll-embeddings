@@ -11,7 +11,10 @@ as expand+reshape and last-dim matmul join.
 
 from __future__ import annotations
 
+import functools
 from typing import Any
+
+import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -65,6 +68,18 @@ def _recomposition_frequencies_ane(self, freq: torch.Tensor) -> torch.Tensor:
 _ORIG_APPLY_ROPE = None
 
 
+@functools.lru_cache(maxsize=None)
+def _chunk_rotate_half(channels: int, per: int) -> np.ndarray:
+    """``[C, C]`` matrix R with ``x @ R`` = rotate_half applied to each ``per`` chunk."""
+    rot = np.zeros((channels, channels), dtype=np.float32)
+    half = per // 2
+    for start in range(0, channels, per):
+        for i in range(half):
+            rot[start + half + i, start + i] = -1.0  # out[i] = -x[half + i]
+            rot[start + i, start + half + i] = 1.0  # out[half + i] = x[i]
+    return rot
+
+
 def _apply_multidimensional_rope_ane(
     x: torch.Tensor,
     cos: torch.Tensor,
@@ -73,8 +88,6 @@ def _apply_multidimensional_rope_ane(
     unsqueeze_dim: int = 2,
 ) -> torch.Tensor:
     """2-D RoPE without ``split``+``cat`` (those lowered as GPU ``concat_slice``)."""
-    import transformers.models.gemma4.modeling_gemma4 as g4
-
     ndim = int(position_ids.shape[-1])
     channels = int(x.shape[-1])
     per = 2 * (channels // (2 * ndim))
@@ -84,17 +97,14 @@ def _apply_multidimensional_rope_ane(
         return _ORIG_APPLY_ROPE(
             x, cos, sin, position_ids, unsqueeze_dim=unsqueeze_dim
         )
-    eye = torch.eye(per, device=x.device, dtype=x.dtype)
-    zeros = torch.zeros(per, per, device=x.device, dtype=x.dtype)
-    take0 = torch.cat([eye, zeros], dim=0)
-    take1 = torch.cat([zeros, eye], dim=0)
-    y0 = g4.apply_rotary_pos_emb(
-        x=x @ take0, cos=cos @ take0, sin=sin @ take0, unsqueeze_dim=unsqueeze_dim
-    )
-    y1 = g4.apply_rotary_pos_emb(
-        x=x @ take1, cos=cos @ take1, sin=sin @ take1, unsqueeze_dim=unsqueeze_dim
-    )
-    return y0 @ torch.cat([eye, zeros], dim=1) + y1 @ torch.cat([zeros, eye], dim=1)
+    # HF rotates each per-dim chunk with its own slice of cos/sin, and those
+    # slices already sit where the chunk does. So the whole thing is
+    # x * cos + rotate_half_per_chunk(x) * sin, with the rotation one constant
+    # [C, C] matmul (was six small matmuls per call; ~1 ms per layer on the ANE).
+    rot = torch.from_numpy(_chunk_rotate_half(channels, per)).to(device=x.device, dtype=x.dtype)
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    return x * cos + (x @ rot) * sin
 
 
 def rotate_half_matmul(x: torch.Tensor) -> torch.Tensor:
@@ -111,13 +121,14 @@ def rotate_half_matmul(x: torch.Tensor) -> torch.Tensor:
     return x @ rot
 
 
-# 2520 / 12 = 210 query rows per block. One [1, 12, S, S] score tensor per
-# layer (12.7 MB per head) round-trips DRAM on every softmax pass; 12 query
-# blocks cut the 16-layer tower from 547 to 360 ms on the ANE. Measured at
-# 2 layers: 8/10/15 blocks are slightly slower, 24-60 slower still, and 18
-# (140-row blocks) computed wrong scores on the ANE. Re-check accuracy if
-# this changes.
-VISION_ATTN_QUERY_BLOCKS = 12
+# Softmax tiles: 6 groups of 2 heads x 2 blocks of 1260 query rows. One
+# [1, 12, S, S] score tensor per layer does not fit on chip, so every softmax
+# pass round-trips DRAM; tiling it matters. Measured on the ANE (4 layers):
+# 1 group x 12 blocks 90.0 ms, 6 x 2 83.7, 6 x 1 84.2, 2 x 6 85.0, 4 x 6 85.1,
+# 12 x 1 94.5. Earlier, 18 blocks (140 rows) computed wrong scores on the ANE,
+# so re-check accuracy whenever these change.
+VISION_ATTN_QUERY_BLOCKS = 2
+VISION_ATTN_HEAD_GROUPS = 6
 
 
 def _vision_attn_forward(
@@ -161,14 +172,21 @@ def _vision_attn_forward(
     key_t = key_states.transpose(1, 2).transpose(-1, -2)
     v = value_states.transpose(1, 2)
     n_blocks = VISION_ATTN_QUERY_BLOCKS if seq_len % VISION_ATTN_QUERY_BLOCKS == 0 else 1
+    n_groups = VISION_ATTN_HEAD_GROUPS if n_heads % VISION_ATTN_HEAD_GROUPS == 0 else 1
     rows = seq_len // n_blocks
-    parts = []
-    for b in range(n_blocks):
-        scores = torch.matmul(q[:, :, b * rows : (b + 1) * rows], key_t) * scale
-        if mask is not None:
-            scores = scores + mask
-        parts.append(torch.matmul(torch.softmax(scores, dim=-1), v))
-    out = torch.cat(parts, dim=2) if n_blocks > 1 else parts[0]
+    width = n_heads // n_groups
+    groups = []
+    for g in range(n_groups):
+        heads = slice(g * width, (g + 1) * width)
+        q_g, key_t_g, v_g = q[:, heads], key_t[:, heads], v[:, heads]
+        parts = []
+        for b in range(n_blocks):
+            scores = torch.matmul(q_g[:, :, b * rows : (b + 1) * rows], key_t_g) * scale
+            if mask is not None:
+                scores = scores + mask
+            parts.append(torch.matmul(torch.softmax(scores, dim=-1), v_g))
+        groups.append(torch.cat(parts, dim=2) if n_blocks > 1 else parts[0])
+    out = torch.cat(groups, dim=1) if n_groups > 1 else groups[0]
     attn_output = out.transpose(1, 2).reshape(batch, seq_len, hidden)
     return self.o_proj(attn_output), attn_weights
 
@@ -221,5 +239,5 @@ def apply_vision_ane_embed_patch() -> dict[str, Any]:
         "pos_embed": "float_onehot_matmul",
         "rope": "expand_reshape_no_concat_slice",
         "rotate_half": "matmul",
-        "attn": f"batched_heads_query_blocks_{VISION_ATTN_QUERY_BLOCKS}",
+        "attn": f"head_groups_{VISION_ATTN_HEAD_GROUPS}_query_blocks_{VISION_ATTN_QUERY_BLOCKS}",
     }

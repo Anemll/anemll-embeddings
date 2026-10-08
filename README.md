@@ -1,188 +1,148 @@
 # anemll-embeddings
 
-Open-source **EmbeddingGemma 2** → **Core ML / Apple Neural Engine** via an ANEMLL-forge-style workflow.
+This project turns Google’s EmbeddingGemma 2 into Apple Core AI packages that run on your Mac’s Neural Engine. You can search photos, sounds, and text together. Everything stays on the Mac — there is no cloud API in the loop.
 
-## Goal
+The Neural Engine is the dedicated chip on Apple Silicon for this kind of work. These packages are built so the hot path stays on that chip: no mid-graph hop to the GPU or CPU.
 
-Convert Google’s EmbeddingGemma 2 text embedding models to run efficiently on Apple Silicon (Core ML → ANE), starting with the ~270M text-only checkpoint, then extending toward multimodal (vision/audio) where feasible.
+## What is an embedding?
 
-## Sources
+An embedding is a list of numbers that captures meaning. This model writes a list of 768 numbers for each photo, sound, or sentence. Things that mean the same thing land close together, even across types: a photo of a fox, a bark, and the words “a red fox” can match each other. Search then ranks by how close those lists are (cosine similarity on length-normalized vectors).
 
-- Official model: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (prefer this checkpoint; ~1.53 GB safetensors)
-- Community / Unsloth guide & variants: [unsloth/embeddinggemma-2](https://huggingface.co/unsloth/embeddinggemma-2), Unsloth EmbeddingGemma docs
-- Conversion workflow reference (read-only): [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge) (`docs/WORKFLOW.md`, `forge.py`)
+## What’s included
 
-## Model weights location
+- Scripts that export EmbeddingGemma 2’s vision, audio, and text towers to Core AI `.aimodel` packages
+- Host code that tokenizes text, runs those packages, and inserts image/audio tokens into the text model
+- Small test fixtures (prompts and reference vectors)
+- An older text-only Core ML path (see [below](#older-text-only-core-ml-path))
 
-**Weights are not stored in this git repo.** Keep this checkout lean (code + small configs only).
+**Model weights are not in this repo.** You download EmbeddingGemma 2 yourself and check the license and terms on the model card.
 
-Canonical models directory (TrueNAS SMB volume **TB36**):
+A local demo (search, similarity heatmap, “search what I heard”) lives in a follow-up change. This branch is the packages and the conversion tools.
 
-`/Volumes/TB36/Models/anemll-embeddings`
+## Requirements
 
-- Checkpoint: `/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2` (`google/embeddinggemma-2`, ~1.5 GB safetensors)
-- Do **not** use flash USB `/Volumes/SAN512` for new downloads (slow). A prior incomplete copy may still exist at `/Volumes/SAN512/MODELS/anemll-embeddings` (~702M partial); leave it unless cleaning up deliberately.
-- Prefer not filling the internal SSD when free space is tight.
+- An Apple Silicon Mac. The numbers below were measured on an **M4 Pro, macOS 27.0**.
+- Python with `torch`, `transformers`, `sentence-transformers`, and `pillow`
+- A Python that can `import coreai.runtime`, pointed at by `ANEMLL_COREAI_PYTHON` (typically the `coreai/.venv` from [Anemll/anemll-forge](https://github.com/Anemll/anemll-forge))
+- The official checkpoint: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (~740M, vision + audio + text)
 
-Set Hugging Face caches on TB36:
+## Quick start
 
-```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-```
-
-A local `models` symlink to that path is optional and gitignored.
-
-## Reference fixtures (T1)
-
-Fixed Sentence-Transformers text-only embeddings for parity work live under `tests/fixtures/`:
-
-- `prompts.json` — stable SearchQuery / Document / CodeRetrieval / SentenceSimilarity / Classification / Clustering set
-- `embeddings.npy` — float32 `[N, 768]` ST reference vectors (L2-normalized)
-- `reference_meta.json` — load dtype/device, package versions, per-vector SHA-256 digests
-
-Regenerate (weights on TB36; runtime venv must be **local**, not SMB — torch SIGBUSes from TB36):
+Set these before any download or export. If you skip them, the scripts fall back to paths on one developer machine and will not find your files.
 
 ```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/gen_reference_fixtures.py
-/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_reference_fixtures.py
+export ANEMLL_EMBEDDINGS_MODEL=/path/to/google-embeddinggemma-2
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/path/to/artifacts
+export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
+export HF_HOME=$HOME/.cache/huggingface
+export HUGGINGFACE_HUB_CACHE=$HOME/.cache/huggingface
 ```
 
-Python env: `/Volumes/Models/anemll-embeddings/.venv` (sentence-transformers≥6.1, transformers, torch, pillow, torchvision — processor import still pulls image deps even for text-only). Pip cache may stay on TB36. A TB36 `.venv` was attempted but native `torch` imports crash with SIGBUS over SMB.
+1. **Install** (in a virtualenv):
 
-## Artifacts disk
+   ```sh
+   python -m pip install torch transformers sentence-transformers pillow
+   ```
 
-`.mlpackage` / `.mlmodelc` / TorchScript / build outputs go under:
+2. **Get the weights** (not committed here; read the Hugging Face terms first):
 
-`ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts`
+   ```sh
+   huggingface-cli download google/embeddinggemma-2 --local-dir "$ANEMLL_EMBEDDINGS_MODEL"
+   ```
 
-Do **not** put compile artifacts on TB36 (models + HF caches only), SAN512, or the internal SSD.
+3. **Export the packages**, or skip this if you already have them under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`:
 
-## Text-only loader + wrapper (T2 / T3)
+   ```sh
+   python scripts/export_coreai_towers.py \
+     --tower vision --tower audio --tower text --tower text_embeds
+   ```
 
-- `src/load_text_model.py` — Sentence-Transformers load with `vision_config`/`audio_config=None`, BF16/FP32 only (refuses FP16)
-- `src/embed_wrapper.py` — `EmbeddingGemma2Wrapper`: mask-aware mean pool → 512→768 projection → optional L2 (pool-then-project graph ready for later `torch.jit.trace` / coremltools)
+   With no `--tower` flags the script exports vision, audio, and the ids-only text package. Add `--tower text_embeds` if you want captions or mixed image/audio. That writes:
 
-Smoke vs T1 fixtures (cosine ≥ 0.999):
+   - `vision_s280.aimodel` — pixels → 280 × 512 image tokens
+   - `audio_s280.aimodel` — 280 × 128 mel frames → 70 × 512 audio tokens
+   - `text_s128.aimodel` — token ids → 768-d vector (plain text)
+   - `text_embeds_s320.aimodel` — already-looked-up tokens, including image/audio, → 768-d vector
 
-```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/smoke_wrapper_vs_fixtures.py
+   This is not `forge.py convert`. The Core AI Python is used only as the converter.
+
+4. **Run a first embedding** (load each package and do one forward on the Neural Engine):
+
+   ```sh
+   python scripts/smoke_coreai_towers.py --compute ane \
+     --tower vision --tower audio --tower text --tower text_embeds
+   ```
+
+   Or compare a few fixture cases against the original PyTorch model:
+
+   ```sh
+   ANEMLL_COREAI_COMPUTE=ane python scripts/parity_coreai_host.py
+   ```
+
+## Python usage
+
+The public helpers match the Sentence-Transformers text path. Set `ANEMLL_EMBEDDINGS_MODEL` first.
+
+```python
+from src.load_text_model import load_sentence_transformer
+from src.embed_wrapper import EmbeddingGemma2Wrapper, tokenize_with_st_prompt
+
+st, _ = load_sentence_transformer()
+wrapper = EmbeddingGemma2Wrapper.from_sentence_transformer(st).eval()
+
+batch = tokenize_with_st_prompt(st, "a red fox", "SearchQuery")
+embedding = wrapper(batch["input_ids"], batch["attention_mask"])
+# embedding.shape == (1, 768)
 ```
 
-## Trace + Core ML convert (T4 / T5)
+`SearchQuery` is a task prefix the original model expects for search. Other names in the fixtures include `Document`, `SentenceSimilarity`, and `CodeRetrieval`.
 
-Fixed-S `torch.jit.trace` then public `coremltools==9.0` (see `requirements-conversion.txt`). This is **not** `forge.py convert`.
+Photos, sounds, and captions go through `src/coreai_host.py`: run `vision_s280` / `audio_s280`, scatter those tokens into the text sequence, then run `text_embeds_s320`. Plain text can use `text_s128` (ids only). `scripts/parity_coreai_host.py` is the full loop.
 
-```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
-/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_export_utils.py
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_torchscript.py --seq-len 512
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/convert_coreml.py --seq-len 512
-```
+## Results
 
-Default `S=512` matches this checkpoint’s `text_config.sliding_window` (PLAN’s 1024 note is the later ladder). Artifacts land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512/` (gitignored).
+Measured on an **M4 Pro, macOS 27.0**. Cosine is the Neural Engine package versus the patched PyTorch model in FP32 on CPU. Inputs: the aurora fixture image, the `tone_a4` fixture clip, and a caption plus image tokens (269 tokens).
 
-Core ML I/O (names are fixed):
-
-| Name | Role | Shape | Dtype |
+| Package | Placement | Cosine vs FP32 CPU | p50 |
 | --- | --- | --- | --- |
-| `input_ids` | token ids (host tokenizer + task prefix) | `[1, S]` | `int32` |
-| `attention_mask` | `1` = token, `0` = pad | `[1, S]` | `int32` |
-| `embedding` | L2-normalized 768-d vector | `[1, 768]` | `float32` |
+| `vision_s280` | fully ANE, 1 region | 0.999954 (row min 0.99979) | 337 ms |
+| `audio_s280` | fully ANE, 1 region | 0.999927 (25 valid rows, row min 0.99944) | 10.8 ms |
+| `text_embeds_s320` | fully ANE, 1 region | 0.999963 | 34.8 ms |
 
-`CPU_AND_NE` on convert does **not** prove ANE placement (T7). First package is FP32 compute (`ct.precision.FLOAT32`); FP16 is T10.
+Each tower is one ANE region: `mps.fullyPlacedOnANE` and `mps.noGPUActivity`, with no GPU or CPU regions and no ANE validation messages.
 
-## Parity vs T1 fixtures (T6)
+## How it works
 
-Core ML **CPU** vs committed `tests/fixtures/embeddings.npy` (cosine, rel-L2, L2 norms, pairwise `cos(q,d)`). This does **not** prove ANE.
+Deeper notes: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md). In short:
 
-```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
-/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_parity_metrics.py
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/parity_cosine.py --seq-len 512
-```
+- The model is three towers (vision ~170M, audio ~300M, text ~270M). Each becomes its own package. The host stitches them; the compiled graphs stay simple.
+- The Neural Engine wants 16-bit (fp16) math. The original PyTorch model forbids fp16 because it produces NaNs. Export still uses an fp16 graph (`cast16`), and rewrites RMSNorm / LayerNorm as `x / max|x|` before squaring so large activations (around 900) do not overflow.
+- Attention and masks were rewritten so every op is legal on the Neural Engine: no fused attention with mismatched key/value shapes, no 1-bit masks, no `-inf` (that is NaN in fp16; we use `-1e4`), no `aten.unfold`, no 64-bit gathers. Those were the old GPU/CPU leftovers. They are gone on the M4 Pro packages above.
 
-Gates (PLAN starting numbers): per-prompt cosine ≥ 0.999, rel-L2 ≤ 0.05, pairwise |Δcos| ≤ 0.01. JSON report: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512/embeddinggemma2-text-s512.parity.json`.
+The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 
-## ANE smoke + placement (T7)
+## Limitations
 
-Same S=512 `.mlpackage`, scored with `CPU_AND_NE`. **T6 CPU parity is not ANE proof.** T7 dumps `MLComputePlan` preferred devices and fails if zero non-const ops prefer ANE.
+- Validated on an M4 Pro running macOS 27.0.
+- On macOS 27.2 (M5, newer Neural Engine) the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU. Audio still runs on the Neural Engine.
+- Audio clips must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips error instead of returning a bad vector.
+- There is no video package yet. `<|video|>` fixtures are skipped.
+- Weights are not in git. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms before you download.
+- Default script paths (`ANEMLL_EMBEDDINGS_MODEL`, artifacts, Hugging Face cache, `ANEMLL_COREAI_PYTHON`) point at one developer machine. Set the environment variables above.
 
-```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
-/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_ane_placement.py
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/ane_smoke.py --seq-len 512
-```
+## Older text-only Core ML path
 
-Report: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512/embeddinggemma2-text-s512.ane.json`.
-
-## FP16 hazard experiment (T10)
-
-Reuses the T4 FP32 TorchScript. Converts a **separate** `*-fp16` package (`ct.precision.FLOAT16`) so the T5 FLOAT32 artifacts stay put. PyTorch stays BF16/FP32.
+An earlier track exports the ~270M text tower through `torch.jit.trace` and public `coremltools==9.0` (not Core AI). It is still here; the multimodal packages above are the main path.
 
 ```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/convert_coreml.py --seq-len 512 --precision FLOAT16
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/parity_cosine.py --seq-len 512 --precision FLOAT16
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/ane_smoke.py --seq-len 512 --precision FLOAT16
+python -m pip install -r requirements-conversion.txt
+python scripts/export_torchscript.py --seq-len 512
+python scripts/convert_coreml.py --seq-len 512
+python scripts/parity_cosine.py --seq-len 512
+python scripts/ane_smoke.py --seq-len 512
 ```
 
-Artifacts: `$ANEMLL_EMBEDDINGS_ARTIFACTS/embeddinggemma2-text-s512-fp16/`. Record NaN rate, cosine/rel-L2, and ANE compute-plan counts. Do not treat T6/T7 CPU numbers as ANE.
-
-mp4 (M4 Pro) first run: FP16 **does** place on ANE (`2307` ANE / `17` CPU preferred). ANE vs T1 min cosine `0.99988`. CPU_ONLY FP16 vs T1 min cosine `0.920` (no NaNs) — the FP16 hazard is the **CPU** path, not ANE. Convert logged MIL `overflow encountered in cast` warnings.
-
-`ane_smoke.py --precision FLOAT16` also times `CPU_AND_GPU` and `ALL` (warm + p50/p90) and classifies every CPU-preferred op as begin / mid / end. The 17 leftovers are a **begin-of-graph** island (pad/window mask + embedding gather). That is **not** a full-ANE graph: one CPU→ANE switch at the start is expected; mid-graph CPU islands would be a fail. `ALL` may still prefer ANE — use `CPU_AND_GPU` for the GPU number.
-
-mp4 timings (S=512, warmup=2, iters=5): CPU_ONLY p50 **65.0 ms** / CPU_AND_NE **27.4 ms** / CPU_AND_GPU **38.6 ms** / ALL **28.4 ms**. ALL plan is 2246 ANE + 78 GPU (begin GPU island), not a GPU path and not full ANE.
-
-## Multimodal 740M → Core AI (primary)
-
-Text-only Core ML stays as the T4–T10 bonus path. New work targets **Core AI** (`torch.export` → `.aimodel`) for the full checkpoint (vision 170M + audio 300M + text 270M). Do **not** call `forge.py convert`. Use forge’s `coreai/.venv` only as the Core AI toolchain (`ANEMLL_COREAI_PYTHON`).
-
-The TB36 `google-embeddinggemma-2` safetensors already include `vision_tower` + `audio_tower`. Load them with empty `config_kwargs` (not T2’s text-only strip).
-
-```sh
-export HF_HOME=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export HUGGINGFACE_HUB_CACHE=/Volumes/TB36/Models/anemll-embeddings/hf-cache
-export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
-/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_multimodal_media.py
-/Volumes/Models/anemll-embeddings/.venv/bin/python scripts/gen_multimodal_fixtures.py
-ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
-  /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_vision.py --probe
-/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_coreai_towers.py
-ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
-  /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/export_coreai_towers.py
-/Volumes/Models/anemll-embeddings/.venv/bin/python tests/test_coreai_smoke.py
-ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python \
-  /Volumes/Models/anemll-embeddings/.venv/bin/python scripts/smoke_coreai_towers.py
-```
-
-Separate packages under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`: `vision_s280.aimodel` (pixels → 280×512 soft tokens), `audio_s280.aimodel` (280×128 mel → 70×512; chunked attn windows via `index_select` instead of `aten.unfold`), `text_s128.aimodel` (ids/mask → 768). Audio `.pt2` save can hit TreeSpec; convert uses the live exported program. Host interleaves placeholders. Cast16 can clash on int `div`; convert retries without it.
-
-CPU-only smoke on mp4 (`scripts/smoke_coreai_towers.py`): vision / text / audio all **PASS** (finite, expected shapes). Preferred ANE specialize aborted (`mps_spi.sdpa` grouping; `i1` mask `2520xi1`). No mid-graph CPU island from the CPU smoke path. Results: `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/towers.smoke.json`.
-
-Synthetic media + multimodal embeddings land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/` (not git, not the FLOAT32 text `.mlpackage` tree). Prefixes are text-only; image/video/audio use `<|image|>` / `<|video|>` / `<|audio|>`.
+I/O names are fixed: `input_ids` and `attention_mask` in (`[1, S]`, int32), `embedding` out (`[1, 768]`, float32). `CPU_AND_NE` on convert does not prove Neural Engine placement — `ane_smoke.py` reads the compute plan. FP16 Core ML (`--precision FLOAT16`) is a separate artifact tree; on the M4 Pro the FP16 *CPU* path was the weak one (min cosine 0.920 vs the fixtures), not the Neural Engine path.
 
 ## Local showcase
 
@@ -258,4 +218,4 @@ python demo/scripts/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$AN
 
 ## License
 
-Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
+Apache License 2.0 — see `LICENSE.note`. EmbeddingGemma upstream terms also apply to the model weights.
