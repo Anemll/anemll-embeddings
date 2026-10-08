@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Heard · ANE Embeddings</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <strong>ANE Embeddings</strong>
+        <span>Search what I heard</span>
+      </div>
+      <nav>
+        <a href="/">Search</a>
+        <a href="/heatmap">Matrix</a>
+        <a href="/heard" aria-current="page">Heard</a>
+      </nav>
+    </header>
+    <p class="banner" id="banner">Loading backend…</p>
+    <div class="layout">
+      <section class="panel">
+        <div class="toolbar">
+          <h2>Rolling mic</h2>
+          <span class="ane-badge" id="record-badge" hidden>on ANE · — ms</span>
+        </div>
+        <p class="hint">Short chunks are embedded and indexed with a timestamp. On the Core AI package, audio longer than the 280-frame window is sliced and mean-pooled.</p>
+        <div class="row">
+          <label>Chunk
+            <input id="seconds" type="number" min="5" max="10" value="8" step="1"> s
+          </label>
+          <button class="primary" type="button" id="record">Record</button>
+        </div>
+        <p class="error" id="error"></p>
+        <div class="timeline" id="timeline"></div>
+      </section>
+      <section class="panel">
+        <div class="toolbar">
+          <h2>Search the timeline</h2>
+          <span class="ane-badge" id="latency-badge" hidden>on ANE · — ms</span>
+        </div>
+        <form id="find-form" class="row">
+          <input id="find" type="text" placeholder="What did I hear?" autocomplete="off">
+          <button class="primary" type="submit">Search</button>
+        </form>
+        <div class="results" id="results"></div>
+      </section>
+    </div>
+  </div>
+  <script src="/static/common.js"></script>
+  <script src="/static/heard.js"></script>
+</body>
+</html>

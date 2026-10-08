@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Load one Core AI ``.aimodel`` and run a numpy feed (CPU). No ST imports."""
+"""Load one Core AI ``.aimodel`` and run a numpy feed. No ST imports.
+
+``ANEMLL_COREAI_COMPUTE`` selects the device. Unset stays CPU, which is the
+parity default. ``ane`` prefers the Neural Engine. The showcase server sets
+the variable to ``ane`` in its worker; it does not change this default.
+"""
 
 from __future__ import annotations
 
@@ -30,21 +35,31 @@ def _reexec_if_needed() -> None:
         os.execv(str(py), [str(py), *sys.argv])
 
 
-_reexec_if_needed()
+def parity_compute() -> str:
+    """Device the parity runner uses. Unset means CPU."""
+    return os.environ.get("ANEMLL_COREAI_COMPUTE", "cpu")
+
+
+def specialization_options():
+    """Options for ``AIModel.load``. ``None`` when the runtime has no switch.
+
+    Same branch ``parity_coreai_host.py`` gets by shelling out to this script.
+    """
+    from coreai.runtime import ComputeUnitKind, SpecializationOptions
+
+    if not SpecializationOptions.is_supported():
+        return None
+    if parity_compute() == "ane":
+        return SpecializationOptions.from_preferred_compute_unit_kind(
+            ComputeUnitKind.neural_engine()
+        )
+    return SpecializationOptions.cpu_only()
 
 
 async def _run(pkg: Path, entry: str, feed: dict[str, np.ndarray], out: Path) -> None:
-    from coreai.runtime import AIModel, ComputeUnitKind, NDArray, SpecializationOptions
+    from coreai.runtime import AIModel, NDArray
 
-    opts = None
-    if SpecializationOptions.is_supported():
-        # ANEMLL_COREAI_COMPUTE=ane runs the parity path on the Neural Engine.
-        if os.environ.get("ANEMLL_COREAI_COMPUTE", "cpu") == "ane":
-            opts = SpecializationOptions.from_preferred_compute_unit_kind(
-                ComputeUnitKind.neural_engine()
-            )
-        else:
-            opts = SpecializationOptions.cpu_only()
+    opts = specialization_options()
     model = await AIModel.load(pkg, specialization_options=opts) if opts else await AIModel.load(pkg)
     names = list(model.function_names)
     fn_name = entry if entry in names else names[0]
@@ -59,6 +74,7 @@ async def _run(pkg: Path, entry: str, feed: dict[str, np.ndarray], out: Path) ->
 
 
 def main() -> int:
+    _reexec_if_needed()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--entry", required=True)

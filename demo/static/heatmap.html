@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Matrix · ANE Embeddings</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <strong>ANE Embeddings</strong>
+        <span>Cross-modal cosine, recomputed on the loaded towers</span>
+      </div>
+      <nav>
+        <a href="/">Search</a>
+        <a href="/heatmap" aria-current="page">Matrix</a>
+        <a href="/heard">Heard</a>
+      </nav>
+    </header>
+    <p class="banner" id="banner">Loading backend…</p>
+    <section class="panel" style="margin-top:1.25rem">
+      <div class="toolbar">
+        <h2>Similarity matrix</h2>
+        <span class="ane-badge" id="latency-badge" hidden>on ANE · — ms</span>
+      </div>
+      <p class="hint">Pick a handful of items. The server re-embeds each one and fills the cosine heatmap.</p>
+      <div class="checks" id="checks"></div>
+      <div class="row">
+        <button class="primary" type="button" id="build">Build matrix</button>
+      </div>
+      <p class="error" id="error"></p>
+      <div class="matrix-wrap" id="matrix"></div>
+    </section>
+  </div>
+  <script src="/static/common.js"></script>
+  <script src="/static/heatmap.js"></script>
+</body>
+</html>

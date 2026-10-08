@@ -184,6 +184,71 @@ CPU-only smoke on mp4 (`scripts/smoke_coreai_towers.py`): vision / text / audio 
 
 Synthetic media + multimodal embeddings land under `$ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/` (not git, not the FLOAT32 text `.mlpackage` tree). Prefixes are text-only; image/video/audio use `<|image|>` / `<|video|>` / `<|audio|>`.
 
+## Local showcase
+
+`demo/` is a small FastAPI server and three static pages: multimodal search, a cross-modal cosine matrix, and “search what I heard”. The pages are plain HTML. There is no build step.
+
+The server loads one backend at startup:
+
+| Backend | What it runs |
+| --- | --- |
+| `coreai` | `vision_s280`, `audio_s280`, and `text_embeds_s320`, kept resident. Host embed + scatter matches `scripts/parity_coreai_host.py`. |
+| `reference` | Full EmbeddingGemma 2 checkpoint on CPU (sentence-transformers), same encode path as `scripts/gen_multimodal_fixtures.py`. |
+| `mock` | Deterministic stand-in vectors so the API and pages run on a machine without Core AI. |
+
+**Core AI defaults to the Neural Engine.** Parity does not: `scripts/_coreai_run_npy.py` leaves `ANEMLL_COREAI_COMPUTE` unset as CPU, and `ANEMLL_COREAI_COMPUTE=ane` opts that runner into the Neural Engine. The showcase sets the variable to `ane` only inside its worker. Override the server with `--compute cpu` or `ANEMLL_DEMO_COMPUTE=cpu`.
+
+Audio uses the processor keep-mask. Pad frames stay masked. An all-ones mask lets fp16 pad noise into real frames on the ANE. The export’s additive mask constant is `-1e4` (fp16-safe); the host passes the 0/1 mask, not that constant.
+
+Packages and the index live outside git:
+
+```sh
+export ANEMLL_EMBEDDINGS_ARTIFACTS=/Volumes/Models/anemll-embeddings/artifacts
+export ANEMLL_EMBEDDINGS_MODEL=/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2
+export ANEMLL_COREAI_PYTHON=/Users/anemll/anemll-forge/coreai/.venv/bin/python
+export ANEMLL_DEMO_DATA=$HOME/.anemll-embeddings/demo
+export ANEMLL_DEMO_CORPUS=$HOME/.anemll-embeddings/corpus
+```
+
+On a Mac, from the repo root, with the host venv that already has torch and transformers:
+
+```sh
+/Volumes/Models/anemll-embeddings/.venv/bin/python -m pip install -r demo/requirements.txt
+/Volumes/Models/anemll-embeddings/.venv/bin/python -m demo.server \
+  --backend coreai --host 0.0.0.0 --port 8765
+```
+
+Then open `http://127.0.0.1:8765`. Other machines on the LAN use `http://<mac-ip>:8765` (the process binds `0.0.0.0`). `GET /health` reports the backend, the three towers, warmup milliseconds, and placement (`fullyOnANE` when the runtime says so). Each page shows that as `on ANE · N ms`.
+
+This VM has no Neural Engine. Use the mock backend:
+
+```sh
+python -m pip install -r demo/requirements.txt
+python -m demo.server --backend mock --port 8765
+python tests/test_demo_api.py
+python tests/test_demo_coreai_masks.py
+```
+
+Optional corpus (CC0 / CC BY via Openverse, licenses recorded in `manifest.json`, files not committed):
+
+```sh
+python demo/scripts/fetch_corpus.py --dest "$ANEMLL_DEMO_CORPUS"
+python demo/scripts/seed_index.py --base-url http://127.0.0.1:8765 --corpus "$ANEMLL_DEMO_CORPUS"
+```
+
+| Variable | Role |
+| --- | --- |
+| `ANEMLL_DEMO_BACKEND` | `mock` (default), `reference`, or `coreai` |
+| `ANEMLL_DEMO_HOST` / `ANEMLL_DEMO_PORT` | Bind address, default `0.0.0.0:8765` |
+| `ANEMLL_DEMO_DATA` | Index `index.npz` + `index.json` + media |
+| `ANEMLL_DEMO_CORPUS` | Fetched demo media |
+| `ANEMLL_DEMO_COMPUTE` | `ane` (default) or `cpu` for the coreai backend |
+| `ANEMLL_EMBEDDINGS_ARTIFACTS` | Directory whose `coreai/` holds the three `.aimodel` packages |
+| `ANEMLL_EMBEDDINGS_MODEL` | Checkpoint for the host tokenizer, processor, and embed lookup |
+| `ANEMLL_COREAI_PYTHON` | Interpreter with `coreai`. The parity runner still defaults to CPU |
+
+`POST /embed` accepts JSON `{"text": "..."}` or a multipart image/audio file (wav, and browser webm/ogg via ffmpeg, resampled to 16 kHz mono). `POST /index` stores the vector. `POST /search` returns top-k cosine across modalities. Pages: `/` search, `/heatmap` matrix, `/heard` rolling mic chunks.
+
 ## License
 
 Apache License 2.0 — see `LICENSE.note`; EmbeddingGemma upstream terms also apply to model weights.
