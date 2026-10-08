@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import struct
 import urllib.request
 from fnmatch import fnmatch
@@ -16,9 +18,13 @@ except ImportError:
     _hf_snapshot_download = None
 
 ANE_REPO = "anemll/anemll-embeddinggemma-2-ane"
+# Towers shipped at 8ceba04 (no host/ yet). After host/ is uploaded, set this
+# to that commit or export ANEMLL_ANE_REVISION=<sha>. Until host/ exists at
+# this pin, download_models.py falls back to Google for host files.
 ANE_REVISION = "8ceba04"
 BASE_REPO = "google/embeddinggemma-2"
 BASE_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
+HOST_FOLDER = "host"
 TOWERS = ("vision_s280", "audio_s280", "text_embeds_s320")
 BUNDLE_FILES = ("metadata.json", "main.hash", "main.mlirb")
 DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
@@ -45,6 +51,18 @@ ANE_ALLOW = (
     "vision_s280/**",
     "audio_s280/**",
     "text_embeds_s320/**",
+)
+HOST_FOLDER_ALLOW = (f"{HOST_FOLDER}/**",)
+# Single-repo inference snapshot: towers + mirrored host/.
+ANE_INFERENCE_ALLOW = ANE_ALLOW + HOST_FOLDER_ALLOW
+HOST_PAYLOAD = INFERENCE_HOST_ALLOW + (SLIM_EMBED_NAME,)
+HOST_META_FILES = ("LICENSE", "NOTICE", "SOURCE.md", "SHA256SUMS")
+HOST_REQUIRED = (
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "preprocessor_config.json",
+    SLIM_EMBED_NAME,
 )
 
 # Export: the full checkpoint (allow None = every file).
@@ -80,8 +98,17 @@ def default_dest() -> Path:
     return Path.home() / ".anemll-embeddings"
 
 
+def ane_revision() -> str:
+    return os.environ.get("ANEMLL_ANE_REVISION") or ANE_REVISION
+
+
 def inference_download_bytes() -> int:
     return sum(ANE_BYTES.values()) + sum(HOST_FILE_BYTES.values()) + EMBED_TABLE_BYTES
+
+
+def host_folder_bytes() -> int:
+    """Mirrored host/ payload (copied files + extracted embed table)."""
+    return sum(HOST_FILE_BYTES.values()) + EMBED_TABLE_BYTES
 
 
 def export_download_bytes() -> int:
@@ -121,6 +148,37 @@ def bundle_complete(ane_dir: Path, name: str) -> bool:
 
 def all_bundles_complete(ane_dir: Path) -> bool:
     return all(bundle_complete(ane_dir, name) for name in TOWERS)
+
+
+def host_payload_complete(folder: Path) -> bool:
+    return all((folder / name).is_file() for name in HOST_REQUIRED)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def copy_host_payload(src: Path, dest: Path) -> list[str]:
+    dest.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for name in HOST_PAYLOAD + HOST_META_FILES:
+        source = src / name
+        if source.is_file():
+            shutil.copy2(source, dest / name)
+            copied.append(name)
+    return copied
+
+
+def install_host(src: Path, dest: Path) -> str:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink() or not dest.exists():
+        return ensure_symlink(dest, src)
+    copy_host_payload(src, dest)
+    return "copied"
 
 
 def revision_matches(folder: Path, revision: str) -> bool:

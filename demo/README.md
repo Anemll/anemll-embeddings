@@ -6,7 +6,7 @@ The pages are plain HTML. There is no front-end build step.
 
 ## Start the server
 
-You need the public Core AI packages (`vision_s280`, `audio_s280`, `text_embeds_s320`) plus the slim Google host files. `python scripts/download_models.py` fetches them (about 1.49 GB, no full `model.safetensors`; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)) and creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects. No Hugging Face login. Put the printed `export` lines in `~/.zshrc` or a file you `source`.
+You need the public Core AI packages (`vision_s280`, `audio_s280`, `text_embeds_s320`) plus the slim host files. `python scripts/download_models.py` fetches them from one repo (about 1.49 GB, `host/` on the ANE pack, no full `model.safetensors`; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)) and creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects. No Hugging Face login. Put the printed `export` lines in `~/.zshrc` or a file you `source`.
 
 ```sh
 python scripts/download_models.py

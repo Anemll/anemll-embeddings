@@ -22,12 +22,15 @@ from api.host_embed import (  # noqa: E402
 from scripts.download_common import (  # noqa: E402
     ANE_ALLOW,
     ANE_BYTES,
+    ANE_INFERENCE_ALLOW,
     ANE_REVISION,
     EMBED_SCALE,
     EMBED_TABLE_BYTES,
     EMBED_TENSOR_KEY,
     EXPORT_HOST_ALLOW,
     FULL_SAFE_TENSORS_BYTES,
+    HOST_FOLDER,
+    HOST_FOLDER_ALLOW,
     INFERENCE_HOST_ALLOW,
     INFERENCE_HOST_IGNORE,
     SLIM_EMBED_NAME,
@@ -50,6 +53,11 @@ from scripts.download_common import (  # noqa: E402
 )
 from scripts.download_export_assets import download_full_host  # noqa: E402
 from scripts.download_models import download_host  # noqa: E402
+from scripts.prepare_hf_host_folder import (  # noqa: E402
+    ORIGIN_COPIED,
+    ORIGIN_EXTRACTED,
+    stage_host,
+)
 
 
 def _fail(msg: str) -> None:
@@ -159,6 +167,14 @@ def test_inference_allow_excludes_full_weights() -> None:
             _fail(f"ANE allow missed {path}")
     if matches_hf_patterns("README.md", ANE_ALLOW, None):
         _fail("ANE allow should not pull the repo README")
+    if matches_hf_patterns("host/config.json", ANE_ALLOW, None):
+        _fail("tower allow should not match host/")
+    if not matches_hf_patterns("host/config.json", ANE_INFERENCE_ALLOW, None):
+        _fail("inference allow should include host/")
+    if not matches_hf_patterns("host/embed_tokens.safetensors", HOST_FOLDER_ALLOW, None):
+        _fail("host allow should include the slim embed table")
+    if matches_hf_patterns("model.safetensors", HOST_FOLDER_ALLOW, None):
+        _fail("host allow should not match a root model.safetensors")
     if SLIM_EMBED_NAME != HOST_SLIM_NAME:
         _fail("slim filename drifted between host and download")
     if abs(EMBED_SCALE - HOST_EMBED_SCALE) > 1e-9:
@@ -213,20 +229,62 @@ def test_snapshot_export_omits_allow(tmp: Path) -> None:
         _fail(f"export snapshot should omit allow_patterns, got {captured}")
 
 
-def test_download_host_uses_inference_allow(tmp: Path) -> None:
-    captured: dict = {}
+def _write_slim_host(folder: Path) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+    ):
+        (folder / name).write_text("{}", encoding="utf-8")
+    (folder / SLIM_EMBED_NAME).write_bytes(b"slim")
+
+
+def test_download_host_prefers_mirrored(tmp: Path) -> None:
+    ane = tmp / "ane"
+    _write_slim_host(ane / HOST_FOLDER)
+    calls: list[dict] = []
 
     def fake(**kwargs):
-        captured.update(kwargs)
-        Path(kwargs["local_dir"]).mkdir(parents=True, exist_ok=True)
-        (Path(kwargs["local_dir"]) / "config.json").write_text("{}", encoding="utf-8")
+        calls.append(kwargs)
 
     with patch("scripts.download_common._hf_snapshot_download", fake):
-        download_host(tmp / "embeddinggemma-2", force=True)
-    if captured.get("allow_patterns") != list(INFERENCE_HOST_ALLOW):
-        _fail(f"download_host allow {captured.get('allow_patterns')}")
-    if captured.get("ignore_patterns") != list(INFERENCE_HOST_IGNORE):
-        _fail(f"download_host ignore {captured.get('ignore_patterns')}")
+        status = download_host(tmp / "embeddinggemma-2", ane_dir=ane, force=True)
+    if status != "anemll-host":
+        _fail(f"status {status}")
+    if calls:
+        _fail(f"mirrored host should not snapshot, got {calls}")
+    model = tmp / "embeddinggemma-2"
+    if not (model / SLIM_EMBED_NAME).is_file():
+        _fail("model dir missing slim embed")
+
+
+def test_download_host_falls_back_to_google(tmp: Path) -> None:
+    ane = tmp / "ane"
+    ane.mkdir(parents=True)
+    calls: list[dict] = []
+
+    def fake(**kwargs):
+        calls.append(dict(kwargs))
+        Path(kwargs["local_dir"]).mkdir(parents=True, exist_ok=True)
+
+    with patch("scripts.download_common._hf_snapshot_download", fake):
+        status = download_host(tmp / "embeddinggemma-2", ane_dir=ane, force=True)
+    if status != "google-fallback":
+        _fail(f"status {status}")
+    if not calls:
+        _fail("expected snapshot calls")
+    last = calls[-1]
+    if last.get("repo_id") != "google/embeddinggemma-2":
+        _fail(f"fallback repo {last.get('repo_id')}")
+    if last.get("allow_patterns") != list(INFERENCE_HOST_ALLOW):
+        _fail(f"download_host allow {last.get('allow_patterns')}")
+    if last.get("ignore_patterns") != list(INFERENCE_HOST_IGNORE):
+        _fail(f"download_host ignore {last.get('ignore_patterns')}")
+    first = calls[0]
+    if first.get("allow_patterns") != list(HOST_FOLDER_ALLOW):
+        _fail(f"first snapshot should be host/, got {first.get('allow_patterns')}")
 
 
 def test_download_export_uses_full_allow(tmp: Path) -> None:
@@ -297,6 +355,41 @@ def test_extract_from_bytes_matches_file(tmp: Path) -> None:
         _fail("file and bytes extract diverged")
 
 
+def test_prepare_hf_host_folder(tmp: Path) -> None:
+    src = tmp / "src"
+    dest = tmp / "hf"
+    dest.mkdir(parents=True)
+    (dest / "LICENSE").write_text("apache\n", encoding="utf-8")
+    (dest / "NOTICE").write_text("notice\n", encoding="utf-8")
+    for name in INFERENCE_HOST_ALLOW:
+        (src).mkdir(parents=True, exist_ok=True)
+        (src / name).write_text(f"{name}-bytes\n", encoding="utf-8")
+    _tiny_full_checkpoint(src / "model.safetensors")
+    host = dest / "host"
+    rows = stage_host(src=src, host=host, license_src=dest / "LICENSE", notice_src=dest / "NOTICE")
+    by_name = {str(row["file"]): row for row in rows}
+    if by_name["config.json"]["origin"] != ORIGIN_COPIED:
+        _fail("config.json should be copied verbatim")
+    if by_name[SLIM_EMBED_NAME]["origin"] != ORIGIN_EXTRACTED:
+        _fail("embed table should be extracted")
+    source_md = (host / "SOURCE.md").read_text(encoding="utf-8")
+    if "google/embeddinggemma-2" not in source_md:
+        _fail("SOURCE.md missing upstream repo")
+    if "914f7f89142e33e77833254d9c9b90c3cef7303b" not in source_md:
+        _fail("SOURCE.md missing upstream revision")
+    if "copied verbatim" not in source_md or "extracted" not in source_md:
+        _fail("SOURCE.md missing origin labels")
+    sums = (host / "SHA256SUMS").read_text(encoding="utf-8")
+    if "config.json" not in sums or SLIM_EMBED_NAME not in sums:
+        _fail(f"SHA256SUMS {sums}")
+    if (host / "config.json").read_text(encoding="utf-8") != "config.json-bytes\n":
+        _fail("verbatim copy drifted")
+    if not (host / SLIM_EMBED_NAME).is_file():
+        _fail("extracted embed missing")
+    if (host / "LICENSE").read_text(encoding="utf-8") != "apache\n":
+        _fail("LICENSE not copied into host/")
+
+
 def test_ensure_slim_prefers_local_full(tmp: Path) -> None:
     _tiny_full_checkpoint(tmp / "model.safetensors")
     with patch("scripts.download_common.extract_embed_from_hf") as hf:
@@ -325,8 +418,10 @@ def main() -> int:
         test_export_allow_is_full_checkpoint()
         test_snapshot_passes_inference_patterns(tmp / "snap-inf")
         test_snapshot_export_omits_allow(tmp / "snap-exp")
-        test_download_host_uses_inference_allow(tmp / "host")
+        test_download_host_prefers_mirrored(tmp / "host-mirror")
+        test_download_host_falls_back_to_google(tmp / "host-fallback")
         test_download_export_uses_full_allow(tmp / "export")
+        test_prepare_hf_host_folder(tmp / "prepare")
         test_extract_and_load_slim(tmp / "slim")
         test_extract_from_bytes_matches_file(tmp / "bytes")
         test_ensure_slim_prefers_local_full(tmp / "local-full")

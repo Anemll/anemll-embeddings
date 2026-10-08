@@ -17,6 +17,10 @@ __pycache__/
 # Large weights / caches — live on network volume (TBD), not in this repo
 # Do not use flash USB /Volumes/SAN512 for model downloads (too slow).
 models/
+# Staged HF host/ payloads (scripts/prepare_hf_host_folder.py)
+hf/host/tokenizer.json
+hf/host/tokenizer.model
+hf/host/SHA256SUMS
 *.safetensors
 *.bin
 *.gguf

@@ -1,0 +1,96 @@
+# Core AI towers in this repo. Signatures read from the packages with
+# coreai.runtime (AIModel.load -> function.desc) on M4 Pro, macOS 27.0.
+# Timings and parity measured with https://github.com/Anemll/anemll-embeddings
+# (fp16, compute=ane). Parity = cosine of the tower output on the Neural
+# Engine vs the FP32 CPU reference of the same tower.
+base_model: google/embeddinggemma-2
+base_model_revision: 914f7f89142e33e77833254d9c9b90c3cef7303b
+format: coreai .aimodel (assetVersion 2.0, producer coreai-core 1.0.0b2)
+validated_on: Apple M4 Pro, macOS 27.0
+embedding_dim: 768
+
+towers:
+  vision_s280:
+    path: vision_s280/vision_s280.aimodel
+    function: vision_s280
+    sequence_length: 2520            # image patches in; 280 soft tokens out
+    inputs:
+      pixel_values:       {shape: [1, 2520, 768], dtype: float16}
+      pixel_position_ids: {shape: [1, 2520, 2],   dtype: float16}
+    outputs:
+      soft_tokens:        {shape: [1, 280, 512],  dtype: float16}
+    compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
+    p50_ms: 337                      # observed 327-357 ms per image
+    parity_cosine_vs_fp32: 0.999954
+    main_mlirb_sha256: d11f9d91a41a978ef419cd15b7b3633d47fc388b5d7327b302f4b4355f68b097
+
+  audio_s280:
+    path: audio_s280/audio_s280.aimodel
+    function: audio_s280
+    sequence_length: 280             # mel frames in (128 bins, 16 kHz); 70 soft tokens out
+    inputs:
+      input_features:      {shape: [1, 1, 280, 128], dtype: float16}
+      input_features_mask: {shape: [1, 1, 280, 1],   dtype: float16}   # real keep-mask, 1 = valid frame
+    outputs:
+      soft_tokens:         {shape: [1, 1, 70, 512],  dtype: float16}
+    compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
+    p50_ms: 10.8                     # observed 11-26 ms per clip
+    parity_cosine_vs_fp32: 0.999927  # over the real (unmasked) rows
+    main_mlirb_sha256: bbbd714866d5b37a2ccd9c8ec0899f966dbf5dac66031f886522a8fc6824c35f
+
+  text_embeds_s320:
+    path: text_embeds_s320/text_embeds_s320.aimodel
+    function: text_embeds_s320
+    sequence_length: 320             # token embeddings in (text plus interleaved image/audio soft tokens)
+    inputs:
+      inputs_embeds:  {shape: [1, 320, 512], dtype: float16}
+      attention_mask: {shape: [1, 320],      dtype: float16}   # 1 = real position, 0 = padding
+    outputs:
+      embedding:      {shape: [1, 768],      dtype: float16}   # pooled + projected; L2-normalize on the host
+    compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
+    p50_ms: 34.8                     # observed 34-42 ms per pass
+    parity_cosine_vs_fp32: 0.999963
+    main_mlirb_sha256: c52be1ab6401d69bb28b880498a90ca3f5891d419726e1531809584907a2d536
+
+host_side:
+  # Mirrored under host/ in this repo so inference is one download.
+  # api.Embedder builds inputs_embeds on the host (tokenizer, processor,
+  # token-embedding lookup, soft-token interleave).
+  path: host/
+  source: google/embeddinggemma-2
+  source_revision: 914f7f89142e33e77833254d9c9b90c3cef7303b
+  env: ANEMLL_EMBEDDINGS_MODEL   # local host/ (or a Google fallback snapshot)
+  files:
+    copied_verbatim:
+      - config.json
+      - config_sentence_transformers.json
+      - tokenizer.json
+      - tokenizer.model
+      - tokenizer_config.json
+      - preprocessor_config.json
+      - processor_config.json
+      - chat_template.jinja
+    extracted:
+      - embed_tokens.safetensors   # language_model.embed_tokens.weight + sqrt(512) scale
+    attribution:
+      - LICENSE
+      - NOTICE
+      - SOURCE.md
+      - SHA256SUMS
+  not_included:
+    - model.safetensors            # 1,488,915,288 bytes; export-only
+  about_bytes: 305305913           # tokenizer/configs ~36.9 MB + embed table 256 MiB
+  prompts:
+    query: "task: search result | query: "
+    document: "title: none | text: "
+
+end_to_end_per_input_on_m4_pro:   # tower + text_embeds pass, as the demo measures it
+  image: ~370 ms
+  audio: ~50-60 ms
+  text: ~35 ms
+
+known_limitations:
+  - Validated only on M4 Pro / macOS 27.0.
+  - On M5 with macOS 27.2, the ANE pre-check rejects vision_s280 and text_embeds_s320
+    ("Parsing failed, invalid MLIR-MPS program") and Core AI falls back to the GPU.
+  - Video is not converted.
