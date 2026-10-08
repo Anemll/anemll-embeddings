@@ -9,7 +9,7 @@ The Neural Engine is the dedicated chip on Apple Silicon for this kind of work. 
 | Mac | macOS | Placement |
 | --- | --- | --- |
 | M4 Pro, M3 Ultra | 27.0 | All three towers fully on the Neural Engine (validated) |
-| M5 | 27.2 | All three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them). |
+| M5 | 27.2 | All three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them). See [M5 results](#m5-macos-272). |
 
 Run `python scripts/warmup.py --require-ane` to check your own Mac; it exits non-zero unless every tower is fully on the Neural Engine.
 
@@ -256,6 +256,25 @@ End-to-end `Embedder(compute="ane")` scores on the same M4 Pro (cosine between t
 | bark vs `a cat meowing` | 0.661 |
 
 About **35 ms** per sentence, **380 ms** per photo, **50 ms** per sound.
+
+### M5, macOS 27.2
+
+Measured on an **Apple M5 (32 GB), macOS 27.2**, with the same tower packages. All three towers work and match the reference. Audio runs on the Neural Engine; vision and text currently run on the GPU because the macOS 27.2 ANE pre-check rejects them (`invalid MLIR-MPS program`). A fix that puts the text tower on the Neural Engine on macOS 27.2 is being investigated.
+
+Fixtures matched the reference at cosine **0.99994-0.99997**. A cold first compile and warmup took **9.0 s**, and a warm load took **0.56 s**.
+
+End-to-end `Embedder(compute="ane")` scores on the M5 (cosine between two embeddings, after warmup), next to the M4 Pro numbers above:
+
+| Pair | M5 | M4 Pro |
+| --- | --- | --- |
+| text `a red fox` vs `a red fox in the snow` | 0.901 | 0.901 |
+| text `a red fox` vs `a delivery truck` | 0.693 | 0.694 |
+| UPS photo vs `a brown UPS delivery truck` | 0.726 | 0.727 |
+| UPS photo vs `a cat` | 0.511 | 0.513 |
+| bark vs `a dog barking` | 0.717 | 0.721 |
+| bark vs `a cat meowing` | 0.652 | 0.661 |
+
+About **32 ms** per sentence, **155 ms** per photo, **46 ms** per sound (warm).
 
 ## How it works
 
