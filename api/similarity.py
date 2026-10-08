@@ -18,7 +18,7 @@ def cosine(left: np.ndarray, right: np.ndarray) -> float:
 
     - ``1.0`` — same input
     - ``0.85–1.0`` — same thing, different wording or viewpoint
-    - ``0.60–0.85`` — related (demo alerts sit here: UPS ~0.65, bark ~0.68, Sparky ~0.75)
+    - ``0.60–0.85`` — related (UPS photo vs ``a brown UPS delivery truck`` 0.727, bark vs ``a dog barking`` 0.721)
     - near ``0`` — unrelated
     - negative — opposite directions (rare for this model)
 

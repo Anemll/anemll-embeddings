@@ -101,7 +101,7 @@ The browser will only give the microphone to a **secure context**: `http://127.0
 
 Four alerts are already set: **Anything significant**, **UPS truck**, **Sparky**, and **Dog barking**. They are read-only. Click a camera frame or a sound and watch which ones fire. Editing rules, thresholds, and pet photos is under **Advanced / customize**.
 
-**Anything significant** is not a text search. It is how different a frame is from the empty-street photo (`1 − cosine`). The line sits halfway between that photo (score 0) and the smallest real change. UPS, Sparky, and Dog barking ship with lines measured on an M4 (about 0.65, 0.75, and 0.68), halfway between the hit and the closest miss, and the page measures this set again in the background so one click is already on the right side of the line.
+**Anything significant** is not a text search. It is how different a frame is from the empty-street photo (`1 − cosine`). The line sits halfway between that photo (score 0) and the smallest real change. UPS, Sparky, and Dog barking ship with *threshold lines* (about 0.65, 0.75, and 0.68) — halfway between the hit and the closest miss, not the pair scores in the root README (UPS photo 0.727 vs its caption, bark 0.721 vs “a dog barking”). The page measures this set again in the background so one click is already on the right side of the line.
 
 The frames and clips are not in git. Fetch them first (CC0 / CC BY / CC BY-SA, licenses in `manifest.json`):
 
