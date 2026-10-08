@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -32,6 +33,9 @@ from demo.coreai_worker import (  # noqa: E402
 )
 from demo.feeds import audio_tower_feed  # noqa: E402
 from demo.scripts.fetch_corpus import _trim_with_wave, audio_skip_reason, fetch  # noqa: E402
+from demo.alert_catalog import default_rules  # noqa: E402
+from demo.alert_score import suggest_margin, suggest_midpoint  # noqa: E402
+from demo.scripts.fetch_alert import license_ok  # noqa: E402
 from demo.server import create_app  # noqa: E402
 from demo.settings import DEFAULT_PORT, server_compute  # noqa: E402
 
@@ -156,6 +160,11 @@ def test_api(tmp: Path) -> None:
             _fail("heatmap page")
         if b"latency-badge" not in client.get("/heard").content:
             _fail("heard page")
+        alert_page = client.get("/alert")
+        if alert_page.status_code != 200 or b"Score everything" not in alert_page.content:
+            _fail("alert page")
+        if b'href="/alert"' not in client.get("/").content:
+            _fail("alert nav")
         js = (REPO_ROOT / "demo" / "static" / "common.js").read_text()
         if "fullyOnANE" not in js or "on ${where} · ${ms} ms" not in js:
             _fail("badge format missing")
@@ -394,6 +403,179 @@ def test_package_hash_manifest(tmp: Path) -> None:
         _fail(f"fallback {fallback}")
 
 
+def _jpeg(path: Path, color: tuple[int, int, int], mark: tuple[int, int, int] | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (48, 48), color)
+    if mark is not None:
+        image.putpixel((6, 6), mark)
+        image.putpixel((12, 20), mark)
+        image.putpixel((30, 8), mark)
+    image.save(path, "JPEG", quality=95)
+
+
+def _alert_fixture(root: Path) -> None:
+    colors = {
+        "frames/ups.jpg": (90, 50, 20),
+        "frames/fedex.jpg": (40, 40, 140),
+        "frames/ginger.jpg": (220, 120, 30),
+        "frames/door.jpg": (40, 90, 160),
+        "frames/street.jpg": (180, 180, 180),
+    }
+    for rel, color in colors.items():
+        _jpeg(root / rel, color)
+    sparky = root / "frames" / "sparky.jpg"
+    _jpeg(sparky, (8, 8, 12), (240, 200, 40))
+    ref = root / "references" / "sparky.jpg"
+    ref.parent.mkdir(parents=True, exist_ok=True)
+    ref.write_bytes(sparky.read_bytes())
+    sounds = root / "sounds"
+    sounds.mkdir(parents=True, exist_ok=True)
+    (sounds / "bark.wav").write_bytes(_wav_bytes(freq=180))
+    (sounds / "meow.wav").write_bytes(_wav_bytes(freq=900))
+
+
+def _rule_row(item: dict, rule_id: str) -> dict:
+    for row in item["rules"]:
+        if row["id"] == rule_id:
+            return row
+    _fail(f"missing rule {rule_id} on {item['id']}")
+    return {}
+
+
+def test_alert(tmp: Path) -> None:
+    if abs(suggest_midpoint([0.4, 0.2, 0.1]) - 0.3) > 1e-9:
+        _fail("midpoint")
+    if abs(suggest_margin([0.0, 0.04, 0.2]) - 0.02) > 1e-9:
+        _fail("margin threshold")
+    if license_ok("CC BY-SA 4.0") and license_ok("CC0") and license_ok("Public domain"):
+        pass
+    else:
+        _fail("open licenses should pass")
+    if license_ok("CC BY-NC 2.0") or license_ok("CC BY-ND 4.0") or license_ok("GFDL"):
+        _fail("nc/nd/gfdl should fail")
+
+    _alert_fixture(tmp)
+    app = create_app(backend="mock", data_dir=tmp / "index", alert_dir=tmp, compute="cpu")
+    with TestClient(app) as client:
+        catalog = client.get("/alert/catalog")
+        if catalog.status_code != 200:
+            _fail(catalog.text)
+        body = catalog.json()
+        if len(body["frames"]) != 6 or len(body["sounds"]) != 2:
+            _fail("catalog size")
+        if not body["ready"]:
+            _fail("fixture should be complete")
+        names = [rule["name"] for rule in body["rules"]]
+        if names != ["Anything significant", "UPS truck", "Sparky", "Dog barking"]:
+            _fail(str(names))
+        if body["compare"]["text"] != "a cat meowing":
+            _fail("meow compare")
+        sparky_ref = next(row for row in body["references"] if row["rule_id"] == "sparky")
+        if not sparky_ref["available"] or client.get(sparky_ref["media_url"]).status_code != 200:
+            _fail("sparky reference")
+        page = client.get("/alert").text
+        for snippet in (
+            "These are your alerts.",
+            "Click what the camera sees or hears.",
+            "Watch which alerts fire.",
+            "Score everything",
+            "Your alerts",
+            "Camera feed",
+            "Sounds",
+            "Advanced / customize",
+            "green = alert fires",
+            "Front door cam: UPS truck",
+            "Sparky (test photo)",
+            "Neighbor's cat",
+            "Sound: dog barking",
+        ):
+            if snippet not in page and snippet not in (REPO_ROOT / "demo" / "static" / "alert.js").read_text():
+                # Captions are rendered by alert.js from the catalog, not baked into the HTML.
+                if snippet in page or snippet in (REPO_ROOT / "demo" / "static" / "alert.js").read_text() or snippet in json.dumps(body):
+                    continue
+                _fail(f"missing {snippet}")
+
+        rules = default_rules()
+        for rule in rules:
+            if rule["id"] == "sparky":
+                rule["threshold"] = 0.99
+        scored = client.post("/alert/score", json={"rules": rules, "include_compare": True})
+        if scored.status_code != 200:
+            _fail(scored.text)
+        payload = scored.json()
+        if payload["fresh_embeds"] < 1:
+            _fail("expected fresh embeds")
+        by_id = {row["id"]: row for row in payload["items"]}
+        street = _rule_row(by_id["street"], "significant")
+        if abs(street["score"]) > 1e-4 or street["high"]:
+            _fail(f"empty street should sit on the baseline, got {street}")
+        sparky = _rule_row(by_id["sparky"], "sparky")
+        ginger = _rule_row(by_id["ginger"], "sparky")
+        if abs(sparky["score"] - 1.0) > 1e-3 or not sparky["high"]:
+            _fail(f"sparky photo match {sparky}")
+        if ginger["high"] or ginger["score"] >= sparky["score"]:
+            _fail(f"ginger should lose to sparky {ginger}")
+        if by_id["ginger"]["unknown_cat"] is not True or by_id["sparky"]["unknown_cat"]:
+            _fail("unknown cat labels")
+        if any(row["id"] == "dog" for row in by_id["ups"]["rules"]):
+            _fail("dog rule should not score a camera frame")
+        if any(row["id"] == "ups" for row in by_id["bark"]["rules"]):
+            _fail("UPS rule should not score a sound")
+        if "Dog barking" not in [row["chip"] for row in by_id["bark"]["rules"]]:
+            _fail("bark rules")
+        meow_cmp = by_id["meow"]["comparisons"]
+        bark_cmp = by_id["bark"]["comparisons"]
+        if not meow_cmp or meow_cmp[0]["label"] != "a cat meowing":
+            _fail(str(meow_cmp))
+        if "dog" not in payload["suggested_thresholds"] or payload["compare_threshold"] is None:
+            _fail(str(payload["suggested_thresholds"]))
+        fitted = default_rules()
+        for rule in fitted:
+            if rule["id"] in payload["suggested_thresholds"]:
+                rule["threshold"] = payload["suggested_thresholds"][rule["id"]]
+        again = client.post(
+            "/alert/score",
+            json={"item_ids": ["bark", "meow"], "rules": fitted, "include_compare": True},
+        )
+        if again.status_code != 200:
+            _fail(again.text)
+        if again.json()["fresh_embeds"] != 0:
+            _fail(f"cache miss {again.json()['fresh_embeds']}")
+        sound_rows = {row["id"]: row for row in again.json()["items"]}
+        dog_high = [key for key, row in sound_rows.items() if _rule_row(row, "dog")["high"]]
+        meow_high = [key for key, row in sound_rows.items() if row["comparisons"][0]["high"]]
+        if len(dog_high) != 1 or len(meow_high) != 1:
+            _fail(f"sound split dog={dog_high} meow={meow_high}")
+
+        replaced = client.post(
+            "/alert/frames/sparky",
+            files={"file": ("cat.png", _png((220, 120, 30)), "image/png")},
+        )
+        if replaced.status_code != 200:
+            _fail(replaced.text)
+        moved = client.post(
+            "/alert/score",
+            json={"item_ids": ["sparky"], "rules": rules, "include_compare": False},
+        )
+        if moved.status_code != 200:
+            _fail(moved.text)
+        if _rule_row(moved.json()["items"][0], "sparky")["score"] > 0.99:
+            _fail("replaced frame should no longer match the reference exactly")
+
+        bad = client.post("/alert/score", json={"rules": []})
+        if bad.status_code != 400:
+            _fail("empty rules")
+
+    art = tmp / "artifacts"
+    art.mkdir()
+    try:
+        create_app(backend="mock", data_dir=tmp / "safe-data", alert_dir=art / "alert", artifacts=art, compute="cpu")
+        _fail("alert dir inside artifacts was accepted")
+    except ValueError as exc:
+        if "artifacts" not in str(exc):
+            _fail(str(exc))
+
+
 def main() -> int:
     tests = [test_compute_defaults, test_audio_keep_mask_not_all_ones]
     with tempfile.TemporaryDirectory(prefix="anemll-demo-") as raw:
@@ -403,6 +585,7 @@ def main() -> int:
         tests.append(lambda: test_wave_trim_and_missing_converter(tmp / "trim"))
         tests.append(lambda: test_port_and_artifacts_guard(tmp / "guard"))
         tests.append(lambda: test_package_hash_manifest(tmp / "hash"))
+        tests.append(lambda: test_alert(tmp / "alert"))
         for fn in tests:
             fn()
             print(f"OK {getattr(fn, '__name__', 'case')}")

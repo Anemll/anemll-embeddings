@@ -34,9 +34,11 @@ from demo.media_io import (
     save_jpeg,
     sniff_modality,
 )
+from demo.alert_routes import mount_alert
 from demo.settings import (
     DEFAULT_PORT,
     assert_outside_artifacts,
+    default_alert_dir,
     default_data_dir,
     env_path,
     server_compute,
@@ -51,6 +53,7 @@ PAGES = {
     "/": "index.html",
     "/heatmap": "heatmap.html",
     "/heard": "heard.html",
+    "/alert": "alert.html",
 }
 
 
@@ -58,6 +61,7 @@ def create_app(
     *,
     backend: str = "mock",
     data_dir: Path | None = None,
+    alert_dir: Path | None = None,
     artifacts: Path | None = None,
     model: Path | None = None,
     coreai_python: Path | None = None,
@@ -67,6 +71,10 @@ def create_app(
     art = artifacts if artifacts is not None else env_path("ANEMLL_EMBEDDINGS_ARTIFACTS")
     data = assert_outside_artifacts(
         Path(data_dir) if data_dir is not None else default_data_dir(),
+        art,
+    )
+    alert = assert_outside_artifacts(
+        Path(alert_dir) if alert_dir is not None else default_alert_dir(),
         art,
     )
     chosen = server_compute(compute)
@@ -97,6 +105,7 @@ def create_app(
     app.state.store = store
     app.state.compute = chosen
     app.state.ready = None
+    mount_alert(app, alert)
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -403,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default=os.environ.get("ANEMLL_DEMO_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("ANEMLL_DEMO_PORT", str(DEFAULT_PORT))))
     parser.add_argument("--data-dir", type=Path, default=None)
+    parser.add_argument("--alert-dir", type=Path, default=None)
     parser.add_argument("--artifacts", type=Path, default=None)
     parser.add_argument("--model", type=Path, default=None)
     parser.add_argument("--coreai-python", type=Path, default=None)
@@ -415,6 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     app = create_app(
         backend=args.backend,
         data_dir=args.data_dir,
+        alert_dir=args.alert_dir,
         artifacts=args.artifacts,
         model=args.model,
         coreai_python=args.coreai_python,

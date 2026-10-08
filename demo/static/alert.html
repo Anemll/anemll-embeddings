@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alert · ANE Embeddings</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <strong>ANE Embeddings</strong>
+        <span>Camera alert · same embedding space for pictures, sound, and words</span>
+      </div>
+      <nav>
+        <a href="/">Search</a>
+        <a href="/heatmap">Matrix</a>
+        <a href="/heard">Heard</a>
+        <a href="/alert" aria-current="page">Alert</a>
+      </nav>
+    </header>
+    <p class="banner" id="banner">Loading backend…</p>
+
+    <section class="panel howto" aria-labelledby="howto-title">
+      <div class="toolbar">
+        <h2 id="howto-title">How to play</h2>
+        <span class="ane-badge" id="latency-badge" hidden>on ANE · — ms</span>
+      </div>
+      <ol class="steps">
+        <li><span>1</span> These are your alerts.</li>
+        <li><span>2</span> Click what the camera sees or hears.</li>
+        <li><span>3</span> Watch which alerts fire.</li>
+      </ol>
+      <div class="row">
+        <button class="primary" type="button" id="score-all">Score everything</button>
+      </div>
+      <p class="legend" title="Score = how similar in meaning">
+        <span class="swatch high"></span> green = alert fires
+        <span class="swatch low"></span> gray = below threshold
+      </p>
+      <p class="hint">Score = how similar in meaning. The model compares meaning, so describe the scene rather than giving a command.</p>
+      <p class="status" id="alert-status" role="status"></p>
+      <p class="error" id="alert-error" role="alert"></p>
+      <p class="hint" id="fetch-hint" hidden></p>
+    </section>
+
+    <section class="panel" aria-labelledby="alerts-title">
+      <h2 id="alerts-title">Your alerts</h2>
+      <p class="hint">Fixed for this demo. Thresholds start as placeholders; Score everything fits each one to the samples.</p>
+      <div class="rule-list" id="rules"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="feed-title">
+      <h2 id="feed-title">Camera feed</h2>
+      <p class="hint">Click a frame to score it against every alert.</p>
+      <div class="alert-grid" id="frames"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="sounds-title">
+      <h2 id="sounds-title">Sounds</h2>
+      <p class="hint">Click a clip to play it and score it. Each sound also shows how close it is to “a cat meowing”. That extra meter is not one of the alerts above.</p>
+      <div class="sound-row" id="sounds"></div>
+    </section>
+
+    <details class="panel advanced" id="advanced">
+      <summary>Advanced / customize</summary>
+      <div id="advanced-body"></div>
+    </details>
+
+    <footer class="note">
+      Sparky is visual-similarity matching to the reference photo, not identity verification. Another black cat may also match.
+      Cosine on L2-normalized vectors. The badge is the embed time for that click.
+    </footer>
+  </div>
+  <script src="/static/common.js"></script>
+  <script src="/static/alert.js"></script>
+</body>
+</html>

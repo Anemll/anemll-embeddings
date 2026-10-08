@@ -14,6 +14,7 @@ export ANEMLL_EMBEDDINGS_ARTIFACTS=/path/to/artifacts
 export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
 export ANEMLL_DEMO_DATA=$HOME/.anemll-embeddings/demo
 export ANEMLL_DEMO_CORPUS=$HOME/.anemll-embeddings/corpus
+export ANEMLL_DEMO_ALERT=$HOME/.anemll-embeddings/alert
 
 python -m pip install -r demo/requirements.txt
 python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
@@ -28,6 +29,7 @@ python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
 | `--port` / `ANEMLL_DEMO_PORT` | **8766** | 8765 is often taken by AnemllAgentHost. |
 | `--compute` / `ANEMLL_DEMO_COMPUTE` | `ane` | Neural Engine. Use `cpu` to force the CPU path. The demo does **not** read shell `ANEMLL_COREAI_COMPUTE`. |
 | `--data-dir` / `ANEMLL_DEMO_DATA` | `~/.anemll-embeddings/demo` | Index and saved media. Must not sit inside the artifacts directory. |
+| `--alert-dir` / `ANEMLL_DEMO_ALERT` | `~/.anemll-embeddings/alert` | Camera-alert frames, sounds, and Sparky’s reference photo. Must not sit inside the artifacts directory. |
 
 `GET http://127.0.0.1:8766/health` reports the backend, the three towers, warmup time, and placement (`fullyOnANE` when the runtime says so). Each page shows that as a badge: `on ANE · N ms`.
 
@@ -53,7 +55,7 @@ python demo/scripts/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$AN
 
 Audio conversion uses `ffmpeg` if present, otherwise macOS `afconvert` plus a trim to 8 seconds. If neither tool exists, images still download and audio topics are skipped.
 
-Keep `$ANEMLL_DEMO_DATA` and `$ANEMLL_DEMO_CORPUS` **outside** `$ANEMLL_EMBEDDINGS_ARTIFACTS`. The server refuses those paths if they sit inside the package directory.
+Keep `$ANEMLL_DEMO_DATA`, `$ANEMLL_DEMO_CORPUS`, and `$ANEMLL_DEMO_ALERT` **outside** `$ANEMLL_EMBEDDINGS_ARTIFACTS`. The server refuses those paths if they sit inside the package directory.
 
 You can also skip the corpus and click **Load samples** on the Search page (colored squares, two captions, two tones).
 
@@ -95,6 +97,20 @@ The chunk length is 5–10 seconds (default 8). On the Core AI package, audio lo
 
 The browser will only give the microphone to a **secure context**: `http://127.0.0.1` or HTTPS. `http://<your-mac-ip>:8766` can show the pages and do text/file search, but recording will fail.
 
+## Camera alert — `/alert`
+
+Four alerts are already set: **Anything significant**, **UPS truck**, **Sparky**, and **Dog barking**. They are read-only. Click a camera frame or a sound and watch which ones fire. Editing rules, thresholds, and pet photos is under **Advanced / customize**.
+
+The frames and clips are not in git. Fetch them first (CC0 / CC BY / CC BY-SA, licenses in `manifest.json`):
+
+```sh
+python demo/scripts/fetch_alert.py --dest "${ANEMLL_DEMO_ALERT:-$HOME/.anemll-embeddings/alert}"
+```
+
+Sparky’s two photos are the same black cat (Nikolai Bulykin, Medeo, Almaty). Matching is visual similarity to that reference, not identity verification. Sounds also show a meter against “a cat meowing”; that meter is not a fifth alert.
+
+**Try:** open `/alert`, click **Score everything**, then click the empty street (nothing), the UPS truck (Significant + UPS), the ginger cat (Significant, Unknown cat), Sparky’s test photo (Significant + Sparky), the bark (Dog barking), and the meow (the cat-meowing meter, not Dog barking).
+
 ## Limits
 
 - Validated on an M4 Pro, macOS 27.0, with `--backend coreai`. On macOS 27.2 (M5) the vision and text packages currently fall back to the GPU; audio still runs on the Neural Engine.
@@ -115,6 +131,8 @@ The browser will only give the microphone to a **secure context**: `http://127.0
 | `GET` | `/items` | List (`?modality=`, `?session=`) |
 | `DELETE` | `/items/{id}` | Remove |
 | `GET` | `/media/{id}` | Stored JPEG or WAV |
+| `GET` | `/alert/catalog` | Preset rules, frames, sounds, and whether the alert media is on disk |
+| `POST` | `/alert/score` | Cosine of selected frames or sounds against the alert rules |
 
 ## Tests
 

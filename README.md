@@ -18,7 +18,7 @@ One input (for example the phrase “white house”) always gives exactly one ve
 
 - Scripts that export EmbeddingGemma 2’s vision, audio, and text towers to Core AI `.aimodel` packages
 - Host code that tokenizes text, runs those packages, and inserts image/audio tokens into the text model
-- A local demo: search, a similarity heatmap, and “search what I heard” (see [Try the demo](#try-the-demo) and [demo/README.md](demo/README.md))
+- A local demo: search, a similarity heatmap, “search what I heard”, and camera alerts (see [Try the demo](#try-the-demo) and [demo/README.md](demo/README.md))
 - Small test fixtures (prompts and reference vectors)
 - An older text-only Core ML path (see [below](#older-text-only-core-ml-path))
 
@@ -160,6 +160,13 @@ python demo/scripts/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$AN
 | [Search](http://127.0.0.1:8766/) `/` | Drop photos, audio, or text on the left to add them. Type “a red fox” or drop an image or sound on the right to see the closest matches. |
 | [Heatmap](http://127.0.0.1:8766/heatmap) `/heatmap` | A grid of every selected item vs every other. Higher / brighter means more alike. |
 | [Search what I heard](http://127.0.0.1:8766/heard) `/heard` | Record a few seconds, then type what you heard. It searches **this session’s audio chunks** (not the main library’s photos). |
+| [Camera alert](http://127.0.0.1:8766/alert) `/alert` | Click a camera frame or a sound and see which preset alerts fire. |
+
+Camera-alert photos and clips are not in git. Fetch them beside the corpus:
+
+```sh
+python demo/scripts/fetch_alert.py --dest "${ANEMLL_DEMO_ALERT:-$HOME/.anemll-embeddings/alert}"
+```
 
 Full walkthrough, backends, and things to try: **[demo/README.md](demo/README.md)**.
 

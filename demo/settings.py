@@ -48,6 +48,13 @@ def default_corpus_dir() -> Path:
     return Path.home() / ".anemll-embeddings" / "corpus"
 
 
+def default_alert_dir() -> Path:
+    raw = os.environ.get("ANEMLL_DEMO_ALERT")
+    if raw:
+        return Path(raw)
+    return Path.home() / ".anemll-embeddings" / "alert"
+
+
 def assert_outside_artifacts(path: Path, artifacts: Path | None) -> Path:
     """Refuse demo writes that would land in the Core AI artifacts tree.
 
