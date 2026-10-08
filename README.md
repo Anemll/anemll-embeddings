@@ -1,6 +1,6 @@
 # anemll-embeddings
 
-This project turns Google’s EmbeddingGemma 2 into Apple Core AI packages that run on your Mac’s Neural Engine. You can search photos, sounds, and text together. Everything stays on the Mac — there is no cloud API in the loop.
+This project turns Google’s EmbeddingGemma 2 into Apple Core AI packages that run on your Mac’s Neural Engine. You can search photos, sounds, and text together. Everything stays on the Mac - there is no cloud API in the loop.
 
 The Neural Engine is the dedicated chip on Apple Silicon for this kind of work. These packages are built so the hot path stays on that chip: no mid-graph hop to the GPU or CPU.
 
@@ -9,7 +9,7 @@ The Neural Engine is the dedicated chip on Apple Silicon for this kind of work. 
 | Mac | macOS | Placement |
 | --- | --- | --- |
 | M4 Pro, M3 Ultra | 27.0 | All three towers fully on the Neural Engine (validated) |
-| M5 | 27.2 | **Audio only** on the Neural Engine. The Core AI ANE pre-check rejects the vision and text packages (`invalid MLIR-MPS program`), so they fall back to the GPU. Embeddings still match the reference (cosine 0.99994–0.99997). |
+| M5 | 27.2 | All three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them). |
 
 Run `python scripts/warmup.py --require-ane` to check your own Mac; it exits non-zero unless every tower is fully on the Neural Engine.
 
@@ -37,19 +37,19 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | Path | What lives there |
 | --- | --- |
 | `model/` | Export / convert EmbeddingGemma 2 to Core AI / ANE: wrappers, ANE graph patches, specialize and inspect tools, parity and cosine checks |
-| `api/` | Importable Python runtime: `from api import Embedder, cosine` — see [api/README.md](api/README.md) |
-| `scripts/` | Inference download (`download_models.py`), export download (`download_export_assets.py`), HF `host/` staging (`prepare_hf_host_folder.py`), and warmup — see [scripts/README.md](scripts/README.md) |
+| `api/` | Importable Python runtime: `from api import Embedder, cosine` - see [api/README.md](api/README.md) |
+| `scripts/` | Inference download (`download_models.py`), export download (`download_export_assets.py`), HF `host/` staging (`prepare_hf_host_folder.py`), and warmup - see [scripts/README.md](scripts/README.md) |
 | `hf/` | Hub card + `towers.yaml` + `host/SOURCE.md` to upload to [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) |
 | `samples/` | Small runnable examples plus corpus / alert fetch scripts and manifests (no large binaries in git) |
 | `demo/` | FastAPI showcase server and static pages only (imports `api`) |
 | `docs/` | How it works, historical plan, diagrams |
 | `tests/` | Unit and API tests |
 
-**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `90d2ab497d423bba4ee29947b274c787bb4a1f0a`). Inference is one download from that repo. If `host/` is missing on the pin, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
+**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`). Inference is one download from that repo. If `host/` is missing on the pin, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
 
 ## Requirements
 
-- An Apple Silicon Mac running macOS 27. Fully-ANE placement is validated on **M4 Pro and M3 Ultra, macOS 27.0**; see the table above for M5 / macOS 27.2.
+- An Apple Silicon Mac running macOS 27. Fully-ANE placement is validated on **M4 Pro and M3 Ultra, macOS 27.0**. On M5 / macOS 27.2 all three towers work too, with vision and text on the GPU (see the table above).
 - A host Python 3.11 or newer (tested: 3.11 and 3.12) for this repo: `pip install -e ".[runtime]"` installs `torch` 2.14, `torchvision` 0.29, and `transformers` 5.19. Exact tested versions are in [`constraints.txt`](constraints.txt). `sentence-transformers` 6.1 is only needed for the reference model, fixtures, and export (`.[reference]`).
 - A **second** Python that can `import coreai.runtime` (Python 3.13 with `coreai-core` 1.0.0b2), found through `ANEMLL_COREAI_PYTHON` or the default locations. See [Core AI runtime](#core-ai-runtime).
 - The public ANE packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus the slim Google host files (tokenizer / processor / 256 MiB embed table). The full ~740M checkpoint is only for re-export.
@@ -77,7 +77,7 @@ Re-exporting the packages (`model/export_coreai_towers.py`) needs the fuller aut
 
 ## Quick start
 
-Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS 27.2** vision and text fall back to the GPU (see the table at the top).
+Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS 27.2** all three towers work and match the reference; vision and text currently run on the GPU (see the table at the top).
 
 1. **Install** the host side (in a virtualenv, Python 3.12 tested) and the [Core AI runtime](#core-ai-runtime):
 
@@ -89,7 +89,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
    ~/.anemll-embeddings/coreai-venv/bin/python -m pip install "coreai-core==1.0.0b2" numpy
    ```
 
-2. **Download** the public ANE packages and the slim host files from **one** Hugging Face repo (`anemll/anemll-embeddinggemma-2-ane`, including `host/`). This is the inference script only — it does **not** pull `model.safetensors` (1.49 GB). If `host/` is missing on the pin, it falls back to Google’s slim files. No Hugging Face login or token. The script needs `huggingface_hub`, which `pip install -e .` (or `.[demo]`) already installs. Full flag list and examples: [scripts/README.md](scripts/README.md).
+2. **Download** the public ANE packages and the slim host files from **one** Hugging Face repo (`anemll/anemll-embeddinggemma-2-ane`, including `host/`). This is the inference script only - it does **not** pull `model.safetensors` (1.49 GB). If `host/` is missing on the pin, it falls back to Google’s slim files. No Hugging Face login or token. The script needs `huggingface_hub`, which `pip install -e .` (or `.[demo]`) already installs. Full flag list and examples: [scripts/README.md](scripts/README.md).
 
    ```sh
    python scripts/download_models.py
@@ -101,15 +101,17 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
 
    | What | Source | Size |
    | --- | --- | --- |
-   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 90d2ab497d423bba4ee29947b274c787bb4a1f0a` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
+   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
    | Host tokenizer / processor / configs | same repo, `host/` (fallback: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b`) | **~37 MB** (`tokenizer.json` 32.2 MB, `tokenizer.model` 4.7 MB, plus `config.json`, processor / preprocessor configs, tokenizer config, chat template) |
    | Embed table `embed_tokens.safetensors` | same repo, `host/` (extracted from Google’s `model.safetensors`; not a full-weights download) | **256 MiB** (268,435,456 bytes, BF16 `[262144, 512]`, plus Gemma `sqrt(512)` scale) |
+   | Package descriptor `config.json` | same repo, root (towers, shapes, `host/` paths; not a transformers config) | **~3 KB** |
 
    On-disk layout under `~/.anemll-embeddings` (default `--dest`; or `$ANEMLL_EMBEDDINGS_HOME`):
 
    ```
    ~/.anemll-embeddings/
      ane/
+       config.json                     # package descriptor (root config.json on the Hub)
        vision_s280/vision_s280.aimodel/
        audio_s280/audio_s280.aimodel/
        text_embeds_s320/text_embeds_s320.aimodel/
@@ -129,12 +131,12 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
    export ANEMLL_COREAI_PYTHON=/Users/you/.anemll-embeddings/coreai-venv/bin/python
    ```
 
-   Every fresh download is checked against SHA-256 digests tracked in this repo (`scripts/download_common.py`: tower `main.mlirb` and every `host/` file) before it is marked complete. `--verify` re-checks files already on disk.
+   Every fresh download is checked against SHA-256 digests tracked in this repo (`scripts/download_common.py`: tower `main.mlirb`, the root `config.json`, and every `host/` file) before it is marked complete. `--verify` re-checks files already on disk.
 
    | Flag | Default | Meaning |
    | --- | --- | --- |
    | `--dest PATH` | `~/.anemll-embeddings` | Parent directory (`ANEMLL_EMBEDDINGS_HOME` overrides the default) |
-   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=90d2ab497d423bba4ee29947b274c787bb4a1f0a`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
+   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
    | `--verify` | off | Re-hash files already on disk against the pinned digests |
    | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then the [default locations](#core-ai-runtime) | Value printed for `ANEMLL_COREAI_PYTHON` |
 
@@ -146,7 +148,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
    ```
 
    ```
-   # cold first load (M3 Ultra / macOS 27.0) — compile + cache, ~111 s
+   # cold first load (M3 Ultra / macOS 27.0) - compile + cache, ~111 s
    tower                  on ANE                load_ms   first_run_ms
    vision_s280            yes                   58000.0            -
    audio_s280             yes                   16000.0            -
@@ -155,7 +157,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
    ```
 
    ```
-   # warm load (M3 Ultra / macOS 27.0) — cache hit, load ~0.06–0.1 s per tower
+   # warm load (M3 Ultra / macOS 27.0) - cache hit, load ~0.06–0.1 s per tower
    tower                  on ANE                load_ms   first_run_ms
    vision_s280            yes                      80.0          360.0
    audio_s280             yes                      80.0           25.0
@@ -170,7 +172,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
    - A **cold** first warmup of ~111 s on M3 Ultra is normal (compile + write the cache). A **warm** load is ~0.06–0.1 s per tower.
    - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect Core AI's home: `python scripts/warmup.py --coreai-home /path/to/writable/home` (same as `export CFFIXED_USER_HOME=…`; the cache becomes `<home>/Library/Caches/coreai-cache`). Core AI has no free-form cache path, so `--cache-dir` only accepts a path ending in `Library/Caches/coreai-cache` and rejects anything else. Set `CFFIXED_USER_HOME` for later runs too (samples, demo) so they reuse that cache.
    - "no Core AI Python found" / "cannot import coreai.runtime": set up the [Core AI runtime](#core-ai-runtime) or set `ANEMLL_COREAI_PYTHON`.
-   - On macOS 27.2 / M5, vision and text report `no (GPU)`; that is the known pre-check rejection, and `--require-ane` exits 3 there. Audio still runs on the ANE.
+   - On macOS 27.2 / M5, vision and text report `no (GPU)`. They work and match the reference; they currently run on the GPU because the macOS 27.2 ANE pre-check rejects them. Audio runs on the ANE. `--require-ane` exits 3 there because it requires every tower on the ANE.
    - Rerunning `download_models.py` or `warmup.py` is safe. Download skips files that already match the pinned revision.
    - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.
 
@@ -184,7 +186,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
 
 ## Re-export the packages yourself
 
-Optional. Everyday inference does **not** need this — use `scripts/download_models.py` above.
+Optional. Everyday inference does **not** need this - use `scripts/download_models.py` above.
 
 ```sh
 python scripts/download_export_assets.py
@@ -268,7 +270,7 @@ The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 ## Limitations
 
 - Fully-ANE placement is validated on M4 Pro and M3 Ultra running macOS 27.0.
-- On macOS 27.2 (M5, newer Neural Engine) the Core AI ANE pre-check currently rejects the vision and text packages (`invalid MLIR-MPS program`) and they fall back to the GPU. Audio still runs on the Neural Engine.
+- On M5 / macOS 27.2 all three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with `invalid MLIR-MPS program`).
 - Audio clips must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips error instead of returning a bad vector.
 - There is no video package yet. `<|video|>` fixtures are skipped.
 - Weights are not in git. Use `scripts/download_models.py` for inference (~1.49 GB). Use `scripts/download_export_assets.py` only if you will re-convert. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms and the [ANE package card](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) before you download.
@@ -277,7 +279,7 @@ The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 
 ## Try the demo
 
-This demo shows EmbeddingGemma 2 running on your Mac’s Neural Engine. It turns photos, sounds, and text into embeddings — lists of numbers that capture meaning — so things that mean the same thing land close together, even across types. Everything stays on your Mac.
+This demo shows EmbeddingGemma 2 running on your Mac’s Neural Engine. It turns photos, sounds, and text into embeddings - lists of numbers that capture meaning - so things that mean the same thing land close together, even across types. Everything stays on your Mac.
 
 ```sh
 python scripts/download_models.py
@@ -332,10 +334,10 @@ python model/parity_cosine.py --seq-len 512
 python model/ane_smoke.py --seq-len 512
 ```
 
-I/O names are fixed: `input_ids` and `attention_mask` in (`[1, S]`, int32), `embedding` out (`[1, 768]`, float32). `CPU_AND_NE` on convert does not prove Neural Engine placement — `ane_smoke.py` reads the compute plan. FP16 Core ML (`--precision FLOAT16`) is a separate artifact tree; on the M4 Pro the FP16 *CPU* path was the weak one (min cosine 0.920 vs the fixtures), not the Neural Engine path.
+I/O names are fixed: `input_ids` and `attention_mask` in (`[1, S]`, int32), `embedding` out (`[1, 768]`, float32). `CPU_AND_NE` on convert does not prove Neural Engine placement - `ane_smoke.py` reads the compute plan. FP16 Core ML (`--precision FLOAT16`) is a separate artifact tree; on the M4 Pro the FP16 *CPU* path was the weak one (min cosine 0.920 vs the fixtures), not the Neural Engine path.
 
 ## License
 
 The software in this repository is [MIT](LICENSE), Copyright (c) 2026 Anemll LLC.
 
-The model weights — EmbeddingGemma 2 and the Core AI conversions at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) — are **Apache-2.0 under Google’s terms** for the base model, not MIT. See that card’s `LICENSE` and `NOTICE`.
+The model weights - EmbeddingGemma 2 and the Core AI conversions at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) - are **Apache-2.0 under Google’s terms** for the base model, not MIT. See that card’s `LICENSE` and `NOTICE`.

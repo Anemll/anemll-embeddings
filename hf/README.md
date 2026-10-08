@@ -34,10 +34,11 @@ shared space, so you can compare any of them with cosine similarity.
 | `vision_s280/` | `vision_s280.aimodel` | 2520 image patches → 280 soft tokens | ~337 ms |
 | `audio_s280/` | `audio_s280.aimodel` | 280 mel frames → 70 soft tokens | ~11–26 ms |
 | `text_embeds_s320/` | `text_embeds_s320.aimodel` | 320 token embeddings → 768-d embedding | ~35 ms |
-| `host/` | tokenizer, processor, `embed_tokens.safetensors` | host-side lookup for `api.Embedder` | — |
+| `host/` | tokenizer, processor, `embed_tokens.safetensors` | host-side lookup for `api.Embedder` | - |
 
 Exact input/output names, shapes, dtypes, and checksums are in
-[`towers.yaml`](towers.yaml). Per-file origin for `host/` is in
+[`towers.yaml`](towers.yaml). The root [`config.json`](config.json) is a short JSON
+descriptor of the same package (not a transformers config). Per-file origin for `host/` is in
 [`host/SOURCE.md`](host/SOURCE.md).
 
 Images and audio go through their tower first. Their soft tokens are then
@@ -76,10 +77,10 @@ Converted from `google/embeddinggemma-2` at revision
 ## Limitations
 
 - Fully-ANE placement is validated on **M4 Pro and M3 Ultra with macOS 27.0**.
-- On **M5 with macOS 27.2**, only audio runs on the ANE. The ANE pre-check
-  rejects the vision and text packages ("Parsing failed, invalid MLIR-MPS
-  program"), and Core AI falls back to the GPU. Embeddings still match the
-  reference (cosine 0.99994–0.99997).
+- On **M5 with macOS 27.2**, all three towers work and match the reference
+  (cosine 0.99994-0.99997). Audio runs on the ANE; vision and text currently
+  run on the GPU (the macOS 27.2 ANE pre-check rejects them with "Parsing
+  failed, invalid MLIR-MPS program").
 - Video is not converted.
 
 ## Usage
@@ -102,11 +103,12 @@ python scripts/warmup.py --require-ane
 With the default `~/.anemll-embeddings` layout no exports are needed. With a
 custom `--dest`, add the printed export lines to `~/.zshrc` or source them.
 `--require-ane` exits non-zero on Macs where a tower is not fully on the
-Neural Engine (currently vision and text on M5 / macOS 27.2).
+Neural Engine (on M5 / macOS 27.2 vision and text currently run on the GPU, so
+it exits non-zero there even though all three towers work).
 
 The tower and `host/` files are byte-identical to commit
 `47d05aa218a227e887858fe571f8deb2f2a1d532`; later commits only update this
-card. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
+card and the notes in `towers.yaml`, and add the root `config.json`. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
 `scripts/download_common.py`) and checks every tower and `host/` file against
 SHA-256 digests on download. `download_models.py` prefers `host/` here. If a pin does not have that
 folder yet, it falls back to the slim files on

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "config_type": "anemll-embeddings/coreai-package",
+  "description": "Package descriptor for the Core AI (.aimodel) towers in this repo. This is NOT a transformers config: transformers' AutoConfig / AutoModel cannot load this repo. The upstream EmbeddingGemma 2 transformers config is host/config.json. Run the packages with https://github.com/Anemll/anemll-embeddings.",
+  "library_name": "coreai",
+  "format": "coreai .aimodel (assetVersion 2.0, producer coreai-core 1.0.0b2)",
+  "compute": "Apple Neural Engine via Core AI",
+  "runtime": "https://github.com/Anemll/anemll-embeddings",
+  "base_model": {
+    "id": "google/embeddinggemma-2",
+    "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b"
+  },
+  "embedding_dim": 768,
+  "embedding_normalization": "l2 (applied on the host)",
+  "dtype": "float16",
+  "towers": {
+    "vision_s280": {
+      "path": "vision_s280/vision_s280.aimodel",
+      "function": "vision_s280",
+      "inputs": {
+        "pixel_values": {"shape": [1, 2520, 768], "dtype": "float16"},
+        "pixel_position_ids": {"shape": [1, 2520, 2], "dtype": "float16"}
+      },
+      "outputs": {
+        "soft_tokens": {"shape": [1, 280, 512], "dtype": "float16"}
+      }
+    },
+    "audio_s280": {
+      "path": "audio_s280/audio_s280.aimodel",
+      "function": "audio_s280",
+      "inputs": {
+        "input_features": {"shape": [1, 1, 280, 128], "dtype": "float16"},
+        "input_features_mask": {"shape": [1, 1, 280, 1], "dtype": "float16"}
+      },
+      "outputs": {
+        "soft_tokens": {"shape": [1, 1, 70, 512], "dtype": "float16"}
+      }
+    },
+    "text_embeds_s320": {
+      "path": "text_embeds_s320/text_embeds_s320.aimodel",
+      "function": "text_embeds_s320",
+      "inputs": {
+        "inputs_embeds": {"shape": [1, 320, 512], "dtype": "float16"},
+        "attention_mask": {"shape": [1, 320], "dtype": "float16"}
+      },
+      "outputs": {
+        "embedding": {"shape": [1, 768], "dtype": "float16"}
+      }
+    }
+  },
+  "pipeline": "image -> vision_s280, audio -> audio_s280; their soft tokens are interleaved with the text token embeddings on the host and run through text_embeds_s320, which returns the 768-d embedding. Text goes straight to text_embeds_s320.",
+  "host": {
+    "path": "host/",
+    "source": "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b (verbatim copies, except the extracted embed table)",
+    "transformers_config": "host/config.json",
+    "tokenizer": "host/tokenizer.json",
+    "processor_config": "host/processor_config.json",
+    "embed_tokens": "host/embed_tokens.safetensors",
+    "checksums": "host/SHA256SUMS",
+    "provenance": "host/SOURCE.md"
+  },
+  "prompts": {
+    "query": "task: search result | query: ",
+    "document": "title: none | text: "
+  },
+  "details": "towers.yaml"
+}

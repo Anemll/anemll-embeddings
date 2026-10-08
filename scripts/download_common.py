@@ -26,12 +26,18 @@ from api.runtime_paths import (
 )
 
 ANE_REPO = "anemll/anemll-embeddinggemma-2-ane"
-# Towers + mirrored host/ on the Hub (v0.1.0 card; towers and host/ are
+# Towers + mirrored host/ + root config.json on the Hub (towers and host/ are
 # byte-identical to 47d05aa). Override with ANEMLL_ANE_REVISION.
-ANE_REVISION = "90d2ab497d423bba4ee29947b274c787bb4a1f0a"
+ANE_REVISION = "1cbb580a392f2d4f57924dbc58fd77cc4351c1b7"
 BASE_REPO = "google/embeddinggemma-2"
 BASE_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 HOST_FOLDER = "host"
+# Root package descriptor (hf/config.json in this repo; not a transformers
+# config). Fetched with the towers: the Hub counts a model download per
+# request to the root config.json.
+ROOT_CONFIG = "config.json"
+ROOT_CONFIG_SHA256 = "9eaf9feee06cacabae2add12002c742c9b0e28df508d7f0c8db7e8255b541560"
+ROOT_CONFIG_BYTES = 2_812
 TOWERS = ("vision_s280", "audio_s280", "text_embeds_s320")
 BUNDLE_FILES = ("metadata.json", "main.hash", "main.mlirb")
 # SHA-256 of each tower's main.mlirb at ANE_REVISION (same values as
@@ -79,8 +85,11 @@ ANE_ALLOW = (
     "text_embeds_s320/**",
 )
 HOST_FOLDER_ALLOW = (f"{HOST_FOLDER}/**",)
-# Single-repo inference snapshot: towers + mirrored host/.
-ANE_INFERENCE_ALLOW = ANE_ALLOW + HOST_FOLDER_ALLOW
+# huggingface_hub matches allow patterns against the full repo path, so this
+# is the root file only, never host/config.json.
+ROOT_ALLOW = (ROOT_CONFIG,)
+# Single-repo inference snapshot: towers + root config.json + mirrored host/.
+ANE_INFERENCE_ALLOW = ANE_ALLOW + ROOT_ALLOW + HOST_FOLDER_ALLOW
 HOST_PAYLOAD = INFERENCE_HOST_ALLOW + (SLIM_EMBED_NAME,)
 HOST_META_FILES = ("LICENSE", "NOTICE", "SOURCE.md", "SHA256SUMS")
 HOST_REQUIRED = (
@@ -129,7 +138,12 @@ def ane_revision() -> str:
 
 
 def inference_download_bytes() -> int:
-    return sum(ANE_BYTES.values()) + sum(HOST_FILE_BYTES.values()) + EMBED_TABLE_BYTES
+    return (
+        sum(ANE_BYTES.values())
+        + ROOT_CONFIG_BYTES
+        + sum(HOST_FILE_BYTES.values())
+        + EMBED_TABLE_BYTES
+    )
 
 
 def host_folder_bytes() -> int:
@@ -286,6 +300,11 @@ def tower_checksums(ane_dir: Path) -> dict[Path, str]:
         bundle_path(ane_dir, name) / "main.mlirb": digest
         for name, digest in TOWER_MLIRB_SHA256.items()
     }
+
+
+def package_checksums(ane_dir: Path) -> dict[Path, str]:
+    """Tower ``main.mlirb`` digests plus the root ``config.json`` descriptor."""
+    return {**tower_checksums(ane_dir), ane_dir / ROOT_CONFIG: ROOT_CONFIG_SHA256}
 
 
 def read_sha256sums(path: Path) -> dict[str, str]:

@@ -90,7 +90,9 @@ end_to_end_per_input_on_m4_pro:   # tower + text_embeds pass, as the demo measur
   text: ~35 ms
 
 known_limitations:
-  - Validated only on M4 Pro / macOS 27.0.
-  - On M5 with macOS 27.2, the ANE pre-check rejects vision_s280 and text_embeds_s320
-    ("Parsing failed, invalid MLIR-MPS program") and Core AI falls back to the GPU.
+  - Fully-ANE placement validated on M4 Pro and M3 Ultra with macOS 27.0.
+  - On M5 with macOS 27.2 all three towers work and match the reference (cosine
+    0.99994-0.99997). audio_s280 runs on the ANE; vision_s280 and text_embeds_s320
+    currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with
+    "Parsing failed, invalid MLIR-MPS program").
   - Video is not converted.

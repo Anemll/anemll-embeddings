@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import struct
 import sys
@@ -31,6 +32,9 @@ from scripts.download_common import (  # noqa: E402
     HOST_FOLDER_ALLOW,
     INFERENCE_HOST_ALLOW,
     INFERENCE_HOST_IGNORE,
+    ROOT_ALLOW,
+    ROOT_CONFIG,
+    ROOT_CONFIG_SHA256,
     SLIM_EMBED_NAME,
     TOWERS,
     all_bundles_complete,
@@ -44,13 +48,14 @@ from scripts.download_common import (  # noqa: E402
     inference_download_bytes,
     link_coreai,
     matches_hf_patterns,
+    package_checksums,
     revision_matches,
     snapshot,
     write_revision,
     write_safetensors,
 )
 from scripts.download_export_assets import download_full_host  # noqa: E402
-from scripts.download_models import download_host  # noqa: E402
+from scripts.download_models import download_host, verify_ane  # noqa: E402
 from scripts.prepare_hf_host_folder import (  # noqa: E402
     ORIGIN_COPIED,
     ORIGIN_EXTRACTED,
@@ -173,7 +178,7 @@ def test_inference_allow_excludes_full_weights() -> None:
         _fail("host allow should include the slim embed table")
     if matches_hf_patterns("model.safetensors", HOST_FOLDER_ALLOW, None):
         _fail("host allow should not match a root model.safetensors")
-    if ANE_REVISION != "90d2ab497d423bba4ee29947b274c787bb4a1f0a":
+    if ANE_REVISION != "1cbb580a392f2d4f57924dbc58fd77cc4351c1b7":
         _fail(f"ANE_REVISION {ANE_REVISION} is not the uploaded host/ pin")
     if SLIM_EMBED_NAME != HOST_SLIM_NAME:
         _fail("slim filename drifted between host and download")
@@ -409,6 +414,52 @@ def test_ensure_slim_prefers_local_full(tmp: Path) -> None:
         _fail("slim host should load after extract")
 
 
+def test_root_config_is_fetched_and_pinned() -> None:
+    from huggingface_hub.utils import filter_repo_objects
+
+    repo = [
+        "README.md",
+        "towers.yaml",
+        ROOT_CONFIG,
+        "host/config.json",
+        "vision_s280/vision_s280.aimodel/main.mlirb",
+    ]
+    # huggingface_hub's own filter: root config.json rides with the inference
+    # snapshot (the Hub counts downloads on it) ...
+    got = set(filter_repo_objects(repo, allow_patterns=list(ANE_INFERENCE_ALLOW)))
+    want = {ROOT_CONFIG, "host/config.json", "vision_s280/vision_s280.aimodel/main.mlirb"}
+    if got != want:
+        _fail(f"inference snapshot picks {sorted(got)}, want {sorted(want)}")
+    # ... and the root pattern never matches the nested host/config.json.
+    if list(filter_repo_objects(repo, allow_patterns=list(ROOT_ALLOW))) != [ROOT_CONFIG]:
+        _fail("ROOT_ALLOW should select only the root config.json")
+    if len(ROOT_CONFIG_SHA256) != 64:
+        _fail("ROOT_CONFIG_SHA256 is not a sha256 hex digest")
+    hf_copy = REPO_ROOT / "hf" / ROOT_CONFIG
+    if hashlib.sha256(hf_copy.read_bytes()).hexdigest() != ROOT_CONFIG_SHA256:
+        _fail("hf/config.json drifted from ROOT_CONFIG_SHA256 (publish a new HF revision)")
+    json.loads(hf_copy.read_text(encoding="utf-8"))
+
+
+def test_verify_ane_requires_root_config(tmp: Path) -> None:
+    sums = package_checksums(tmp)
+    if sums.get(tmp / ROOT_CONFIG) != ROOT_CONFIG_SHA256:
+        _fail("package_checksums should pin the root config.json")
+    for path in sums:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")  # wrong content everywhere
+    try:
+        verify_ane(tmp, ANE_REVISION)
+    except SystemExit as exc:
+        if "config.json" not in str(exc):
+            _fail(f"verify_ane should report config.json, got {exc}")
+    else:
+        _fail("verify_ane should fail on bad digests")
+    # Overridden revisions are not checked against the pinned table.
+    if verify_ane(tmp, "0" * 40) != "unpinned":
+        _fail("override revision should be unpinned")
+
+
 def main() -> int:
     import tempfile
 
@@ -430,6 +481,8 @@ def main() -> int:
         test_extract_and_load_slim(tmp / "slim")
         test_extract_from_bytes_matches_file(tmp / "bytes")
         test_ensure_slim_prefers_local_full(tmp / "local-full")
+        test_root_config_is_fetched_and_pinned()
+        test_verify_ane_requires_root_config(tmp / "root-config")
     print("ok")
     return 0
 
