@@ -1,0 +1,37 @@
+anemll-embeddinggemma-2-ane
+
+This repository contains Core AI packages converted from Google's
+EmbeddingGemma 2 model weights, plus a slim host/ folder for inference:
+
+  Base model: google/embeddinggemma-2
+  https://huggingface.co/google/embeddinggemma-2
+  Revision used for conversion: 914f7f89142e33e77833254d9c9b90c3cef7303b
+  Authors: Google DeepMind
+
+The model weights in this repository are a modified (converted) form of the
+base model and are distributed under the same terms as the base model: the
+Apache License, Version 2.0, as published by Google for Gemma at
+https://ai.google.dev/gemma/docs/gemma_4_license (full text in LICENSE).
+
+Modifications by Anemll: conversion of the vision, audio, and text towers to
+Apple Core AI (.aimodel) packages in float16, with graph rewrites for the
+Apple Neural Engine (explicit attention instead of fused SDPA, fp16-safe
+RMSNorm, precomputed relative-position keys, fixed sequence lengths). No
+retraining or fine-tuning was performed.
+
+The host/ folder redistributes the tokenizer, processor / preprocessor
+configs, and config.json as unmodified (byte-identical) copies of the
+upstream files at the revision above. The embedding table
+(host/embed_tokens.safetensors) is the exception: it is extracted from
+upstream model.safetensors (language_model.embed_tokens.weight) and is not
+a full-weights copy. See host/SOURCE.md for per-file origin and checksums.
+
+Use of the model must also follow the Gemma Prohibited Use Policy, as stated
+in the base model card: https://ai.google.dev/gemma/prohibited_use_policy
+
+The conversion and runtime code (https://github.com/Anemll/anemll-embeddings)
+is separate software licensed under the MIT License. It is not covered by
+this repository's LICENSE.
+
+This is an unofficial conversion. It is not affiliated with or endorsed by
+Google.

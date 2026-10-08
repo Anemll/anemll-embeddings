@@ -6,12 +6,12 @@ The pages are plain HTML. There is no front-end build step.
 
 ## Start the server
 
-You need the Core AI packages from the [root README](../README.md) (`vision_s280`, `audio_s280`, `text_embeds_s320` under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`).
+You need the public Core AI packages (`vision_s280`, `audio_s280`, `text_embeds_s320`) plus the slim host files. `python scripts/download_models.py` fetches them from one repo (about 1.49 GB, `host/` on the ANE pack, no full `model.safetensors`; sizes, flags, and example output: [scripts/README.md](../scripts/README.md)) and creates the `artifacts/coreai/<name>.aimodel` symlinks `api.Embedder` expects. No Hugging Face login. Put the printed `export` lines in `~/.zshrc` or a file you `source`.
 
 ```sh
-export ANEMLL_EMBEDDINGS_MODEL=/path/to/google-embeddinggemma-2
-export ANEMLL_EMBEDDINGS_ARTIFACTS=/path/to/artifacts
-export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
+python scripts/download_models.py
+# copy the export lines it prints, then:
+python scripts/warmup.py
 export ANEMLL_DEMO_DATA=$HOME/.anemll-embeddings/demo
 export ANEMLL_DEMO_CORPUS=$HOME/.anemll-embeddings/corpus
 export ANEMLL_DEMO_ALERT=$HOME/.anemll-embeddings/alert
@@ -19,6 +19,8 @@ export ANEMLL_DEMO_ALERT=$HOME/.anemll-embeddings/alert
 python -m pip install -r demo/requirements.txt
 python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
 ```
+
+First `warmup.py` load compiles each tower for this Mac and caches it. There is no separate per-hardware compile to ship. Validated on M4 Pro / macOS 27.0; on macOS 27.2 / M5 vision and text currently fall back to the GPU.
 
 `python -m demo` and `python -m demo.server` are the same command. Then open **http://127.0.0.1:8766**. The server embeds through the public [`api.Embedder`](../api/README.md) (`embed_text` / `embed_image` / `embed_audio` + `cosine`). This package only serves the pages.
 
@@ -140,6 +142,7 @@ Sparky’s two photos are the same black cat (Nikolai Bulykin, Medeo, Almaty). M
 
 ```sh
 python tests/test_api_embedder.py
+python tests/test_download_models.py
 python tests/test_demo_api.py
 python tests/test_demo_coreai_masks.py
 ```
