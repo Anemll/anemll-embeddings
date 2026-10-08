@@ -22,6 +22,17 @@ One input (for example the phrase “white house”) always gives exactly one ve
 - Small test fixtures (prompts and reference vectors)
 - An older text-only Core ML path (see [below](#older-text-only-core-ml-path))
 
+## Folder map
+
+| Path | What lives there |
+| --- | --- |
+| `model/` | Export / convert EmbeddingGemma 2 to Core AI / ANE: wrappers, ANE graph patches, specialize and inspect tools, parity and cosine checks |
+| `api/` | Importable Python runtime: load the `.aimodel` towers and embed text / image / audio (`from api import Embedder`) |
+| `samples/` | Small runnable examples plus corpus / alert fetch scripts and manifests (no large binaries in git) |
+| `demo/` | FastAPI showcase server and static pages only (imports `api`) |
+| `docs/` | How it works, historical plan, diagrams |
+| `tests/` | Unit and API tests |
+
 **Model weights are not in this repo.** You download EmbeddingGemma 2 yourself and check the license and terms on the model card.
 
 ## Requirements
@@ -46,6 +57,7 @@ export HUGGINGFACE_HUB_CACHE=$HOME/.cache/huggingface
 1. **Install** (in a virtualenv):
 
    ```sh
+   python -m pip install -e ".[demo]"
    python -m pip install torch transformers sentence-transformers pillow
    ```
 
@@ -58,7 +70,7 @@ export HUGGINGFACE_HUB_CACHE=$HOME/.cache/huggingface
 3. **Export the packages**, or skip this if you already have them under `$ANEMLL_EMBEDDINGS_ARTIFACTS/coreai/`:
 
    ```sh
-   python scripts/export_coreai_towers.py \
+   python model/export_coreai_towers.py \
      --tower vision --tower audio --tower text --tower text_embeds
    ```
 
@@ -74,35 +86,37 @@ export HUGGINGFACE_HUB_CACHE=$HOME/.cache/huggingface
 4. **Run a first embedding** (load each package and do one forward on the Neural Engine):
 
    ```sh
-   python scripts/smoke_coreai_towers.py --compute ane \
+   python model/smoke_coreai_towers.py --compute ane \
      --tower vision --tower audio --tower text --tower text_embeds
    ```
 
    Or compare a few fixture cases against the original PyTorch model:
 
    ```sh
-   ANEMLL_COREAI_COMPUTE=ane python scripts/parity_coreai_host.py
+   ANEMLL_COREAI_COMPUTE=ane python model/parity_coreai_host.py
    ```
 
 ## Python usage
 
-The public helpers match the Sentence-Transformers text path. Set `ANEMLL_EMBEDDINGS_MODEL` first.
+The public runtime loads the three `.aimodel` towers and returns one 768-d unit vector. Set `ANEMLL_EMBEDDINGS_MODEL` and `ANEMLL_EMBEDDINGS_ARTIFACTS` first (and `ANEMLL_COREAI_PYTHON` on a Mac).
 
 ```python
-from src.load_text_model import load_sentence_transformer
-from src.embed_wrapper import EmbeddingGemma2Wrapper, tokenize_with_st_prompt
+from api import Embedder
 
-st, _ = load_sentence_transformer()
-wrapper = EmbeddingGemma2Wrapper.from_sentence_transformer(st).eval()
-
-batch = tokenize_with_st_prompt(st, "a red fox", "SearchQuery")
-embedding = wrapper(batch["input_ids"], batch["attention_mask"])
-# embedding.shape == (1, 768)
+embedder = Embedder(compute="ane")  # or Embedder(backend="mock") without Core AI
+text = embedder.embed_text("a red fox")          # role="query" (SearchQuery)
+image = embedder.embed_image(pil_image)
+audio = embedder.embed_audio(wav_f32, 16000)
+embedder.close()
 ```
 
-`SearchQuery` is a task prefix the original model expects for search. Other names in the fixtures include `Document`, `SentenceSimilarity`, and `CodeRetrieval`.
+`python -m pip install -e .` makes `from api import Embedder` work from any working directory. From a repo checkout, keep the repo root on `PYTHONPATH` (the samples do this).
 
-Photos, sounds, and captions go through `src/coreai_host.py`: run `vision_s280` / `audio_s280`, scatter those tokens into the text sequence, then run `text_embeds_s320`. Plain text can use `text_s128` (ids only). `scripts/parity_coreai_host.py` is the full loop.
+`SearchQuery` / `Document` are task prefixes the original model expects. `embed_text(..., role="query")` and `role="SearchQuery"` are the same; `role="document"` matches `Document`.
+
+The host path in `api/coreai_host.py` runs `vision_s280` / `audio_s280`, scatters those tokens into the text sequence, then runs `text_embeds_s320`. Plain text can use `text_s128` (ids only). `model/parity_coreai_host.py` is the full loop. The older Sentence-Transformers wrapper still lives at `model/embed_wrapper.py` for export and fixture work.
+
+Examples: `python samples/embed_sentence.py --backend mock`, `python samples/image_text_search.py --backend mock`, `python samples/sound_matching.py --backend mock`, `python samples/camera_alert_rule.py --backend mock`.
 
 ## Results
 
@@ -151,8 +165,8 @@ Load a small public corpus (optional):
 
 ```sh
 export ANEMLL_DEMO_CORPUS=$HOME/.anemll-embeddings/corpus
-python demo/scripts/fetch_corpus.py --dest "$ANEMLL_DEMO_CORPUS"
-python demo/scripts/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$ANEMLL_DEMO_CORPUS"
+python samples/fetch_corpus.py --dest "$ANEMLL_DEMO_CORPUS"
+python samples/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$ANEMLL_DEMO_CORPUS"
 ```
 
 | Page | What it does |
@@ -165,7 +179,7 @@ python demo/scripts/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$AN
 Camera-alert photos and clips are not in git. Fetch them beside the corpus:
 
 ```sh
-python demo/scripts/fetch_alert.py --dest "${ANEMLL_DEMO_ALERT:-$HOME/.anemll-embeddings/alert}"
+python samples/fetch_alert.py --dest "${ANEMLL_DEMO_ALERT:-$HOME/.anemll-embeddings/alert}"
 ```
 
 Full walkthrough, backends, and things to try: **[demo/README.md](demo/README.md)**.
@@ -176,10 +190,10 @@ An earlier track exports the ~270M text tower through `torch.jit.trace` and publ
 
 ```sh
 python -m pip install -r requirements-conversion.txt
-python scripts/export_torchscript.py --seq-len 512
-python scripts/convert_coreml.py --seq-len 512
-python scripts/parity_cosine.py --seq-len 512
-python scripts/ane_smoke.py --seq-len 512
+python model/export_torchscript.py --seq-len 512
+python model/convert_coreml.py --seq-len 512
+python model/parity_cosine.py --seq-len 512
+python model/ane_smoke.py --seq-len 512
 ```
 
 I/O names are fixed: `input_ids` and `attention_mask` in (`[1, S]`, int32), `embedding` out (`[1, 768]`, float32). `CPU_AND_NE` on convert does not prove Neural Engine placement — `ane_smoke.py` reads the compute plan. FP16 Core ML (`--precision FLOAT16`) is a separate artifact tree; on the M4 Pro the FP16 *CPU* path was the weak one (min cosine 0.920 vs the fixtures), not the Neural Engine path.

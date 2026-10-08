@@ -20,7 +20,7 @@ python -m pip install -r demo/requirements.txt
 python -m demo.server --backend coreai --host 0.0.0.0 --port 8766
 ```
 
-`python -m demo` is the same command. Then open **http://127.0.0.1:8766**.
+`python -m demo` and `python -m demo.server` are the same command. Then open **http://127.0.0.1:8766**. The server imports embeddings from `api` (`from api import Embedder` is the library surface; this package only serves the pages).
 
 | Flag / env | Default | Meaning |
 | --- | --- | --- |
@@ -47,8 +47,8 @@ python -m demo.server --backend mock --port 8766
 Optional. Downloads a small CC0 / CC BY set (fox, rain, piano, and similar) via Openverse. Licenses go in `manifest.json`. Nothing is committed.
 
 ```sh
-python demo/scripts/fetch_corpus.py --dest "$ANEMLL_DEMO_CORPUS"
-python demo/scripts/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$ANEMLL_DEMO_CORPUS"
+python samples/fetch_corpus.py --dest "$ANEMLL_DEMO_CORPUS"
+python samples/seed_index.py --base-url http://127.0.0.1:8766 --corpus "$ANEMLL_DEMO_CORPUS"
 ```
 
 `--limit-images N` and `--limit-audio N` shrink the download. `--limit N` on `seed_index.py` indexes only the first N items.
@@ -106,7 +106,7 @@ Four alerts are already set: **Anything significant**, **UPS truck**, **Sparky**
 The frames and clips are not in git. Fetch them first (CC0 / CC BY / CC BY-SA, licenses in `manifest.json`):
 
 ```sh
-python demo/scripts/fetch_alert.py --dest "${ANEMLL_DEMO_ALERT:-$HOME/.anemll-embeddings/alert}"
+python samples/fetch_alert.py --dest "${ANEMLL_DEMO_ALERT:-$HOME/.anemll-embeddings/alert}"
 ```
 
 Sparky’s two photos are the same black cat (Nikolai Bulykin, Medeo, Almaty). Matching is visual similarity to that reference, not identity verification. Sounds also show a meter against “a cat meowing”; that meter is not a fifth alert.
@@ -139,6 +139,7 @@ Sparky’s two photos are the same black cat (Nikolai Bulykin, Medeo, Almaty). M
 ## Tests
 
 ```sh
+python tests/test_api_embedder.py
 python tests/test_demo_api.py
 python tests/test_demo_coreai_masks.py
 ```

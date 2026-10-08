@@ -11,7 +11,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.audio_export_patches import (  # noqa: E402
+from model.audio_export_patches import (  # noqa: E402
     AUDIO_CHUNK,
     AUDIO_FUTURE,
     AUDIO_INVALID,
@@ -35,20 +35,20 @@ from src.audio_export_patches import (  # noqa: E402
     swap_last_two,
     swap_mid_dims,
 )
-from src.trace_patches import (  # noqa: E402
+from model.trace_patches import (  # noqa: E402
     _make_attention_forward,
     _take_ple_layer,
     bake_k_layout,
     bind_used_weight_layout,
 )
-from src.vision_export_patches import (  # noqa: E402
+from model.vision_export_patches import (  # noqa: E402
     _apply_multidimensional_rope_ane,
     _recomposition_frequencies_ane,
     _vision_attn_forward,
     embedding_from_int_indices,
     rotate_half_matmul,
 )
-from src.coreai_towers import (  # noqa: E402
+from model.coreai_towers import (  # noqa: E402
     AUDIO_FEAT,
     AUDIO_FRAMES,
     AUDIO_SOFT_TOKENS,

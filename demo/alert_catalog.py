@@ -1,6 +1,6 @@
 """Pinned camera-alert samples and the four preset rules.
 
-Images and clips are not in git. ``demo/scripts/fetch_alert.py`` downloads
+Images and clips are not in git. ``samples/fetch_alert.py`` downloads
 these Wikimedia Commons files (CC0, CC BY, or CC BY-SA, attribution stored
 in the manifest) into ``ANEMLL_DEMO_ALERT``.
 

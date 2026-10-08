@@ -140,7 +140,7 @@ def _catalog_payload(library: AlertLibrary) -> dict[str, Any]:
     ready = all(row["available"] for row in [*frames, *sounds, *references])
     return {
         "ready": ready,
-        "fetch": "python demo/scripts/fetch_alert.py",
+        "fetch": "python samples/fetch_alert.py",
         "note": (
             "The model compares meaning, so describe the scene rather than giving a command. "
             "Sparky is visual similarity to the reference photo, not identity verification. "

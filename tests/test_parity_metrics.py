@@ -12,7 +12,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.parity_metrics import (  # noqa: E402
+from model.parity_metrics import (  # noqa: E402
     cosine,
     finite_counts,
     l2_norm,

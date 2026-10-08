@@ -1,7 +1,7 @@
 """Decode browser uploads into the shapes the embedder expects.
 
 Images become RGB PIL. Audio becomes mono float32 at 16 kHz, which is the
-rate ``src.multimodal_media.AUDIO_SR`` and the EmbeddingGemma processor use.
+rate ``model.multimodal_media.AUDIO_SR`` and the EmbeddingGemma processor use.
 WAV is decoded in-process. WebM, Ogg, and other browser recordings go through
 ffmpeg, then the same 16 kHz mono conversion.
 """

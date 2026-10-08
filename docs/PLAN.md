@@ -148,12 +148,12 @@ coremltools.convert(
 
 Small, numbered, independently mergeable:
 
-1. **T1 — Fixture pack:** ✅ `tests/fixtures/prompts.json` + `embeddings.npy` + digests; `scripts/gen_reference_fixtures.py`.
-2. **T2 — Text-only loader helper:** ✅ `src/load_text_model.py` — ST load with `vision_config`/`audio_config` None; BF16/FP32 only (refuse FP16).
-3. **T3 — Inference wrapper module:** ✅ `src/embed_wrapper.py` — mask-aware mean pool + 512→768 + optional L2; `scripts/smoke_wrapper_vs_fixtures.py` cosine vs T1.
-4. **T4 — Trace export:** Script `scripts/export_torchscript.py` — fixed-S trace, save `.pt` + metadata (S, dtype, git sha, model revision).
-5. **T5 — coremltools convert:** `scripts/convert_coreml.py` — TorchScript → `.mlpackage`, compute units flag, I/O names documented in README.
-6. **T6 — Parity harness:** `scripts/parity_cosine.py` — ST vs Core ML (CPU) cosine/rel-L2 on fixtures; JSON report.
+1. **T1 — Fixture pack:** ✅ `tests/fixtures/prompts.json` + `embeddings.npy` + digests; `model/gen_reference_fixtures.py`.
+2. **T2 — Text-only loader helper:** ✅ `model/load_text_model.py` — ST load with `vision_config`/`audio_config` None; BF16/FP32 only (refuse FP16).
+3. **T3 — Inference wrapper module:** ✅ `model/embed_wrapper.py` — mask-aware mean pool + 512→768 + optional L2; `model/smoke_wrapper_vs_fixtures.py` cosine vs T1.
+4. **T4 — Trace export:** Script `model/export_torchscript.py` — fixed-S trace, save `.pt` + metadata (S, dtype, git sha, model revision).
+5. **T5 — coremltools convert:** `model/convert_coreml.py` — TorchScript → `.mlpackage`, compute units flag, I/O names documented in README.
+6. **T6 — Parity harness:** `model/parity_cosine.py` — ST vs Core ML (CPU) cosine/rel-L2 on fixtures; JSON report.
 7. **T7 — ANE smoke + placement:** Load with ANE-capable units; NaN check; placement/timing note; fail ticket if CPU fallback suspected.
 8. **T8 — Shape ladder:** Repeat T4–T7 for S∈{128,512,1024} (separate packages or multifunction); document which S is default.
 9. **T9 — MRL host path:** Truncate+renorm helper matching ST `truncate_dim`; parity at 128/256/512.

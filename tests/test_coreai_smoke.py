@@ -11,7 +11,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.coreai_smoke import (  # noqa: E402
+from model.coreai_smoke import (  # noqa: E402
     TEXT_SEQ_LEN,
     classify_device_runs,
     dummy_numpy_inputs,
