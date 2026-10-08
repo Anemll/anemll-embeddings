@@ -376,7 +376,7 @@ def main() -> int:
         "created_at_utc": utc_now(),
         "git_sha": git_sha(REPO_ROOT),
         "target": "coreai_host_parity",
-        "compute": "cpu",
+        "compute": os.environ.get("ANEMLL_COREAI_COMPUTE", "cpu"),
         "pass": not fail,
         "load": load_meta,
         "absurd_cosine": ABSURD_COSINE,

@@ -17,7 +17,8 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api import Embedder, cosine  # noqa: E402
+from api import cosine  # noqa: E402
+from samples.cli import add_embedder_args, make_embedder  # noqa: E402
 
 AUDIO_SR = 16000
 DEFAULT_LABELS = ("a dog barking", "a cat meowing", "piano music", "rain")
@@ -44,8 +45,8 @@ def _tone(seconds: float = 0.4, freq: float = 440.0, rate: int = AUDIO_SR) -> np
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wav", type=Path, help="16-bit WAV clip")
-    parser.add_argument("--backend", default="coreai", choices=("coreai", "mock", "reference"))
     parser.add_argument("--label", action="append", dest="labels")
+    add_embedder_args(parser)
     args = parser.parse_args(argv)
 
     if args.wav is None:
@@ -54,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         wav, rate = _read_wav(args.wav)
     labels = tuple(args.labels) if args.labels else DEFAULT_LABELS
 
-    embedder = Embedder(backend=args.backend)
+    embedder = make_embedder(args)
     query = embedder.embed_audio(wav, rate)
     ranked = sorted(
         ((cosine(query, embedder.embed_text(label, role="document")), label) for label in labels),

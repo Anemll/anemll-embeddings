@@ -110,11 +110,11 @@ print(cosine(q, d))                                  # float in [-1, 1]
 embedder.close()
 ```
 
-`python -m pip install -e .` makes `from api import Embedder` work from any working directory. From a repo checkout, keep the repo root on `PYTHONPATH` (the samples do this). The demo pages call this same `Embedder`.
+`python -m pip install -e .` makes `from api import Embedder` work from any working directory. From a repo checkout, keep the repo root on `PYTHONPATH` (the samples do this). The demo pages call this same `Embedder`. `Embedder(compute="ane")` reads `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON` when those constructor arguments are omitted.
 
 The host path in `api/coreai_host.py` runs `vision_s280` / `audio_s280`, scatters those tokens into the text sequence, then runs `text_embeds_s320`. `model/parity_coreai_host.py` is the full loop. The older Sentence-Transformers wrapper still lives at `model/embed_wrapper.py` for export and fixture work.
 
-Examples: `python samples/embed_sentence.py --backend mock`, `python samples/image_text_search.py --backend mock`, `python samples/sound_matching.py --backend mock`, `python samples/camera_alert_rule.py --backend mock`.
+Examples: `python samples/embed_sentence.py --backend mock`, `python samples/image_text_search.py --backend mock`, `python samples/sound_matching.py --backend mock`, `python samples/camera_alert_rule.py --backend mock`. The samples also take `--artifacts`, `--model`, and `--coreai-python`.
 
 ## Results
 
@@ -127,6 +127,19 @@ Measured on an **M4 Pro, macOS 27.0**. Cosine is the Neural Engine package versu
 | `text_embeds_s320` | fully ANE, 1 region | 0.999963 | 34.8 ms |
 
 Each tower is one ANE region: `mps.fullyPlacedOnANE` and `mps.noGPUActivity`, with no GPU or CPU regions and no ANE validation messages.
+
+End-to-end `Embedder(compute="ane")` scores on the same M4 Pro (cosine between two embeddings, after warmup):
+
+| Pair | Cosine |
+| --- | --- |
+| text `a red fox` vs `a red fox in the snow` | 0.901 |
+| text `a red fox` vs `a delivery truck` | 0.694 |
+| UPS photo vs `a brown UPS delivery truck` | 0.727 |
+| UPS photo vs `a cat` | 0.513 |
+| bark vs `a dog barking` | 0.721 |
+| bark vs `a cat meowing` | 0.661 |
+
+About **35 ms** per sentence, **380 ms** per photo, **50 ms** per sound.
 
 ## How it works
 

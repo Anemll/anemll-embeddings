@@ -20,7 +20,7 @@ embedder.close()
 | `0.60–0.85` | Related — demo alerts live here (UPS ~0.65, bark ~0.68, Sparky ~0.75) |
 | ~`0` | Unrelated |
 
-On a Mac set `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON`. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
+On a Mac set `ANEMLL_EMBEDDINGS_ARTIFACTS`, `ANEMLL_EMBEDDINGS_MODEL`, and `ANEMLL_COREAI_PYTHON`. `Embedder(compute="ane")` reads those when the constructor arguments are omitted. Without Core AI, use `backend="mock"` (deterministic stand-in vectors; scores are **not** semantic).
 
 `python -m pip install -e .` then `from api import Embedder` works anywhere. From a checkout, keep the repo root on `PYTHONPATH`.
 
@@ -37,6 +37,8 @@ d = embedder.embed_text("a red fox in the snow", role="document")
 print(q.shape, cosine(q, d))
 embedder.close()
 ```
+
+On an M4 Pro this pair is about **0.901**; the same query vs `a delivery truck` is about **0.694** (~35 ms per sentence).
 
 `role="query"` (or `"SearchQuery"`) vs `role="document"` (or `"Document"`) is the model's search prefix. Use query for the thing you type; document for items you index.
 
@@ -58,6 +60,8 @@ for text in captions:
 embedder.close()
 ```
 
+On an M4 Pro a UPS photo scores about **0.727** vs `a brown UPS delivery truck` and **0.513** vs `a cat` (~380 ms per photo).
+
 Same idea as Search (drop a photo, type a caption) and the Matrix page ([`POST /compare`](../demo/server.py), [`demo/static/heatmap.js`](../demo/static/heatmap.js)).
 
 ---
@@ -74,6 +78,8 @@ heard = embedder.embed_audio(wav, 16000)
 print(cosine(heard, embedder.embed_text("a dog barking", role="document")))
 embedder.close()
 ```
+
+On an M4 Pro a bark clip scores about **0.721** vs `a dog barking` and **0.661** vs `a cat meowing` (~50 ms per sound).
 
 The Heard page records a clip and searches those chunks: [`demo/static/heard.js`](../demo/static/heard.js). Clips need about 9 ms at 16 kHz (one mel frame).
 
@@ -93,7 +99,7 @@ print("fires" if score >= 0.65 else "quiet", score)
 embedder.close()
 ```
 
-That is a text rule. “Anything significant” on the Alert page is `1 - cosine(frame, empty_street)` — a change from the baseline photo, not a caption. Scoring lives in [`demo/alert_routes.py`](../demo/alert_routes.py) and [`demo/alert_score.py`](../demo/alert_score.py); the UI is [`demo/static/alert.js`](../demo/static/alert.js).
+That is a text rule. “Anything significant” on the Alert page is `1 - cosine(frame, empty_street)` — a change from the baseline photo, not a caption. `samples/camera_alert_rule.py` prints both: cosine vs the rule text, and 1 − cosine vs `--street` (or `$ANEMLL_DEMO_ALERT/frames/street.jpg`). Scoring lives in [`demo/alert_routes.py`](../demo/alert_routes.py) and [`demo/alert_score.py`](../demo/alert_score.py); the UI is [`demo/static/alert.js`](../demo/static/alert.js).
 
 ---
 

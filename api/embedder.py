@@ -471,9 +471,21 @@ class CoreAIBackend:
         return self._max_samples
 
 
-def default_coreai_python() -> Path | None:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
+def _env_path(name: str) -> Path | None:
+    raw = os.environ.get(name)
     return Path(raw) if raw else None
+
+
+def default_artifacts() -> Path | None:
+    return _env_path("ANEMLL_EMBEDDINGS_ARTIFACTS")
+
+
+def default_model() -> Path | None:
+    return _env_path("ANEMLL_EMBEDDINGS_MODEL")
+
+
+def default_coreai_python() -> Path | None:
+    return _env_path("ANEMLL_COREAI_PYTHON")
 
 
 TextRole = Literal["query", "document", "SearchQuery", "Document"]
@@ -532,9 +544,9 @@ class Embedder:
         key = (backend or "coreai").strip().lower()
         self.name = key
         self.last: EmbedResult | None = None
-        art = Path(artifacts) if artifacts is not None else None
-        ckpt = Path(model) if model is not None else None
-        py = Path(coreai_python) if coreai_python is not None else None
+        art = Path(artifacts) if artifacts is not None else default_artifacts()
+        ckpt = Path(model) if model is not None else default_model()
+        py = Path(coreai_python) if coreai_python is not None else default_coreai_python()
         if key == "mock":
             self._impl = MockBackend()
         elif key == "reference":
