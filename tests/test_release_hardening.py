@@ -8,12 +8,12 @@ import asyncio
 import io
 import os
 import sys
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pytest
-import tomllib
 from fastapi.testclient import TestClient
 from PIL import Image
 

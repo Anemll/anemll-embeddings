@@ -20,7 +20,7 @@ import json
 import os
 import platform
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -142,7 +142,7 @@ def main() -> int:
 
     meta = {
         "version": 1,
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "host": platform.node(),
         "platform": platform.platform(),
         "python": sys.version.split()[0],

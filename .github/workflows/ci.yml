@@ -15,11 +15,16 @@ jobs:
   unit:
     runs-on: macos-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor (requires-python); 3.12 is the tested release venv.
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install (tested constraints)
         run: |
@@ -29,6 +34,10 @@ jobs:
         run: python -m pip check
       - name: Compile
         run: python -m compileall -q api model scripts samples demo tests
+      - name: Lint
+        run: |
+          python -m pip install ruff==0.16.10
+          ruff check .
       - name: Wheel contents
         run: |
           python -m pip wheel --no-deps -w dist .

@@ -13,7 +13,7 @@ import os
 import platform
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -99,7 +99,7 @@ def sha256_file(path: Path) -> str | None:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def host_versions() -> dict[str, Any]:

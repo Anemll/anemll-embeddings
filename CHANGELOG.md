@@ -29,6 +29,9 @@ All notable changes to this project are documented here.
 ### Changed
 - Dependencies pinned to tested ranges (torch 2.14, torchvision 0.29,
   transformers 5.19; sentence-transformers 6.1 moved to the `reference` extra).
+- Requires Python 3.11 or newer for the host venv (`requires-python >= 3.11`;
+  the tests use `tomllib`). CI runs the unit suite and `ruff check` on 3.11
+  and 3.12.
 - Default `~/.anemll-embeddings` paths work without exporting environment
   variables. Developer-specific paths removed from code and docs.
 - `warmup.py --cache-dir` rejects paths Core AI cannot use instead of silently

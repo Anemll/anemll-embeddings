@@ -13,7 +13,7 @@ import json
 import os
 import tempfile
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,7 @@ class DownloadTooLarge(RuntimeError):
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def sha256_file(path: Path) -> str:

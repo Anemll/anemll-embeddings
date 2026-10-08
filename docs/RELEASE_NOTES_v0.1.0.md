@@ -15,6 +15,9 @@ Check yours with `python scripts/warmup.py --require-ane`.
 
 ## Install
 
+Host venv: Python 3.11 or newer (3.12 tested). Core AI runtime: a separate
+Python 3.13 venv with `coreai-core` 1.0.0b2.
+
 ```sh
 python -m pip install -e ".[runtime]" -c constraints.txt
 python3.13 -m venv ~/.anemll-embeddings/coreai-venv

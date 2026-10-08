@@ -7,7 +7,7 @@ name = "anemll-embeddings"
 version = "0.1.0"
 description = "EmbeddingGemma 2 on Apple Core AI / Neural Engine"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 # Ranges are the tested minor series. Exact tested versions: constraints.txt
 # (python -m pip install -e ".[runtime,demo]" -c constraints.txt).

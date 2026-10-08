@@ -5,7 +5,7 @@ Thanks for helping. Issues and pull requests are welcome.
 ## Setup
 
 ```sh
-python3.12 -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate   # 3.11 or newer
 python -m pip install -e ".[test]" -c constraints.txt
 ```
 
@@ -17,12 +17,13 @@ For real (non-mock) embeddings also set up the Core AI interpreter described in
 
 ```sh
 python -m compileall -q api model scripts samples demo tests
+python -m pip install ruff==0.16.10 && ruff check .
 python -m pytest tests -q
 ```
 
 The unit suite needs no Neural Engine: it uses the mock backend and stubbed
-workers. CI (`.github/workflows/ci.yml`) runs the same commands plus a
-dependency check and a wheel-content check.
+workers. CI (`.github/workflows/ci.yml`) runs the same commands on Python 3.11 and 3.12
+plus a dependency check and a wheel-content check.
 
 If you touch the Core AI path, also run the hardware checks on a Mac and paste
 the output in the PR:

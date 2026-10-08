@@ -50,7 +50,7 @@ One input (for example the phrase “white house”) always gives exactly one ve
 ## Requirements
 
 - An Apple Silicon Mac running macOS 27. Fully-ANE placement is validated on **M4 Pro and M3 Ultra, macOS 27.0**; see the table above for M5 / macOS 27.2.
-- A host Python 3.10 or newer (tested: 3.12) for this repo: `pip install -e ".[runtime]"` installs `torch` 2.14, `torchvision` 0.29, and `transformers` 5.19. Exact tested versions are in [`constraints.txt`](constraints.txt). `sentence-transformers` 6.1 is only needed for the reference model, fixtures, and export (`.[reference]`).
+- A host Python 3.11 or newer (tested: 3.11 and 3.12) for this repo: `pip install -e ".[runtime]"` installs `torch` 2.14, `torchvision` 0.29, and `transformers` 5.19. Exact tested versions are in [`constraints.txt`](constraints.txt). `sentence-transformers` 6.1 is only needed for the reference model, fixtures, and export (`.[reference]`).
 - A **second** Python that can `import coreai.runtime` (Python 3.13 with `coreai-core` 1.0.0b2), found through `ANEMLL_COREAI_PYTHON` or the default locations. See [Core AI runtime](#core-ai-runtime).
 - The public ANE packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus the slim Google host files (tokenizer / processor / 256 MiB embed table). The full ~740M checkpoint is only for re-export.
 
