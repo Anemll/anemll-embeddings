@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import struct
 import urllib.request
@@ -17,17 +18,42 @@ try:
 except ImportError:
     _hf_snapshot_download = None
 
+from api.runtime_paths import (
+    COREAI_PYTHON_ENV,
+    CoreAIPythonNotFound,
+    coreai_python_candidates,
+    resolve_coreai_python,
+)
+
 ANE_REPO = "anemll/anemll-embeddinggemma-2-ane"
-# Towers shipped at 8ceba04 (no host/ yet). After host/ is uploaded, set this
-# to that commit or export ANEMLL_ANE_REVISION=<sha>. Until host/ exists at
-# this pin, download_models.py falls back to Google for host files.
-ANE_REVISION = "8ceba04"
+# Towers + mirrored host/ on the Hub (v0.1.0 card; towers and host/ are
+# byte-identical to 47d05aa). Override with ANEMLL_ANE_REVISION.
+ANE_REVISION = "90d2ab497d423bba4ee29947b274c787bb4a1f0a"
 BASE_REPO = "google/embeddinggemma-2"
 BASE_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 HOST_FOLDER = "host"
 TOWERS = ("vision_s280", "audio_s280", "text_embeds_s320")
 BUNDLE_FILES = ("metadata.json", "main.hash", "main.mlirb")
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
+# SHA-256 of each tower's main.mlirb at ANE_REVISION (same values as
+# hf/towers.yaml). Git-tracked, so a download is checked against this repo,
+# not against a manifest fetched from the same place as the payload.
+TOWER_MLIRB_SHA256 = {
+    "vision_s280": "d11f9d91a41a978ef419cd15b7b3633d47fc388b5d7327b302f4b4355f68b097",
+    "audio_s280": "bbbd714866d5b37a2ccd9c8ec0899f966dbf5dac66031f886522a8fc6824c35f",
+    "text_embeds_s320": "c52be1ab6401d69bb28b880498a90ca3f5891d419726e1531809584907a2d536",
+}
+# SHA-256 of the mirrored host/ payload at ANE_REVISION (host/SHA256SUMS).
+HOST_SHA256 = {
+    "config.json": "b8f1e9931b57fbc054acdb445c41765d55b0074c58d145fa82839941ad1b5bb3",
+    "config_sentence_transformers.json": "031e56a498d33c349ab489a21885bcfe25b4fcba841149dc99e1e90d4a7c28f5",
+    "tokenizer.json": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4",
+    "tokenizer.model": "e594c8a90eb08d8bda498ff4747977dc827ae0c3c56b5c0d41a605a22d02ef03",
+    "tokenizer_config.json": "17bd5d6e9364ca49a534e1502076593317c298d4a663623091ed45388f004874",
+    "preprocessor_config.json": "ea2ae257e901064abdd98dceb19f2b0da06af600bed15e0f99f5c85c37ee9d78",
+    "processor_config.json": "168f6a08522f3ce5dea596d94d003af2fd691742d4f41fe1f9d8cce76bfbf69c",
+    "chat_template.jinja": "4b852efc0b9960283e735363331e6f325b33bc74bdbaa076f595bc4e9b94d85e",
+    "embed_tokens.safetensors": "a37078ff5786d9bf75b059bdc8f4009f4311bf8e7ffbc287b66bab3d38457996",
+}
 REVISION_MARK = ".anemll-revision"
 SLIM_EMBED_NAME = "embed_tokens.safetensors"
 EMBED_TENSOR_KEY = "language_model.embed_tokens.weight"
@@ -126,13 +152,9 @@ def matches_hf_patterns(
 ) -> bool:
     """Same idea as huggingface_hub allow/ignore globs (basename or full path)."""
     names = (name, Path(name).name)
-    if allow is not None:
-        if not any(fnmatch(candidate, pat) for candidate in names for pat in allow):
-            return False
-    if ignore is not None:
-        if any(fnmatch(candidate, pat) for candidate in names for pat in ignore):
-            return False
-    return True
+    if allow is not None and not any(fnmatch(candidate, pat) for candidate in names for pat in allow):
+        return False
+    return not (ignore is not None and any(fnmatch(candidate, pat) for candidate in names for pat in ignore))
 
 
 def bundle_path(ane_dir: Path, name: str) -> Path:
@@ -223,21 +245,158 @@ def link_coreai(artifacts: Path, ane_dir: Path) -> dict[str, str]:
     return status
 
 
-def coreai_python_export() -> str:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    if raw:
-        return raw
-    return str(DEFAULT_COREAI_PY)
+def discover_coreai_python(
+    explicit: Path | str | None = None,
+    *,
+    required: bool = True,
+) -> Path | None:
+    """Resolve a Python that can ``import coreai.runtime``.
+
+    Order: ``explicit`` / ``--coreai-python``, then ``ANEMLL_COREAI_PYTHON``,
+    then the documented locations in ``api.runtime_paths``. Exits with setup
+    instructions when ``required`` and nothing is found.
+    """
+    try:
+        return resolve_coreai_python(explicit, required=required)
+    except CoreAIPythonNotFound as exc:
+        raise SystemExit(str(exc)) from exc
 
 
-def env_exports(*, artifacts: Path, model: Path, coreai_python: str) -> str:
-    return "\n".join(
-        (
-            f"export ANEMLL_EMBEDDINGS_ARTIFACTS={artifacts}",
-            f"export ANEMLL_EMBEDDINGS_MODEL={model}",
-            f"export ANEMLL_COREAI_PYTHON={coreai_python}",
+def coreai_python_export() -> str | None:
+    """Path to print for ``ANEMLL_COREAI_PYTHON``, or ``None`` if none exists yet."""
+    found = discover_coreai_python(required=False)
+    return str(found) if found is not None else None
+
+
+def verify_sha256(files: dict[Path, str]) -> list[str]:
+    """Return one message per missing or mismatched file (empty = all good)."""
+    problems: list[str] = []
+    for path, want in files.items():
+        if not path.is_file():
+            problems.append(f"missing {path}")
+            continue
+        got = sha256_file(path)
+        if got != want:
+            problems.append(f"sha256 mismatch {path}: got {got}, want {want}")
+    return problems
+
+
+def tower_checksums(ane_dir: Path) -> dict[Path, str]:
+    return {
+        bundle_path(ane_dir, name) / "main.mlirb": digest
+        for name, digest in TOWER_MLIRB_SHA256.items()
+    }
+
+
+def read_sha256sums(path: Path) -> dict[str, str]:
+    """Parse a ``sha256sum``-style file into ``{name: digest}``."""
+    out: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2:
+            out[parts[1].lstrip("*").strip()] = parts[0].lower()
+    return out
+
+
+def host_checksums(folder: Path) -> tuple[dict[Path, str], list[str]]:
+    """Digests to check for a mirrored ``host/`` folder, plus manifest conflicts.
+
+    The git-tracked :data:`HOST_SHA256` table is authoritative for the payload.
+    ``folder/SHA256SUMS`` (shipped with the download) adds the files the table
+    does not pin (``LICENSE``, ``NOTICE``). A shipped entry that disagrees
+    with the pinned table is reported, never trusted.
+    """
+    files = {folder / name: digest for name, digest in HOST_SHA256.items()}
+    conflicts: list[str] = []
+    sums = folder / "SHA256SUMS"
+    if sums.is_file():
+        for name, digest in read_sha256sums(sums).items():
+            pinned = HOST_SHA256.get(name)
+            if pinned is None:
+                files[folder / name] = digest
+            elif pinned != digest:
+                conflicts.append(f"{sums} lists {name} as {digest}, pinned {pinned}")
+    return files, conflicts
+
+
+def coreai_cache_dir(cache_dir: Path | str | None = None) -> Path:
+    """Core AI specialization cache (``…/Library/Caches/coreai-cache``).
+
+    ``--cache-dir`` wins, then ``$CFFIXED_USER_HOME``, then ``Path.home()``.
+    """
+    if cache_dir is not None:
+        return Path(cache_dir).expanduser()
+    raw = os.environ.get("CFFIXED_USER_HOME")
+    home = Path(raw).expanduser() if raw else Path.home()
+    return home / "Library" / "Caches" / "coreai-cache"
+
+
+def fixed_user_home_for_cache(cache: Path) -> Path | None:
+    """Home that makes Core AI write ``cache`` via ``CFFIXED_USER_HOME``."""
+    if (
+        cache.name == "coreai-cache"
+        and cache.parent.name == "Caches"
+        and cache.parent.parent.name == "Library"
+    ):
+        return cache.parent.parent.parent
+    return None
+
+
+def coreai_home_for_cache_dir(cache: Path) -> Path:
+    """``CFFIXED_USER_HOME`` for a ``--cache-dir``, or exit with a clear error.
+
+    Core AI has no cache-path option. It writes under
+    ``$CFFIXED_USER_HOME/Library/Caches/coreai-cache``, so only a cache
+    directory of exactly that shape can be honoured. Anything else would
+    be silently ignored, so it is rejected instead.
+    """
+    home = fixed_user_home_for_cache(Path(cache).expanduser())
+    if home is None:
+        raise SystemExit(
+            f"--cache-dir {cache} is not supported: Core AI only caches under "
+            "<home>/Library/Caches/coreai-cache. Pass a path ending in "
+            "Library/Caches/coreai-cache, or use --coreai-home <dir> "
+            "(cache becomes <dir>/Library/Caches/coreai-cache)."
         )
+    return home
+
+
+def cache_unwritable_hint(cache: Path) -> str:
+    notes: list[str] = []
+    if cache.is_symlink():
+        try:
+            cache.resolve(strict=True)
+        except OSError:
+            notes.append(f"{cache} is a broken symlink.")
+    elif cache.exists() and not os.access(cache, os.W_OK):
+        notes.append(f"{cache} exists but is not writable.")
+    detail = (" ".join(notes) + " ") if notes else ""
+    return (
+        f"The Core AI worker died during load. {detail}"
+        f"The specialization cache ({cache}) may be unwritable or a broken symlink.\n"
+        "Fix that path, or redirect Core AI's home:\n"
+        "  python scripts/warmup.py --coreai-home /path/to/writable/home\n"
+        "  # same as: export CFFIXED_USER_HOME=/path/to/writable/home\n"
+        "  # cache becomes /path/to/writable/home/Library/Caches/coreai-cache"
     )
+
+
+def env_exports(*, artifacts: Path, model: Path, coreai_python: str | None) -> str:
+    """Shell lines to paste. Values are ``shlex.quote``d (spaces, ``$``, quotes)."""
+    lines = [
+        f"export ANEMLL_EMBEDDINGS_ARTIFACTS={shlex.quote(str(artifacts))}",
+        f"export ANEMLL_EMBEDDINGS_MODEL={shlex.quote(str(model))}",
+    ]
+    if coreai_python:
+        lines.append(f"export {COREAI_PYTHON_ENV}={shlex.quote(str(coreai_python))}")
+    else:
+        looked = ", ".join(str(path) for path in coreai_python_candidates())
+        lines.append(
+            f"# {COREAI_PYTHON_ENV}: no Core AI Python found (looked in: {looked}).\n"
+            f"# Set it up first (README.md, \"Core AI runtime\"), then:\n"
+            f"# export {COREAI_PYTHON_ENV}=/path/to/coreai-venv/bin/python"
+        )
+    return "\n".join(lines)
 
 
 def snapshot(

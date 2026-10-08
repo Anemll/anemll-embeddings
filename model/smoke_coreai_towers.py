@@ -19,13 +19,22 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 CACHE = Path.home() / "Library/Caches/coreai-cache"
 
 
-def _coreai_python() -> Path:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    return Path(raw) if raw else DEFAULT_COREAI_PY
+def _coreai_python(required: bool = True) -> Path | None:
+    """Core AI interpreter: ``ANEMLL_COREAI_PYTHON``, then documented locations.
+
+    Exits with setup instructions when none exists (see ``api/runtime_paths.py``).
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from api.runtime_paths import CoreAIPythonNotFound, resolve_coreai_python
+
+    try:
+        return resolve_coreai_python(required=required)
+    except CoreAIPythonNotFound as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
 
 
 def _have_coreai() -> bool:
@@ -43,7 +52,7 @@ def _reexec_if_needed() -> None:
     if not py.is_file():
         raise SystemExit(
             "ERROR: coreai runtime missing and ANEMLL_COREAI_PYTHON not found at "
-            f"{py}. Point it at forge coreai/.venv/bin/python."
+            f"{py}. Point it at a venv with coreai-core (see README, Core AI runtime)."
         )
     print(f"re-exec {py} (coreai runtime)")
     os.execv(str(py), [str(py), *sys.argv])
@@ -92,7 +101,7 @@ def _desc_dtypes(fn) -> dict[str, str]:
     for name in list(fn.desc.input_names):
         try:
             out[name] = str(fn.desc.input_descriptor(name).dtype)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - best-effort dtype probe
             continue
     return out
 
@@ -113,8 +122,13 @@ def _cache_placement_since(since: float) -> dict:
 async def _smoke_one(
     tower: str, pkg: Path, export_io: dict | None, *, compute: str = "cpu"
 ) -> dict:
-    from coreai.runtime import AIModel, ComputeUnitKind, NDArray, SpecializationOptions
-    from coreai.runtime import _AIModelAsset
+    from coreai.runtime import (
+        AIModel,
+        ComputeUnitKind,
+        NDArray,
+        SpecializationOptions,
+        _AIModelAsset,
+    )
 
     started = time.time()
     report: dict = {
@@ -135,7 +149,7 @@ async def _smoke_one(
         if summary is not None:
             report["function_names"] = list(summary.function_names)
             report["compute_types"] = list(summary.compute_types)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - asset summary is optional
         report["asset_error"] = f"{type(exc).__name__}: {exc}"
 
     opts = None
@@ -151,7 +165,7 @@ async def _smoke_one(
             elif compute == "cpu":
                 opts = SpecializationOptions.cpu_only()
                 spec_note = "cpu_only"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fall back to default specialization
             spec_note = f"options_failed:{type(exc).__name__}"
             opts = None
     report["specialization"] = spec_note
@@ -161,7 +175,7 @@ async def _smoke_one(
             model = await AIModel.load(pkg, specialization_options=opts)
         else:
             model = await AIModel.load(pkg)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - record the load failure in the report
         report["error"] = f"{type(exc).__name__}: {exc}"
         return report
 
@@ -208,11 +222,11 @@ async def _smoke_one(
     placement = _cache_placement_since(started)
     devices: list[str] = []
     try:
-        raw = model._debug_infos  # noqa: SLF001
+        raw = model._debug_infos
         dbg = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
         devices = extract_devices_from_debug(dbg)
         report["debug_device_count"] = len(devices)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - debug info is optional
         report["debug_infos"] = f"{type(exc).__name__}: {exc}"
 
     classified = classify_device_runs(devices)
@@ -257,7 +271,7 @@ async def _run(towers: list[str], out_dir: Path, *, compute: str) -> dict:
         print(f"smoke {name} compute={compute} {pkg}")
         try:
             row = await _smoke_one(name, pkg, export_io, compute=compute)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - record per-tower failure and continue
             row = {
                 "tower": name,
                 "package": str(pkg),
@@ -317,7 +331,7 @@ def main() -> int:
     towers = args.tower or ["vision", "text", "audio"]
     out_dir = Path(args.artifacts) / "coreai"
     print(f"out_dir={out_dir} towers={towers} compute={args.compute} isolated={args.isolated}")
-    print(f"ANEMLL_COREAI_PYTHON={_coreai_python()} coreai_here={_have_coreai()}")
+    print(f"ANEMLL_COREAI_PYTHON={_coreai_python(required=False)} coreai_here={_have_coreai()}")
     if args.isolated:
         import subprocess
 

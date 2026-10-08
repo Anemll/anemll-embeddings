@@ -13,7 +13,7 @@ import os
 import platform
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,11 @@ except ImportError:
 # -1e4 is enough to zero softmax while staying in a later FP16 range.
 MASK_NEG = -1.0e4
 DEFAULT_SEQ_LEN = 512
-DEFAULT_ARTIFACTS = Path("/Volumes/Models/anemll-embeddings/artifacts")
+DEFAULT_ARTIFACTS = (
+    Path(os.environ["ANEMLL_EMBEDDINGS_HOME"]).expanduser()
+    if os.environ.get("ANEMLL_EMBEDDINGS_HOME")
+    else Path.home() / ".anemll-embeddings"
+) / "artifacts"
 
 
 def artifacts_root() -> Path:
@@ -95,7 +99,7 @@ def sha256_file(path: Path) -> str | None:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def host_versions() -> dict[str, Any]:

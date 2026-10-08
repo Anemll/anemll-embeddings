@@ -68,7 +68,7 @@ class _Proc:
             pixels = torch.full((1, 2520, 768), 0.25)
             return {"pixel_values": pixels, "image_position_ids": pos}
         if audio is not None:
-            n = max(8, int(round(len(np.asarray(audio)) / 16000 * 99)))
+            n = max(8, round(len(np.asarray(audio)) / 16000 * 99))
             feat = torch.zeros(1, n, 128)
             mask = torch.ones(1, n)
             mask[:, -3:] = 0

@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from api.coreai_host import (  # noqa: E402
+    TEXT_EMBEDS_S,
     adapt_audio_features_nchw,
     adapt_audio_mask_nchw,
     adapt_vision_pixels,
@@ -41,10 +42,12 @@ from api.coreai_host import (  # noqa: E402
     pad_embeds_to_package,
     slot_report,
     uses_text_package,
-    TEXT_EMBEDS_S,
 )
 from model.coreai_smoke import dummy_numpy_inputs  # noqa: E402
-from model.embed_wrapper import EmbeddingGemma2Wrapper, tokenize_with_st_prompt  # noqa: E402
+from model.embed_wrapper import (  # noqa: E402
+    EmbeddingGemma2Wrapper,
+    tokenize_with_st_prompt,
+)
 from model.export_utils import (  # noqa: E402
     artifacts_root,
     git_sha,
@@ -52,11 +55,13 @@ from model.export_utils import (  # noqa: E402
     utc_now,
     write_json,
 )
-from model.load_text_model import default_model_path, load_sentence_transformer  # noqa: E402
+from model.load_text_model import (  # noqa: E402
+    default_model_path,
+    load_sentence_transformer,
+)
 from model.multimodal_media import AUDIO_SR, write_default_media  # noqa: E402
 from model.parity_metrics import cosine, rel_l2  # noqa: E402
 
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 RUN_NPY = REPO_ROOT / "model" / "_coreai_run_npy.py"
 PROMPTS = REPO_ROOT / "tests" / "fixtures" / "multimodal_prompts.json"
 TEXT_S = 128
@@ -66,9 +71,19 @@ ABSURD_COSINE = 0.10
 TEXT_IDS_DTYPE = "int32"
 
 
-def _coreai_python() -> Path:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    return Path(raw) if raw else DEFAULT_COREAI_PY
+def _coreai_python(required: bool = True) -> Path | None:
+    """Core AI interpreter: ``ANEMLL_COREAI_PYTHON``, then documented locations.
+
+    Exits with setup instructions when none exists (see ``api/runtime_paths.py``).
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from api.runtime_paths import CoreAIPythonNotFound, resolve_coreai_python
+
+    try:
+        return resolve_coreai_python(required=required)
+    except CoreAIPythonNotFound as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
 
 
 def _wav_f32(path: Path) -> np.ndarray:
@@ -107,7 +122,8 @@ def _run_tower(pkg: Path, entry: str, feed: dict[str, np.ndarray], out: Path) ->
 def _load_processor(model_path: Path):
     from transformers import AutoProcessor
 
-    return AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
+    # EmbeddingGemma 2 ships no remote code (no auto_map); the processor is built in.
+    return AutoProcessor.from_pretrained(str(model_path))
 
 
 def _encode_text_s128(
@@ -365,7 +381,7 @@ def main() -> int:
                     )
                     fail = True
             print(f"  cosine={row.get('cosine')} rel_l2={row.get('rel_l2')} finite={finite}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - record per-row failure
             row["driven"] = True
             row["error"] = f"{type(exc).__name__}: {exc}"
             fail = True

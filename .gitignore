@@ -14,8 +14,7 @@ __pycache__/
 *.mlmodel
 *.aimodel
 
-# Large weights / caches — live on network volume (TBD), not in this repo
-# Do not use flash USB /Volumes/SAN512 for model downloads (too slow).
+# Large weights / caches live outside this repo (default ~/.anemll-embeddings).
 models/
 # Staged HF host/ payloads (scripts/prepare_hf_host_folder.py)
 hf/host/tokenizer.json
@@ -44,3 +43,7 @@ pip-cache/
 .env
 .env.*
 !.env.example
+
+# build outputs
+build/
+dist/

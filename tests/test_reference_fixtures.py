@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +85,10 @@ def main() -> int:
         f"norms in [{norms.min():.6f}, {norms.max():.6f}], no NaNs"
     )
     return 0
+
+
+def test_reference_fixtures() -> None:
+    assert main() == 0
 
 
 if __name__ == "__main__":

@@ -304,9 +304,8 @@ class Bytecode:
                     ty = r.varint()
                     r.varint()
                 args.append(self._new_value(self.type(ty)))
-            if self.version >= V_USELIST:
-                if r.byte() & M_USELIST:
-                    self._skip_use_lists(r, len(args) > 1)
+            if self.version >= V_USELIST and r.byte() & M_USELIST:
+                self._skip_use_lists(r, len(args) > 1)
         if args:
             emit(depth, "^bb(" + ", ".join(f"{a}: {self.value_types[a]}" for a in args) + ")")
         for _ in range(num_ops):

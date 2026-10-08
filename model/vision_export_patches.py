@@ -15,9 +15,7 @@ import functools
 from typing import Any
 
 import numpy as np
-
 import torch
-import torch.nn.functional as F
 
 # Longest image side in patches for 280 soft tokens with a 3×3 pooler.
 VISION_MAX_SIDE = 280 * 3
@@ -68,7 +66,7 @@ def _recomposition_frequencies_ane(self, freq: torch.Tensor) -> torch.Tensor:
 _ORIG_APPLY_ROPE = None
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _chunk_rotate_half(channels: int, per: int) -> np.ndarray:
     """``[C, C]`` matrix R with ``x @ R`` = rotate_half applied to each ``per`` chunk."""
     rot = np.zeros((channels, channels), dtype=np.float32)

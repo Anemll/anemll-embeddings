@@ -11,10 +11,10 @@ from typing import Any
 __all__ = [
     "DEFAULT_MODEL",
     "TEXT_ONLY_CONFIG_KWARGS",
-    "load_sentence_transformer",
-    "resolve_dtype_device",
     "EmbeddingGemma2Wrapper",
+    "load_sentence_transformer",
     "masked_mean_pool",
+    "resolve_dtype_device",
 ]
 
 

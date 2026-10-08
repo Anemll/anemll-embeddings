@@ -17,13 +17,22 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 CACHE = Path.home() / "Library/Caches/coreai-cache"
 
 
-def _coreai_python() -> Path:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    return Path(raw) if raw else DEFAULT_COREAI_PY
+def _coreai_python(required: bool = True) -> Path | None:
+    """Core AI interpreter: ``ANEMLL_COREAI_PYTHON``, then documented locations.
+
+    Exits with setup instructions when none exists (see ``api/runtime_paths.py``).
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from api.runtime_paths import CoreAIPythonNotFound, resolve_coreai_python
+
+    try:
+        return resolve_coreai_python(required=required)
+    except CoreAIPythonNotFound as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
 
 
 def _have_coreai() -> bool:
@@ -108,7 +117,7 @@ def _desc_dtypes(fn) -> dict[str, str]:
     for name in list(fn.desc.input_names):
         try:
             out[name] = str(fn.desc.input_descriptor(name).dtype)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - best-effort dtype probe
             continue
     return out
 
@@ -134,7 +143,7 @@ async def _time_one(
             model = await AIModel.load(pkg, specialization_options=opts)
         else:
             model = await AIModel.load(pkg)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - record the load failure in the report
         report["error"] = f"{type(exc).__name__}: {exc}"
         return report
 
@@ -173,10 +182,10 @@ async def _time_one(
         }
     )
     try:
-        raw = model._debug_infos  # noqa: SLF001
+        raw = model._debug_infos
         dbg = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
         report["debug_devices"] = extract_devices_from_debug(dbg)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - debug info is optional
         report["debug_infos"] = f"{type(exc).__name__}: {exc}"
     report["placement"] = _cache_since(started)
     return report

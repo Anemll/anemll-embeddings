@@ -19,6 +19,10 @@ import numpy as np
 from PIL import Image
 
 AUDIO_SR = 16000
+# Decoded-size caps. A small compressed upload can still decode huge.
+MAX_IMAGE_PIXELS = 64_000_000  # 64 MP, above any phone camera
+MAX_AUDIO_SECONDS = 600  # 10 minutes of 16 kHz mono after decode
+FFMPEG_TIMEOUT_S = 60
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 _AUDIO_SUFFIXES = {".wav", ".wave", ".webm", ".ogg", ".oga", ".mp3", ".m4a", ".mp4", ".flac", ".aac"}
@@ -39,9 +43,17 @@ def sniff_modality(filename: str | None, content_type: str | None) -> str | None
     return None
 
 
-def load_image_bytes(data: bytes) -> Image.Image:
+def load_image_bytes(data: bytes, *, max_pixels: int = MAX_IMAGE_PIXELS) -> Image.Image:
     try:
         image = Image.open(io.BytesIO(data))
+    except Exception as exc:
+        raise ValueError(f"could not read image: {exc}") from exc
+    width, height = image.size
+    if width * height > max_pixels:
+        raise ValueError(
+            f"image is {width}x{height}; the demo accepts at most {max_pixels // 1_000_000} MP"
+        )
+    try:
         image.load()
     except Exception as exc:
         raise ValueError(f"could not read image: {exc}") from exc
@@ -58,7 +70,14 @@ def save_jpeg(image: Image.Image, path: Path, *, max_edge: int = 1024, quality: 
 
 
 def load_audio_bytes(data: bytes, suffix: str) -> np.ndarray:
-    """Return mono float32 samples at 16 kHz."""
+    """Return mono float32 samples at 16 kHz (at most ``MAX_AUDIO_SECONDS``)."""
+    samples = _load_audio_bytes(data, suffix)
+    if samples.size > MAX_AUDIO_SECONDS * AUDIO_SR:
+        raise ValueError(f"audio is longer than {MAX_AUDIO_SECONDS} s")
+    return samples
+
+
+def _load_audio_bytes(data: bytes, suffix: str) -> np.ndarray:
     suffix = suffix if suffix.startswith(".") else f".{suffix}"
     suffix = suffix.lower() or ".bin"
     if suffix in {".wav", ".wave"}:
@@ -67,7 +86,7 @@ def load_audio_bytes(data: bytes, suffix: str) -> np.ndarray:
             return samples
         try:
             return _ffmpeg_to_16k(data, suffix)
-        except (OSError, subprocess.CalledProcessError, ValueError):
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
             mono = samples.mean(axis=-1) if samples.ndim > 1 else samples
             return resample_linear(mono, sr, AUDIO_SR)
     return _ffmpeg_to_16k(data, suffix)
@@ -102,7 +121,7 @@ def resample_linear(samples: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray
     mono = np.asarray(samples, dtype=np.float32).reshape(-1)
     if int(src_sr) == int(dst_sr) or mono.size == 0:
         return mono
-    n = max(1, int(round(mono.size * float(dst_sr) / float(src_sr))))
+    n = max(1, round(mono.size * float(dst_sr) / float(src_sr)))
     src_x = np.linspace(0.0, 1.0, mono.size, endpoint=False)
     dst_x = np.linspace(0.0, 1.0, n, endpoint=False)
     return np.interp(dst_x, src_x, mono).astype(np.float32, copy=False)
@@ -116,26 +135,32 @@ def _ffmpeg_to_16k(data: bytes, suffix: str) -> np.ndarray:
         src = Path(tmp) / f"in{suffix}"
         dst = Path(tmp) / "out.wav"
         src.write_bytes(data)
-        proc = subprocess.run(
-            [
-                ffmpeg,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                str(src),
-                "-ac",
-                "1",
-                "-ar",
-                str(AUDIO_SR),
-                "-f",
-                "wav",
-                str(dst),
-            ],
-            check=False,
-            capture_output=True,
-        )
+        try:
+            proc = subprocess.run(
+                [
+                    ffmpeg,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(src),
+                    "-t",
+                    str(MAX_AUDIO_SECONDS + 1),
+                    "-ac",
+                    "1",
+                    "-ar",
+                    str(AUDIO_SR),
+                    "-f",
+                    "wav",
+                    str(dst),
+                ],
+                check=False,
+                capture_output=True,
+                timeout=FFMPEG_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"ffmpeg took longer than {FFMPEG_TIMEOUT_S} s to decode audio") from exc
         if proc.returncode != 0 or not dst.is_file():
             err = proc.stderr.decode("utf-8", errors="replace").strip()
             raise ValueError(f"ffmpeg could not decode audio: {err or proc.returncode}")

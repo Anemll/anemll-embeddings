@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,9 +25,9 @@ from api.coreai_host import (  # noqa: E402
     IMAGE_SLOTS,
     adapt_audio_features_nchw,
     adapt_audio_mask_nchw,
-    audio_soft_from_nchw,
     adapt_vision_pixels,
     adapt_vision_position_ids,
+    audio_soft_from_nchw,
     encode_interleaved,
     expand_media_placeholders,
     pad_audio_to_package,
@@ -46,15 +45,24 @@ from model.export_utils import (  # noqa: E402
 from model.load_text_model import load_sentence_transformer  # noqa: E402
 from model.multimodal_media import AUDIO_SR, write_default_media  # noqa: E402
 
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 RUN_NPY = REPO_ROOT / "model" / "_coreai_run_npy.py"
 PROMPTS = REPO_ROOT / "tests" / "fixtures" / "multimodal_prompts.json"
 TEXT_S = 128
 
 
-def _coreai_python() -> Path:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    return Path(raw) if raw else DEFAULT_COREAI_PY
+def _coreai_python(required: bool = True) -> Path | None:
+    """Core AI interpreter: ``ANEMLL_COREAI_PYTHON``, then documented locations.
+
+    Exits with setup instructions when none exists (see ``api/runtime_paths.py``).
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from api.runtime_paths import CoreAIPythonNotFound, resolve_coreai_python
+
+    try:
+        return resolve_coreai_python(required=required)
+    except CoreAIPythonNotFound as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
 
 
 def _wav_f32(path: Path) -> np.ndarray:
@@ -93,7 +101,8 @@ def _run_tower(pkg: Path, entry: str, feed: dict[str, np.ndarray], out: Path) ->
 def _load_processor(model_path: Path):
     from transformers import AutoProcessor
 
-    return AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
+    # EmbeddingGemma 2 ships no remote code (no auto_map); the processor is built in.
+    return AutoProcessor.from_pretrained(str(model_path))
 
 
 def main() -> int:

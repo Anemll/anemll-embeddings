@@ -123,11 +123,16 @@ def test_embedder_reads_env_when_args_are_none() -> None:
 
 
 def test_embedder_unset_env_passes_none() -> None:
-    saved = {key: os.environ.get(key) for key in _ENV_KEYS}
+    # Nothing downloaded (empty ANEMLL_EMBEDDINGS_HOME) and no Core AI venv
+    # anywhere documented: every default is None.
+    saved = {key: os.environ.get(key) for key in (*_ENV_KEYS, "ANEMLL_EMBEDDINGS_HOME")}
     try:
         for key in _ENV_KEYS:
             os.environ.pop(key, None)
-        with patch("api.embedder.CoreAIBackend", _StubBackend):
+        os.environ["ANEMLL_EMBEDDINGS_HOME"] = "/tmp/anemll-test-empty-home-does-not-exist"
+        with patch("api.embedder.CoreAIBackend", _StubBackend), patch(
+            "api.runtime_paths.coreai_python_candidates", lambda: ()
+        ):
             embedder = Embedder(compute="ane")
         impl = embedder._impl
         if not isinstance(impl, _StubBackend):

@@ -7,8 +7,10 @@ name = "anemll-embeddings"
 version = "0.1.0"
 description = "EmbeddingGemma 2 on Apple Core AI / Neural Engine"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
+# Ranges are the tested minor series. Exact tested versions: constraints.txt
+# (python -m pip install -e ".[runtime,demo]" -c constraints.txt).
 dependencies = [
     "numpy>=1.26",
     "pillow>=10",
@@ -16,6 +18,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Host side of inference (tokenizer, processor, embed lookup). The Core AI
+# runtime itself lives in a separate interpreter: see README "Core AI runtime".
+runtime = [
+    "torch>=2.14,<2.15",
+    "torchvision>=0.29,<0.30",
+    "transformers>=5.19,<5.20",
+    "pillow>=10",
+]
+# Sentence-Transformers reference model: fixtures, parity, export, and the
+# demo's --backend reference. Slim inference does not need it.
+reference = [
+    "sentence-transformers>=6.1,<6.2",
+]
 demo = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
@@ -25,6 +40,33 @@ demo = [
 conversion = [
     "coremltools==9.0",
 ]
+# Everything the unit suite imports.
+test = [
+    "anemll-embeddings[runtime,reference,demo]",
+    "pytest>=8",
+    "coremltools==9.0",
+]
+
+[project.scripts]
+anemll-embeddings-download = "scripts.download_models:main"
+anemll-embeddings-warmup = "scripts.warmup:main"
+anemll-embeddings-embed = "samples.embed_sentence:main"
+anemll-embeddings-demo = "demo.server:main"
 
 [tool.setuptools.packages.find]
+# Note: these are generic top-level names (api, model, ...). Fine for a
+# checkout / editable install; rename before publishing to PyPI.
 include = ["api*", "model*", "demo*", "samples*", "scripts*"]
+
+[tool.setuptools.package-data]
+# The browser demo serves these at runtime; without them a wheel install has no pages.
+demo = ["static/*"]
+model = ["*.sh"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+# Ruff's default rules, plus E402: scripts and tests put the repo root on
+# sys.path before importing project modules and mark that with `# noqa: E402`.
+extend-select = ["E402"]

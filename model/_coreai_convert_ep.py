@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import sys
 from pathlib import Path
 
 
@@ -27,8 +26,8 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        import torch
         import coreai_torch
+        import torch
         from coreai_opt.casting import cast_to_16_bit_precision
     except ImportError as exc:
         print(f"ERROR: need coreai_torch in this interpreter: {exc}")

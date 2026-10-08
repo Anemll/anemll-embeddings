@@ -2,9 +2,9 @@
 """Generate ST reference embeddings for full 740M multimodal EmbeddingGemma 2.
 
 Writes synthetic media + embeddings under ANEMLL_EMBEDDINGS_ARTIFACTS/fixtures/
-(not TB36, not git). Does not overwrite the FLOAT32 text Core ML tree.
+(not in git). Does not overwrite the FLOAT32 text Core ML tree.
 
-Environment matches T1: HF caches on TB36, artifacts on /Volumes/Models.
+Environment matches T1 (see ``model/gen_reference_fixtures.py``).
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import json
 import os
 import platform
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from model.export_utils import artifacts_root, write_json  # noqa: E402
-from model.load_multimodal_model import load_multimodal_sentence_transformer  # noqa: E402
+from model.load_multimodal_model import (  # noqa: E402
+    load_multimodal_sentence_transformer,
+)
 from model.load_text_model import DEFAULT_MODEL, ensure_hf_cache_env  # noqa: E402
 from model.multimodal_media import AUDIO_SR, write_default_media  # noqa: E402
 
@@ -122,7 +124,7 @@ def main() -> int:
     write_json(
         meta_path,
         {
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "created_at_utc": datetime.now(UTC).isoformat(),
             "host": platform.node(),
             "platform": platform.platform(),
             "python": sys.version.split()[0],

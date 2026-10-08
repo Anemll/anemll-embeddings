@@ -5,20 +5,32 @@ Copies the Google host files ``api.Embedder`` needs (tokenizer, processor /
 preprocessor configs, ``config.json``) verbatim, extracts the embedding table
 from ``model.safetensors``, and writes checksums plus ``host/SOURCE.md``.
 
+``--dest`` is the Hub staging root (default ``hf/`` in this repo); the
+files land in ``<dest>/host/``. Writes **only** under ``<dest>/host/``.
+Never writes ``embed_tokens.safetensors`` (or anything else) into ``--src``.
+Without ``--src`` the slim Google files are fetched into a temporary
+directory that is deleted when the script exits.
+
+``--license`` and ``--notice`` are required files (default:
+``hf/LICENSE`` and ``hf/NOTICE`` in this repo). They are copied into
+``host/``.
+
 Does **not** upload. Run on the Mac that will push the folder to the Hub:
 
     python scripts/prepare_hf_host_folder.py
     python scripts/prepare_hf_host_folder.py --src ~/.anemll-embeddings/embeddinggemma-2-full
+    python scripts/prepare_hf_host_folder.py --license hf/LICENSE --notice hf/NOTICE
     # then upload hf/ (README, towers.yaml, LICENSE, NOTICE, host/) to the Hub
-    # and pin scripts/download_common.py ANE_REVISION to the new commit.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shutil
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +49,8 @@ from scripts.download_common import (  # noqa: E402
     INFERENCE_HOST_ALLOW,
     INFERENCE_HOST_IGNORE,
     SLIM_EMBED_NAME,
-    ensure_slim_embed,
+    extract_embed_from_file,
+    extract_embed_from_hf,
     format_gb,
     host_folder_bytes,
     host_payload_complete,
@@ -106,19 +119,23 @@ def stage_host(*, src: Path, host: Path, license_src: Path, notice_src: Path) ->
     for name in INFERENCE_HOST_ALLOW:
         rows.append(_copy_verbatim(src, host, name))
 
+    dest_embed = host / SLIM_EMBED_NAME
     slim_src = src / SLIM_EMBED_NAME
     if slim_src.is_file():
-        shutil.copy2(slim_src, host / SLIM_EMBED_NAME)
+        shutil.copy2(slim_src, dest_embed)
         origin = ORIGIN_EXTRACTED
         upstream = (
             f"{BASE_REPO}@{BASE_REVISION}/model.safetensors "
             f"({EMBED_TENSOR_KEY}; already extracted beside the source)"
         )
     else:
-        ensure_slim_embed(src, force=True)
-        if not slim_src.is_file():
-            raise SystemExit(f"failed to extract {SLIM_EMBED_NAME}")
-        shutil.copy2(slim_src, host / SLIM_EMBED_NAME)
+        local_full = src / "model.safetensors"
+        if local_full.is_file():
+            extract_embed_from_file(local_full, dest_embed)
+        else:
+            extract_embed_from_hf(dest_embed)
+        if not dest_embed.is_file():
+            raise SystemExit(f"failed to extract {dest_embed}")
         origin = ORIGIN_EXTRACTED
         upstream = f"{BASE_REPO}@{BASE_REVISION}/model.safetensors ({EMBED_TENSOR_KEY})"
     rows.append(
@@ -160,22 +177,26 @@ def stage_host(*, src: Path, host: Path, license_src: Path, notice_src: Path) ->
     return rows
 
 
-def resolve_src(src: Path | None) -> tuple[Path, str]:
+@contextlib.contextmanager
+def resolve_src(src: Path | None) -> Iterator[tuple[Path, str]]:
+    """Yield ``(source_dir, kind)``. A downloaded source is removed on exit."""
     if src is not None:
         root = src.expanduser().resolve()
         if not root.is_dir():
             raise SystemExit(f"--src is not a directory: {root}")
-        return root, "local"
-    tmp = Path(tempfile.mkdtemp(prefix="anemll-host-src-"))
-    print(f"download slim host {BASE_REPO} @{BASE_REVISION} → {tmp}")
-    snapshot(
-        BASE_REPO,
-        BASE_REVISION,
-        tmp,
-        allow_patterns=INFERENCE_HOST_ALLOW,
-        ignore_patterns=INFERENCE_HOST_IGNORE,
-    )
-    return tmp, "downloaded"
+        yield root, "local"
+        return
+    with tempfile.TemporaryDirectory(prefix="anemll-host-src-") as raw:
+        tmp = Path(raw)
+        print(f"download slim host {BASE_REPO} @{BASE_REVISION} → {tmp} (temporary)")
+        snapshot(
+            BASE_REPO,
+            BASE_REVISION,
+            tmp,
+            allow_patterns=INFERENCE_HOST_ALLOW,
+            ignore_patterns=INFERENCE_HOST_IGNORE,
+        )
+        yield tmp, "downloaded"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -190,22 +211,37 @@ def main(argv: list[str] | None = None) -> int:
         "--dest",
         type=Path,
         default=REPO_ROOT / "hf",
-        help="HF upload staging root (host/ is written under this)",
+        help="HF upload staging root (default: hf/ in this repo). "
+        "Files are written to <dest>/host/ only.",
+    )
+    parser.add_argument(
+        "--license",
+        type=Path,
+        default=REPO_ROOT / "hf" / "LICENSE",
+        help="Apache-2.0 text copied into host/LICENSE (required file; default: hf/LICENSE)",
+    )
+    parser.add_argument(
+        "--notice",
+        type=Path,
+        default=REPO_ROOT / "hf" / "NOTICE",
+        help="NOTICE copied into host/NOTICE (required file; default: hf/NOTICE)",
     )
     args = parser.parse_args(argv)
 
     dest = args.dest.expanduser().resolve()
     dest.mkdir(parents=True, exist_ok=True)
-    license_src = dest / "LICENSE"
-    notice_src = dest / "NOTICE"
+    license_src = args.license.expanduser().resolve()
+    notice_src = args.notice.expanduser().resolve()
     if not license_src.is_file() or not notice_src.is_file():
         raise SystemExit(
-            f"expected {license_src} and {notice_src} (commit hf/LICENSE and hf/NOTICE first)"
+            "LICENSE and NOTICE are required. Pass --license and --notice "
+            f"(looked for {license_src} and {notice_src}; "
+            "defaults are hf/LICENSE and hf/NOTICE in this repo)."
         )
 
-    src, src_kind = resolve_src(args.src)
     host = dest / HOST_FOLDER
-    rows = stage_host(src=src, host=host, license_src=license_src, notice_src=notice_src)
+    with resolve_src(args.src) as (src, src_kind):
+        rows = stage_host(src=src, host=host, license_src=license_src, notice_src=notice_src)
     if not host_payload_complete(host):
         raise SystemExit(f"host/ incomplete at {host}")
 
@@ -219,8 +255,9 @@ def main(argv: list[str] | None = None) -> int:
     for row in rows:
         print(f"  {row['origin']:16} {row['bytes']:12}  {row['file']}")
     print()
-    print("Do not upload from this script. Upload hf/ (card + host/) from a Mac,")
-    print("then set ANE_REVISION in scripts/download_common.py to the new commit.")
+    note = "temporary download removed" if src_kind == "downloaded" else "source was not modified"
+    print("Wrote only under", host, f"({note}).")
+    print("Do not upload from this script. Upload hf/ (card + host/) from a Mac.")
     return 0
 
 

@@ -14,10 +14,14 @@ from typing import Any
 import torch
 from sentence_transformers import SentenceTransformer
 
-DEFAULT_MODEL = Path(
-    "/Volumes/TB36/Models/anemll-embeddings/google-embeddinggemma-2"
-)
-DEFAULT_HF_CACHE = "/Volumes/TB36/Models/anemll-embeddings/hf-cache"
+
+def _embeddings_home() -> Path:
+    raw = os.environ.get("ANEMLL_EMBEDDINGS_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".anemll-embeddings"
+
+
+# Full checkpoint written by scripts/download_export_assets.py.
+DEFAULT_MODEL = _embeddings_home() / "embeddinggemma-2-full"
 TEXT_ONLY_CONFIG_KWARGS: dict[str, Any] = {
     "vision_config": None,
     "audio_config": None,
@@ -25,9 +29,15 @@ TEXT_ONLY_CONFIG_KWARGS: dict[str, Any] = {
 
 
 def ensure_hf_cache_env() -> None:
-    """Pin HF caches to TB36 when unset (never download into the git checkout)."""
-    os.environ.setdefault("HF_HOME", DEFAULT_HF_CACHE)
-    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", DEFAULT_HF_CACHE)
+    """Point the HF caches at ``$ANEMLL_HF_CACHE`` when that is set.
+
+    Unset leaves Hugging Face's own defaults (``HF_HOME`` or
+    ``~/.cache/huggingface``) alone. Either way nothing lands in the checkout.
+    """
+    cache = os.environ.get("ANEMLL_HF_CACHE")
+    if cache:
+        os.environ.setdefault("HF_HOME", cache)
+        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", cache)
 
 
 def resolve_dtype_device(
@@ -41,7 +51,7 @@ def resolve_dtype_device(
             t = torch.tensor([1.0], dtype=torch.bfloat16, device="mps")
             _ = (t * 2).item()
             return torch.bfloat16, "mps"
-        except Exception:
+        except Exception:  # noqa: BLE001 - bf16-on-MPS probe; fall back to fp32
             return torch.float32, "mps"
     if torch.cuda.is_available():
         return torch.float32, "cuda"
@@ -72,7 +82,7 @@ def load_sentence_transformer(
     *,
     dtype: torch.dtype | None = None,
     device: str | None = None,
-    trust_remote_code: bool = True,
+    trust_remote_code: bool = False,
 ) -> tuple[SentenceTransformer, dict[str, Any]]:
     """Load text-only SentenceTransformer; return (model, load_meta).
 
@@ -112,7 +122,7 @@ def load_sentence_transformer(
 def get_text_backbone(st_model: SentenceTransformer):
     """Return ``EmbeddingGemma2TextModel`` (language_model) from an ST stack."""
     transformer = st_model[0]
-    auto = getattr(transformer, "auto_model", None) or getattr(transformer, "model")
+    auto = getattr(transformer, "auto_model", None) or transformer.model
     if not hasattr(auto, "language_model"):
         raise TypeError(
             f"Expected EmbeddingGemma2Model with language_model; got {type(auto)}"

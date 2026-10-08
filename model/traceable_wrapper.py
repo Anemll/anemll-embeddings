@@ -8,8 +8,8 @@ traced graph always materializes pad + sliding-window bias.
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from .embed_wrapper import EmbeddingGemma2Wrapper, MaskedMeanPool
 from .export_utils import (

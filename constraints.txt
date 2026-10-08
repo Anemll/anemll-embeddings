@@ -1,0 +1,24 @@
+# Exact versions the unit suite and the M3/M4/M5 runs were tested with
+# (host venv, Python 3.12; CI also runs 3.11, the minimum). Use with:
+#   python -m pip install -e ".[runtime,demo]" -c constraints.txt
+# The Core AI interpreter is separate (README "Core AI runtime"):
+#   coreai-core==1.0.0b2 (Python 3.13)
+torch==2.14.1
+torchvision==0.29.1
+transformers==5.19.0
+tokenizers==0.23.2
+safetensors==0.8.0
+sentence-transformers==6.1.0
+huggingface-hub==1.33.0
+numpy==2.5.3; python_version >= "3.12"
+# numpy 2.5 needs Python 3.12; 2.4.6 is the tested build on 3.11
+numpy==2.4.6; python_version < "3.12"
+pillow==12.3.0
+fastapi==0.143.0
+starlette==1.7.0
+uvicorn==0.54.0
+python-multipart==0.0.32
+httpx==0.28.1
+pytest==9.1.1
+coremltools==9.0
+ruff==0.16.10

@@ -1,5 +1,6 @@
-# Showcase server. The Mac host venv already has torch, transformers, and
-# sentence-transformers; those are not required for --backend mock.
+# Showcase server only (same as the `demo` extra: pip install -e ".[demo]").
+# --backend coreai also needs the `runtime` extra; --backend reference needs
+# `reference`. Exact tested versions: ../constraints.txt
 numpy>=1.26
 pillow>=10
 fastapi>=0.110

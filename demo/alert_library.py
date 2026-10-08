@@ -14,8 +14,9 @@ import re
 import shutil
 import threading
 import wave
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -23,7 +24,13 @@ from PIL import Image
 from api.types import EmbedResult
 from demo.alert_catalog import REFERENCES, catalog_items
 from demo.alert_score import l2
-from demo.media_io import AUDIO_SR, load_audio_bytes, read_wav_bytes, resample_linear, save_jpeg
+from demo.media_io import (
+    AUDIO_SR,
+    load_audio_bytes,
+    read_wav_bytes,
+    resample_linear,
+    save_jpeg,
+)
 
 _ID = re.compile(r"^[a-z0-9-]{1,40}$")
 
@@ -174,7 +181,7 @@ class AlertLibrary:
         return unit, float(latency_ms)
 
     def embed_text(self, text: str, role: str, embed: Callable[[str, str], tuple[np.ndarray, float]]) -> tuple[np.ndarray, float]:
-        digest = hashlib.sha256(f"{role}\n{text}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{role}\n{text}".encode()).hexdigest()
         key = f"text:{digest}"
         with self._lock:
             hit = self._vectors.get(key)

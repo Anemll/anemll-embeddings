@@ -23,8 +23,8 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "model"))
 
 from _coreai_run_npy import parity_compute  # noqa: E402
-import api.coreai_worker as coreai_worker  # noqa: E402
-from demo.backends.coreai import apply_compute_env  # noqa: E402
+
+from api import coreai_worker  # noqa: E402
 from api.coreai_worker import (  # noqa: E402
     _manifest_label,
     _placement,
@@ -32,12 +32,18 @@ from api.coreai_worker import (  # noqa: E402
     package_main_hash_hex,
 )
 from api.feeds import audio_tower_feed  # noqa: E402
-from samples.fetch_corpus import _trim_with_wave, audio_skip_reason, fetch  # noqa: E402
 from demo.alert_catalog import default_rules  # noqa: E402
-from demo.alert_score import change_score, suggest_margin, suggest_midpoint, suggest_split  # noqa: E402
-from samples.fetch_alert import license_ok  # noqa: E402
+from demo.alert_score import (  # noqa: E402
+    change_score,
+    suggest_margin,
+    suggest_midpoint,
+    suggest_split,
+)
+from demo.backends.coreai import apply_compute_env  # noqa: E402
 from demo.server import create_app  # noqa: E402
 from demo.settings import DEFAULT_PORT, server_compute  # noqa: E402
+from samples.fetch_alert import license_ok  # noqa: E402
+from samples.fetch_corpus import _trim_with_wave, audio_skip_reason, fetch  # noqa: E402
 
 
 def _fail(msg: str) -> None:
@@ -578,7 +584,6 @@ def test_alert(tmp: Path) -> None:
         if "Dog barking" not in [row["chip"] for row in by_id["bark"]["rules"]]:
             _fail("bark rules")
         meow_cmp = by_id["meow"]["comparisons"]
-        bark_cmp = by_id["bark"]["comparisons"]
         if not meow_cmp or meow_cmp[0]["label"] != "a cat meowing":
             _fail(str(meow_cmp))
         if "dog" not in payload["suggested_thresholds"] or payload["compare_threshold"] is None:

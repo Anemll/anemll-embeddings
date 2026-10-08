@@ -119,18 +119,43 @@ class MicCapture {
   }
 }
 
+/* Escape text for an HTML string. Prefer textContent / DOM nodes for
+   anything a user typed; this is for the few fixed templates below. */
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+
+/* Build an element with text content only (never parsed as HTML). */
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
+function chipNode(modality) {
+  return el("span", `chip ${String(modality || "").replace(/[^a-z]/gi, "")}`, modality);
+}
+
 function chip(modality) {
-  return `<span class="chip ${modality}">${modality}</span>`;
+  const safe = escapeHtml(modality);
+  return `<span class="chip ${safe}">${safe}</span>`;
 }
 
 function mediaBlock(item) {
   if (item.modality === "image" && item.media_url) {
-    return `<img class="thumb" alt="" src="${item.media_url}">`;
+    return `<img class="thumb" alt="" src="${escapeHtml(item.media_url)}">`;
   }
   if (item.modality === "audio" && item.media_url) {
     return `<div class="placeholder">audio</div>`;
   }
-  return `<div class="placeholder">${item.modality}</div>`;
+  return `<div class="placeholder">${escapeHtml(item.modality)}</div>`;
 }
 
 function labelOf(item) {

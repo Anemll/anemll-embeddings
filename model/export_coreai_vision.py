@@ -21,12 +21,21 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
 
 
-def _coreai_python() -> Path:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    return Path(raw) if raw else DEFAULT_COREAI_PY
+def _coreai_python(required: bool = True) -> Path | None:
+    """Core AI interpreter: ``ANEMLL_COREAI_PYTHON``, then documented locations.
+
+    Exits with setup instructions when none exists (see ``api/runtime_paths.py``).
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from api.runtime_paths import CoreAIPythonNotFound, resolve_coreai_python
+
+    try:
+        return resolve_coreai_python(required=required)
+    except CoreAIPythonNotFound as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
 
 
 def _have_coreai() -> bool:
@@ -45,7 +54,7 @@ def _reexec_if_needed(argv: list[str]) -> None:
     if not py.is_file():
         print(
             "ERROR: coreai_torch missing and ANEMLL_COREAI_PYTHON not found at "
-            f"{py}. Point it at forge coreai/.venv/bin/python. "
+            f"{py}. Point it at a venv with coreai-torch (anemll-forge coreai/.venv). "
             "Do not run forge.py convert."
         )
         raise SystemExit(2)
@@ -55,10 +64,10 @@ def _reexec_if_needed(argv: list[str]) -> None:
 
 
 def _probe_aimodel(out: Path) -> None:
-    import torch
-    import torch.nn as nn
     import coreai_torch
+    import torch
     from coreai_opt.casting import cast_to_16_bit_precision
+    from torch import nn
 
     class Tiny(nn.Module):
         def __init__(self) -> None:
@@ -99,7 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args, _unknown = parser.parse_known_args(argv[1:])
 
-    artifacts = Path(os.environ.get("ANEMLL_EMBEDDINGS_ARTIFACTS", "/Volumes/Models/anemll-embeddings/artifacts"))
+    home = Path(os.environ.get("ANEMLL_EMBEDDINGS_HOME") or Path.home() / ".anemll-embeddings").expanduser()
+    artifacts = Path(os.environ.get("ANEMLL_EMBEDDINGS_ARTIFACTS") or home / "artifacts").expanduser()
     out = args.out or (artifacts / "coreai" / "vision_probe.aimodel")
 
     if not args.probe:
@@ -108,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             "Pass --probe to compile a tiny conv package with the forge Core AI "
             "venv. Real vision_tower / audio_tower export follows ST fixtures."
         )
-        print(f"ANEMLL_COREAI_PYTHON={_coreai_python()}")
+        print(f"ANEMLL_COREAI_PYTHON={_coreai_python(required=False)}")
         print(f"coreai_torch_here={_have_coreai()}")
         return 0
 

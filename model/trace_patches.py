@@ -14,10 +14,10 @@ scale, so they stay.
 
 from __future__ import annotations
 
-import transformers.models.embedding_gemma2.modeling_embedding_gemma2 as eg2
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+import transformers.models.embedding_gemma2.modeling_embedding_gemma2 as eg2
+from torch import nn
 
 from model.audio_export_patches import swap_last_two, swap_mid_dims
 
@@ -124,7 +124,7 @@ def _make_eager_attention(batch: int, seq_len: int):
         key,
         value,
         attention_mask,
-        dropout: float | int = 0.0,
+        dropout: float = 0.0,
         scaling: float | None = None,
         softcap: float | None = None,
         **kwargs,

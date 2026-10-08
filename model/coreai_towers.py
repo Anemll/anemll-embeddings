@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Processor defaults (64² PNG still resizes to this patch grid).
 VISION_PATCHES = 2520

@@ -14,11 +14,9 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api.host_embed import (  # noqa: E402
-    EMBED_SCALE as HOST_EMBED_SCALE,
-    SLIM_EMBED_NAME as HOST_SLIM_NAME,
-    load_slim_host,
-)
+from api.host_embed import EMBED_SCALE as HOST_EMBED_SCALE  # noqa: E402
+from api.host_embed import SLIM_EMBED_NAME as HOST_SLIM_NAME  # noqa: E402
+from api.host_embed import load_slim_host  # noqa: E402
 from scripts.download_common import (  # noqa: E402
     ANE_ALLOW,
     ANE_BYTES,
@@ -37,9 +35,9 @@ from scripts.download_common import (  # noqa: E402
     TOWERS,
     all_bundles_complete,
     bundle_complete,
-    env_exports,
     ensure_slim_embed,
     ensure_symlink,
+    env_exports,
     export_download_bytes,
     extract_embed_from_bytes,
     extract_embed_from_file,
@@ -175,6 +173,8 @@ def test_inference_allow_excludes_full_weights() -> None:
         _fail("host allow should include the slim embed table")
     if matches_hf_patterns("model.safetensors", HOST_FOLDER_ALLOW, None):
         _fail("host allow should not match a root model.safetensors")
+    if ANE_REVISION != "90d2ab497d423bba4ee29947b274c787bb4a1f0a":
+        _fail(f"ANE_REVISION {ANE_REVISION} is not the uploaded host/ pin")
     if SLIM_EMBED_NAME != HOST_SLIM_NAME:
         _fail("slim filename drifted between host and download")
     if abs(EMBED_SCALE - HOST_EMBED_SCALE) > 1e-9:
@@ -249,7 +249,10 @@ def test_download_host_prefers_mirrored(tmp: Path) -> None:
     def fake(**kwargs):
         calls.append(kwargs)
 
-    with patch("scripts.download_common._hf_snapshot_download", fake):
+    # Dummy payload: checksum verification is covered in test_release_hardening.
+    with patch("scripts.download_common._hf_snapshot_download", fake), patch(
+        "scripts.download_models.verify_mirrored_host", lambda *a, **k: "skipped"
+    ):
         status = download_host(tmp / "embeddinggemma-2", ane_dir=ane, force=True)
     if status != "anemll-host":
         _fail(f"status {status}")
@@ -388,6 +391,8 @@ def test_prepare_hf_host_folder(tmp: Path) -> None:
         _fail("extracted embed missing")
     if (host / "LICENSE").read_text(encoding="utf-8") != "apache\n":
         _fail("LICENSE not copied into host/")
+    if (src / SLIM_EMBED_NAME).exists():
+        _fail("prepare must not write embed_tokens.safetensors into --src")
 
 
 def test_ensure_slim_prefers_local_full(tmp: Path) -> None:

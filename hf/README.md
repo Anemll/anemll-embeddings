@@ -66,18 +66,20 @@ Converted from `google/embeddinggemma-2` at revision
 - vision and audio feed the text backbone as soft tokens interleaved with the text tokens (the host builds `inputs_embeds`)
 - fixed sequence lengths: 2520 patches / 280 frames / 320 tokens
 
-## Validation (M4 Pro, macOS 27.0)
+## Validation (M4 Pro and M3 Ultra, macOS 27.0)
 
-- All three towers run **fully on the ANE** (no GPU or CPU regions).
+- All three towers run **fully on the ANE** (no GPU or CPU regions) on
+  M4 Pro and M3 Ultra with macOS 27.0.
 - Cosine of each tower's ANE output vs its FP32 CPU reference:
   vision **0.999954**, audio **0.999927**, text_embeds **0.999963**.
 
 ## Limitations
 
-- Validated only on **M4 Pro with macOS 27.0**.
-- On **M5 with macOS 27.2**, the ANE pre-check rejects the vision and text
-  packages ("Parsing failed, invalid MLIR-MPS program"), and Core AI falls
-  back to the GPU.
+- Fully-ANE placement is validated on **M4 Pro and M3 Ultra with macOS 27.0**.
+- On **M5 with macOS 27.2**, only audio runs on the ANE. The ANE pre-check
+  rejects the vision and text packages ("Parsing failed, invalid MLIR-MPS
+  program"), and Core AI falls back to the GPU. Embeddings still match the
+  reference (cosine 0.99994–0.99997).
 - Video is not converted.
 
 ## Usage
@@ -87,12 +89,26 @@ One download from this repo is enough for inference (towers + `host/`).
 
 ```bash
 git clone https://github.com/Anemll/anemll-embeddings && cd anemll-embeddings
-python scripts/download_models.py
-# prints the export lines; add them to ~/.zshrc or source them
-python scripts/warmup.py
+python -m pip install -e ".[runtime]" -c constraints.txt   # host venv, Python 3.11+
+
+# Core AI runtime (separate interpreter that runs the .aimodel packages)
+python3.13 -m venv ~/.anemll-embeddings/coreai-venv
+~/.anemll-embeddings/coreai-venv/bin/python -m pip install "coreai-core==1.0.0b2" numpy
+
+python scripts/download_models.py   # verifies SHA-256 of towers + host/
+python scripts/warmup.py --require-ane
 ```
 
-`download_models.py` prefers `host/` here. If a pin does not have that
+With the default `~/.anemll-embeddings` layout no exports are needed. With a
+custom `--dest`, add the printed export lines to `~/.zshrc` or source them.
+`--require-ane` exits non-zero on Macs where a tower is not fully on the
+Neural Engine (currently vision and text on M5 / macOS 27.2).
+
+The tower and `host/` files are byte-identical to commit
+`47d05aa218a227e887858fe571f8deb2f2a1d532`; later commits only update this
+card. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
+`scripts/download_common.py`) and checks every tower and `host/` file against
+SHA-256 digests on download. `download_models.py` prefers `host/` here. If a pin does not have that
 folder yet, it falls back to the slim files on
 `google/embeddinggemma-2` (still not the full `model.safetensors`).
 

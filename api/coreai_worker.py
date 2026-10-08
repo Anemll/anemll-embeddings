@@ -5,9 +5,10 @@ The showcase server (torch / transformers) talks to this process over
 stdin/stdout JSON. Forwards themselves are timed here so the latency badge
 is the tower time, not the pipe.
 
-Re-execs into ``ANEMLL_COREAI_PYTHON`` when ``coreai.runtime`` is missing,
-same as ``model/_coreai_run_npy.py``. Logs go to stderr; stdout is JSON
-lines only.
+Re-execs into the Core AI interpreter (``ANEMLL_COREAI_PYTHON``, then the
+documented locations in ``api/runtime_paths.py``) when ``coreai.runtime`` is
+missing. If none is found it replies with an actionable error and exits.
+Logs go to stderr; stdout is JSON lines only.
 """
 
 from __future__ import annotations
@@ -22,21 +23,29 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_COREAI_PY = Path("/Users/anemll/anemll-forge/coreai/.venv/bin/python")
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-
-def _coreai_python() -> Path:
-    raw = os.environ.get("ANEMLL_COREAI_PYTHON")
-    return Path(raw) if raw else DEFAULT_COREAI_PY
+from api.runtime_paths import CoreAIPythonNotFound, resolve_coreai_python  # noqa: E402
 
 
 def _reexec_if_needed() -> None:
     try:
         import coreai.runtime  # noqa: F401
     except ImportError:
-        py = _coreai_python()
-        if not py.is_file():
-            _reply({"ok": False, "error": f"coreai python missing at {py}"})
+        try:
+            py = resolve_coreai_python(required=True)
+        except CoreAIPythonNotFound as exc:
+            _reply({"ok": False, "error": str(exc)})
+            raise SystemExit(1) from exc
+        if Path(py).resolve() == Path(sys.executable).resolve():
+            _reply(
+                {
+                    "ok": False,
+                    "error": f"{py} cannot import coreai.runtime. "
+                    "Install coreai-core into that venv or point ANEMLL_COREAI_PYTHON elsewhere.",
+                }
+            )
             raise SystemExit(1)
         os.execv(str(py), [str(py), *sys.argv])
 
@@ -61,7 +70,14 @@ from coreai_smoke import (  # noqa: E402
     placement_from_cache_manifest,
 )
 
-CACHE = Path.home() / "Library/Caches/coreai-cache"
+
+def _coreai_cache_dir() -> Path:
+    raw = os.environ.get("CFFIXED_USER_HOME")
+    home = Path(raw).expanduser() if raw else Path.home()
+    return home / "Library" / "Caches" / "coreai-cache"
+
+
+CACHE = _coreai_cache_dir()
 TOWER_ORDER = ("vision", "audio", "text")
 
 
@@ -165,10 +181,10 @@ def _placement(model, started: float, package: Path) -> str:
             return "fullyOnANE"
     devices: list[str] = []
     try:
-        raw = model._debug_infos  # noqa: SLF001
+        raw = model._debug_infos
         blob = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
         devices = extract_devices_from_debug(json.loads(blob))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - debug info is optional; log and continue
         _log(f"debug_infos: {type(exc).__name__}: {exc}")
     # Warm starts do not rewrite the cache, so a time window around ``started``
     # is empty and the globally newest manifest can belong to another compile.
@@ -191,7 +207,7 @@ def _desc_dtypes(fn) -> dict[str, str]:
     for name in list(fn.desc.input_names):
         try:
             out[name] = str(fn.desc.input_descriptor(name).dtype)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - best-effort dtype probe
             continue
     return out
 
@@ -283,8 +299,8 @@ async def _serve() -> None:
                 tower = req["tower"]
                 if tower not in fns:
                     raise KeyError(f"tower {tower!r} is not loaded")
-                data = np.load(req["npz"])
-                feed = {key: data[key] for key in data.files}
+                with np.load(req["npz"]) as data:
+                    feed = {key: data[key] for key in data.files}
                 arr, elapsed = await _forward(fns[tower], feed)
                 out = Path(req["out"])
                 out.parent.mkdir(parents=True, exist_ok=True)
@@ -302,7 +318,7 @@ async def _serve() -> None:
                 break
             else:
                 _reply({"ok": False, "error": f"unknown cmd {cmd!r}"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the worker must reply, not die
             _log(f"worker error: {type(exc).__name__}: {exc}")
             _reply({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
