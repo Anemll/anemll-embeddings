@@ -26,8 +26,9 @@ from api.runtime_paths import (
 )
 
 ANE_REPO = "anemll/anemll-embeddinggemma-2-ane"
-# Towers + mirrored host/ on the Hub. Override with ANEMLL_ANE_REVISION.
-ANE_REVISION = "47d05aa218a227e887858fe571f8deb2f2a1d532"
+# Towers + mirrored host/ on the Hub (v0.1.0 card; towers and host/ are
+# byte-identical to 47d05aa). Override with ANEMLL_ANE_REVISION.
+ANE_REVISION = "90d2ab497d423bba4ee29947b274c787bb4a1f0a"
 BASE_REPO = "google/embeddinggemma-2"
 BASE_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 HOST_FOLDER = "host"

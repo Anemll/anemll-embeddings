@@ -28,7 +28,7 @@ python scripts/warmup.py --require-ane
 
 ## Packages
 
-Hugging Face: `anemll/anemll-embeddinggemma-2-ane` @ `<ANE_REVISION>` (towers +
+Hugging Face: `anemll/anemll-embeddinggemma-2-ane` @ `90d2ab497d423bba4ee29947b274c787bb4a1f0a` (towers +
 `host/`), verified by SHA-256 on download.
 
 ## Highlights

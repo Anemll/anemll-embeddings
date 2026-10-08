@@ -13,6 +13,9 @@ All notable changes to this project are documented here.
   duration caps; `ffmpeg` timeout.
 - Downloads are verified against SHA-256 digests tracked in the repo before the
   revision marker is written; new `download_models.py --verify`.
+- `ANE_REVISION` pinned to Hugging Face commit
+  `90d2ab497d423bba4ee29947b274c787bb4a1f0a` (updated model card; towers and
+  `host/` byte-identical to `47d05aa`).
 - `trust_remote_code` disabled everywhere.
 
 ### Added
