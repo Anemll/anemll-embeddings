@@ -409,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--compute",
         default=None,
-        help="coreai device: ane (default) or cpu. Parity stays CPU unless ANEMLL_COREAI_COMPUTE=ane.",
+        help="coreai device: ane (default) or cpu. Reads --compute / ANEMLL_DEMO_COMPUTE, not shell ANEMLL_COREAI_COMPUTE.",
     )
     args = parser.parse_args(argv)
     app = create_app(
