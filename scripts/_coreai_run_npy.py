@@ -34,9 +34,17 @@ _reexec_if_needed()
 
 
 async def _run(pkg: Path, entry: str, feed: dict[str, np.ndarray], out: Path) -> None:
-    from coreai.runtime import AIModel, NDArray, SpecializationOptions
+    from coreai.runtime import AIModel, ComputeUnitKind, NDArray, SpecializationOptions
 
-    opts = SpecializationOptions.cpu_only() if SpecializationOptions.is_supported() else None
+    opts = None
+    if SpecializationOptions.is_supported():
+        # ANEMLL_COREAI_COMPUTE=ane runs the parity path on the Neural Engine.
+        if os.environ.get("ANEMLL_COREAI_COMPUTE", "cpu") == "ane":
+            opts = SpecializationOptions.from_preferred_compute_unit_kind(
+                ComputeUnitKind.neural_engine()
+            )
+        else:
+            opts = SpecializationOptions.cpu_only()
     model = await AIModel.load(pkg, specialization_options=opts) if opts else await AIModel.load(pkg)
     names = list(model.function_names)
     fn_name = entry if entry in names else names[0]

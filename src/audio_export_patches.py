@@ -13,7 +13,10 @@
 
 from __future__ import annotations
 
+import functools
 from typing import Any
+
+import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -78,6 +81,16 @@ def window_onehot(
     return torch.relu(1.0 - (idx.unsqueeze(-1) - slots).abs())
 
 
+@functools.lru_cache(maxsize=None)
+def _swap_permutation(dim_a: int, dim_b: int) -> np.ndarray:
+    """``[A*B, A*B]`` 0/1 matrix mapping row ``b*A + a`` to ``a*B + b``."""
+    n = dim_a * dim_b
+    perm = np.zeros((n, n), dtype=np.float32)
+    src = [a * dim_b + b for b in range(dim_b) for a in range(dim_a)]
+    perm[np.arange(n), src] = 1.0
+    return perm
+
+
 def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
     """``[N, A, B, D] → [N, B, A, D]`` via left one-hot matmul (no transpose).
 
@@ -93,10 +106,11 @@ def swap_mid_dims(x: torch.Tensor) -> torch.Tensor:
         # cast16) and the (A*B)^2 one-hot is huge: the conv stem's swap was
         # 17920^2. Use a plain transpose.
         return x.transpose(1, 2).contiguous()
-    src_idx = [a * dim_b + b for b in range(dim_b) for a in range(dim_a)]
-    src = torch.tensor(src_idx, device=x.device, dtype=x.dtype)
-    slots = torch.arange(dim_a * dim_b, device=x.device, dtype=x.dtype)
-    onehot = torch.relu(1.0 - (src.unsqueeze(-1) - slots).abs())
+    # Exact 0/1 permutation built on the host, so the graph sees a constant
+    # weight. Computed in-graph (relu of index math) it stayed a computed
+    # tensor, and the ANE rejects matmul with a computed left operand
+    # ("Unsupported mps.matmul": text_embeds went 1 -> 38 ANE regions).
+    onehot = torch.from_numpy(_swap_permutation(dim_a, dim_b)).to(device=x.device, dtype=x.dtype)
     flat = x.reshape(batch, dim_a * dim_b, last)
     return (onehot @ flat).reshape(batch, dim_b, dim_a, last)
 
