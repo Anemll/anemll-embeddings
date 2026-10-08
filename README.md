@@ -211,4 +211,6 @@ I/O names are fixed: `input_ids` and `attention_mask` in (`[1, S]`, int32), `emb
 
 ## License
 
-Apache License 2.0 — see `LICENSE.note`. EmbeddingGemma upstream terms also apply to the model weights.
+The software in this repository is [MIT](LICENSE), Copyright (c) 2026 Anemll LLC.
+
+The model weights — EmbeddingGemma 2 and our Core AI conversions, published at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) — are under Google's license terms for the base model, not MIT.
