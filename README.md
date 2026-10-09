@@ -272,6 +272,7 @@ The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 - Fully-ANE placement is validated on M4 Pro and M3 Ultra running macOS 27.0.
 - On M5 / macOS 27.2 all three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with `invalid MLIR-MPS program`).
 - Audio clips must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips error instead of returning a bad vector.
+- Python only for now. Swift support coming soon (a short macOS Swift demo using Core AI).
 - There is no video package yet. `<|video|>` fixtures are skipped.
 - Weights are not in git. Use `scripts/download_models.py` for inference (~1.49 GB). Use `scripts/download_export_assets.py` only if you will re-convert. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms and the [ANE package card](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) before you download.
 - The demo’s microphone needs `http://127.0.0.1` or HTTPS. A plain `http://<lan-ip>` page cannot record.
