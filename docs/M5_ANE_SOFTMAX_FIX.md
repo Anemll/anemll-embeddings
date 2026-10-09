@@ -3,10 +3,9 @@
 Status: verified on Apple M5 (macOS 27.2), M4 Pro and M3 Ultra (macOS 27.0).
 All three towers are fully on the ANE on all three Macs. Text latency is
 unchanged on 27.0; vision is 22-34% slower there. See
-[Verification on macOS 27.0](#verification-on-macos-270). The new towers are
-published on Hugging Face only after that trade-off is accepted; until then the
-`ANE_REVISION` pin and digests in `scripts/download_common.py` point at the
-older towers.
+[Verification on macOS 27.0](#verification-on-macos-270). Option 1 below was
+chosen: the M5 export of both towers is published for every Mac at Hugging Face
+revision `18e1b7e85cdf0c58d924c5d270c7a4be1a40159a` (`ANE_REVISION`).
 
 ## Summary
 
@@ -256,9 +255,8 @@ text and 56 s for vision on the M5.
 
 ## Open questions
 
-- Vision is 22-34% slower on 27.0 with the unfused softmax. Pick one of the
-  options in [Verification on macOS 27.0](#verification-on-macos-270) before
-  publishing the new vision tower.
+- Vision is 22-34% slower on 27.0 with the unfused softmax (option 1 was
+  shipped). Recovering that speed (option 4) is open.
 - The ANE is slower than the GPU on the M5 (text 33 vs 25 ms, vision 429 vs
   103 ms). Decide whether 27.2 should stay ANE-pinned or follow the hardware.
 - Tuning of the unfused attention (tiling, fusing steps) was not attempted.
