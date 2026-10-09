@@ -5,6 +5,9 @@ Mirrors ``model/parity_coreai_host.py``:
 * vision ``vision_s280`` — processor pixels and position ids (pads stay ``-1``)
 * audio ``audio_s280`` — processor mel and the real keep-mask, not all ones
 * text ``text_embeds_s320`` — host token lookup, soft-token scatter, real mask
+* optional text buckets ``text_embeds_s32`` ... ``s256`` and packed
+  ``text_pack_256x8`` (``api/text_batch.py``) when their packages sit next to
+  the main three
 
 The ``.aimodel`` packages stay loaded in a resident worker
 (``api/coreai_worker.py``). This module is the host side only.
@@ -18,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -46,6 +50,18 @@ from api.runtime_paths import (
 )
 from api.runtime_paths import default_artifacts as _default_artifacts
 from api.runtime_paths import default_model as _default_model
+from api.text_batch import (
+    TextBatchStats,
+    bucket_feed,
+    default_tower_ms,
+    extra_text_packages,
+    pack_feed,
+    parse_text_function,
+    pick_bucket,
+    plan_cost,
+    truncate_dim,
+    unit_rows,
+)
 from api.types import DIM, EmbedResult, TowerHealth
 
 AUDIO_SR = 16000
@@ -71,8 +87,16 @@ def package_paths(artifacts: Path) -> dict[str, Path]:
 class CoreAIWorkerClient:
     """One long-lived ``api/coreai_worker.py`` process."""
 
-    def __init__(self, packages: dict[str, Path], *, compute: str, python: Path | None) -> None:
+    def __init__(
+        self,
+        packages: dict[str, Path],
+        *,
+        compute: str,
+        python: Path | None,
+        text_packages: list[Path] | None = None,
+    ) -> None:
         self.packages = packages
+        self.text_packages = list(text_packages or [])
         self.compute = compute
         self.python = python
         self._proc: subprocess.Popen[str] | None = None
@@ -103,6 +127,7 @@ class CoreAIWorkerClient:
                 "cmd": "load",
                 "compute": self.compute,
                 "packages": {key: str(path) for key, path in self.packages.items()},
+                "text_packages": [str(path) for path in self.text_packages],
             }
         )
         return self.report
@@ -198,6 +223,7 @@ class CoreAIBackend:
         processor: Any | None = None,
         text_model: Any | None = None,
         prompts: dict[str, str] | None = None,
+        text_buckets: bool = True,
     ) -> None:
         self.artifacts = artifacts
         self.model_path = model_path
@@ -215,6 +241,16 @@ class CoreAIBackend:
         self._towers: list[TowerHealth] = []
         self._ready = False
         self._owns_runner = False
+        self._use_extras = bool(text_buckets) and os.environ.get(
+            "ANEMLL_TEXT_BUCKETS", "1"
+        ).strip() not in {"0", "false", "no"}
+        # S -> worker tower key. 320 is the main text package.
+        self._buckets: dict[int, str] = {TEXT_EMBEDS_S: "text"}
+        # (N tokens, T texts, worker tower key) for packed towers.
+        self._packs: list[tuple[int, int, str]] = []
+        # Warm latency per worker tower key, for choosing a plan.
+        self._tower_ms: dict[str, float] = {}
+        self.last_batch: TextBatchStats | None = None
 
     def warmup(self) -> dict:
         if self._ready:
@@ -236,8 +272,14 @@ class CoreAIBackend:
                     + ", ".join(missing)
                     + " (run `python scripts/download_models.py`)"
                 )
+            extras = (
+                extra_text_packages(Path(self.artifacts) / "coreai") if self._use_extras else []
+            )
             self._runner = CoreAIWorkerClient(
-                packages, compute=self.compute, python=worker_python(self.coreai_python)
+                packages,
+                compute=self.compute,
+                python=worker_python(self.coreai_python),
+                text_packages=extras,
             )
             self._owns_runner = True
         report = self._runner.startup()
@@ -253,10 +295,37 @@ class CoreAIBackend:
             )
             for name, row in towers.items()
         ]
+        self._register_text_towers(towers)
         if self._proc is None or self._text is None:
             self._load_host()
         self._ready = True
         return self.health()
+
+    def _register_text_towers(self, towers: dict[str, Any]) -> None:
+        """Remember which loaded functions are text buckets or packed towers."""
+        main = towers.get("text_embeds_s320") or {}
+        self._tower_ms["text"] = float(main.get("warm_ms") or default_tower_ms(TEXT_EMBEDS_S))
+        if not self._use_extras:
+            return
+        for name, row in towers.items():
+            info = parse_text_function(str(name))
+            if info is None or not row.get("loaded", True) or name == "text_embeds_s320":
+                continue
+            # Only towers that landed on the ANE; a GPU/CPU fallback would be
+            # slower than the main package.
+            if self.compute == "ane" and row.get("placement") not in (None, "fullyOnANE"):
+                continue
+            kind, size, texts = info
+            self._tower_ms[str(name)] = float(row.get("warm_ms") or default_tower_ms(size))
+            if kind == "bucket":
+                self._buckets[size] = str(name)
+            else:
+                self._packs.append((size, texts, str(name)))
+        self._packs.sort()
+
+    def text_towers(self) -> dict[str, Any]:
+        """Loaded text buckets (S -> tower) and packed towers (N, T, tower)."""
+        return {"buckets": dict(sorted(self._buckets.items())), "packs": list(self._packs)}
 
     def health(self) -> dict:
         return {
@@ -265,6 +334,8 @@ class CoreAIBackend:
             "dim": self.dim,
             "compute": self.compute,
             "towers": [row.as_dict() for row in self._towers],
+            "text_buckets": sorted(self._buckets),
+            "text_packs": [f"{n}x{t}" for n, t, _name in self._packs],
         }
 
     def close(self) -> None:
@@ -282,6 +353,12 @@ class CoreAIBackend:
     def embed_audio(self, wav: np.ndarray, sample_rate: int) -> EmbedResult:
         with self._lock:
             return self._embed_audio(wav, sample_rate)
+
+    def embed_texts(
+        self, texts: list[str], *, role: str, pack: bool = True
+    ) -> tuple[np.ndarray, TextBatchStats]:
+        with self._lock:
+            return self._embed_texts(list(texts), role=role, pack=pack)
 
     def _load_host(self) -> None:
         # Checkpoint stack is the Mac host venv. Tests inject a processor and
@@ -331,7 +408,8 @@ class CoreAIBackend:
 
     def _run_text(self, embeds, mask) -> tuple[np.ndarray, float]:
         valid = int(mask.sum())
-        embeds, mask = pad_embeds_to_package(embeds, mask, seq_len=TEXT_EMBEDS_S)
+        seq_len = pick_bucket(valid, self._buckets) or TEXT_EMBEDS_S
+        embeds, mask = pad_embeds_to_package(embeds, mask, seq_len=seq_len)
         packed = mask.detach().cpu().numpy()
         assert_text_mask_preserved(valid, packed)
         feed = {
@@ -340,8 +418,64 @@ class CoreAIBackend:
             ),
             "attention_mask": np.ascontiguousarray(packed.astype(np.float16, copy=False)),
         }
-        raw, elapsed = self._runner.forward("text", feed)
+        raw, elapsed = self._runner.forward(self._buckets.get(seq_len, "text"), feed)
         return _unit(raw), float(elapsed)
+
+    def _text_rows(self, text: str, role: str) -> tuple[np.ndarray, bool]:
+        """Prompted token rows ``[L, 512]`` (float32) and whether L was cut."""
+        ids, _mask = self._tokenize(self._prompt(text, role))
+        cut = int(ids.shape[-1]) > TEXT_EMBEDS_S
+        if cut:
+            ids = ids[:, :TEXT_EMBEDS_S]
+        embeds = self._scatter(ids, image_soft=None, audio_soft=None)
+        return embeds[0].detach().cpu().numpy().astype(np.float32, copy=False), cut
+
+    def _embed_texts(
+        self, texts: list[str], *, role: str, pack: bool
+    ) -> tuple[np.ndarray, TextBatchStats]:
+        """Tokenize all texts, pack the short ones, bucket the rest, keep order."""
+        t0 = time.perf_counter()
+        stats = TextBatchStats(texts=len(texts))
+        out = np.zeros((len(texts), DIM), dtype=np.float32)
+        rows: list[np.ndarray] = []
+        for text in texts:
+            row, cut = self._text_rows(text, role)
+            rows.append(row)
+            stats.truncated += int(cut)
+        lengths = [int(row.shape[0]) for row in rows]
+        bucket_ms = {
+            size: self._tower_ms.get(tower, default_tower_ms(size))
+            for size, tower in self._buckets.items()
+        }
+        # Cheapest plan by warm latency: one text per call, or one of the
+        # packed towers (a pack of one text runs on its bucket instead).
+        best = plan_cost(lengths, bucket_ms, None) + (None,)
+        if pack and len(texts) > 1:
+            for n_tokens, max_texts, tower in self._packs:
+                ms = self._tower_ms.get(tower, default_tower_ms(n_tokens))
+                cand = plan_cost(lengths, bucket_ms, (n_tokens, max_texts, ms)) + (
+                    (n_tokens, max_texts, tower),
+                )
+                if cand[0] < best[0]:
+                    best = cand
+        _cost, groups, singles, chosen = best
+        for group in groups:
+            n_tokens, max_texts, tower = chosen
+            feed = pack_feed([rows[i] for i in group], n_tokens=n_tokens, max_texts=max_texts)
+            raw, elapsed = self._runner.forward(tower, feed)
+            stats.count(tower, elapsed)
+            vecs = unit_rows(np.asarray(raw, dtype=np.float32)[: len(group)])
+            for slot, idx in enumerate(group):
+                out[idx] = vecs[slot]
+        for idx in singles:
+            seq_len = pick_bucket(lengths[idx], self._buckets) or TEXT_EMBEDS_S
+            tower = self._buckets.get(seq_len, "text")
+            raw, elapsed = self._runner.forward(tower, bucket_feed(rows[idx], seq_len))
+            stats.count(tower, elapsed)
+            out[idx] = _unit(raw)
+        stats.wall_ms = (time.perf_counter() - t0) * 1000.0
+        self.last_batch = stats
+        return out, stats
 
     def _scatter(self, ids, *, image_soft, audio_soft):
         tok = self._proc.tokenizer
@@ -599,6 +733,7 @@ class Embedder:
         key = (backend or "coreai").strip().lower()
         self.name = key
         self.last: EmbedResult | None = None
+        self.last_batch: TextBatchStats | None = None
         art = Path(artifacts) if artifacts is not None else default_artifacts()
         ckpt = Path(model) if model is not None else default_model()
         py = Path(coreai_python) if coreai_python is not None else default_coreai_python()
@@ -638,7 +773,9 @@ class Embedder:
         """Release the worker process (no-op for mock)."""
         self._impl.close()
 
-    def embed_text(self, text: str, *, role: TextRole | str = "query") -> np.ndarray:
+    def embed_text(
+        self, text: str, *, role: TextRole | str = "query", dim: int | None = None
+    ) -> np.ndarray:
         """Embed a sentence.
 
         Args:
@@ -647,13 +784,65 @@ class Embedder:
             role: ``"query"`` (search) or ``"document"`` (index). The
                 Sentence-Transformers names ``SearchQuery`` / ``Document``
                 are accepted too.
+            dim: Optional Matryoshka size (128, 256, 512 or 768).
 
         Returns:
-            L2-normalized ``float32`` vector of shape ``(768,)``.
+            L2-normalized ``float32`` vector of shape ``(dim,)``, 768 by default.
         """
         self._impl.warmup()
         result = self._impl.embed_text(text, role=_public_role(str(role)))
-        return self._take(result)
+        return truncate_dim(self._take(result), dim)
+
+    def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        role: TextRole | str = "query",
+        dim: int | None = None,
+        pack: bool = True,
+    ) -> np.ndarray:
+        """Embed many texts at once, in order.
+
+        On the Core AI backend, short texts are packed several to a forward
+        when a packed text tower is installed, and every other text runs on
+        the smallest text bucket that fits (``text_embeds_s320`` when no
+        buckets are installed). Texts over 320 tokens are cut to 320, as in
+        :meth:`embed_text`. Other backends embed one text at a time.
+
+        Args:
+            texts: Raw strings (no task prefix; ``role`` adds it).
+            role: ``"query"`` or ``"document"``, applied to every text.
+            dim: Matryoshka size, one of 128, 256, 512 or 768 (default 768).
+                The first ``dim`` values are kept and re-normalized.
+            pack: Set ``False`` to run one text per forward.
+
+        Returns:
+            ``float32`` array of shape ``(len(texts), dim)``, rows L2-normalized.
+        """
+        items = [str(text) for text in texts]
+        if not items:
+            return np.zeros((0, int(dim or DIM)), dtype=np.float32)
+        self._impl.warmup()
+        public = _public_role(str(role))
+        batch = getattr(self._impl, "embed_texts", None)
+        if batch is not None:
+            vectors, stats = batch(items, role=public, pack=bool(pack))
+            self.last_batch = stats
+        else:
+            t0 = time.perf_counter()
+            stats = TextBatchStats(texts=len(items))
+            rows = []
+            for text in items:
+                result = self._impl.embed_text(text, role=public)
+                stats.count(f"{self.name}_text", result.latency_ms)
+                rows.append(np.asarray(result.vector, dtype=np.float32).reshape(-1))
+            stats.wall_ms = (time.perf_counter() - t0) * 1000.0
+            vectors = np.stack(rows)
+            self.last_batch = stats
+        vectors = np.asarray(vectors, dtype=np.float32)
+        if vectors.shape != (len(items), DIM):
+            raise RuntimeError(f"embeddings shape {vectors.shape} != ({len(items)}, {DIM})")
+        return truncate_dim(vectors, dim)
 
     def embed_image(self, image: Image.Image) -> np.ndarray:
         """Embed an RGB PIL image.
