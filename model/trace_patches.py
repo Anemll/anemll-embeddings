@@ -117,6 +117,21 @@ def repeat_kv_index(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     return x.index_select(1, idx).contiguous()
 
 
+def softmax_unfused(scores: torch.Tensor) -> torch.Tensor:
+    """Last-dim softmax as ``amax`` / ``sub`` / ``exp`` / ``sum`` / ``reciprocal`` / ``mul``.
+
+    A ``softmax`` between two matmuls is fused by MPSGraph into
+    ``mps_spi.sdpa``, which the macOS 27.2 ANE pre-check rejects
+    (``invalid MLIR-MPS program``), so the whole tower lands on the GPU.
+    The max-subtract form with a final ``divide`` is recognised as a softmax
+    again and fused the same way; ``reciprocal`` then ``mul`` is not.
+    The row max is needed: valid scores reach ~20 and fp16 ``exp`` overflows
+    above ~11.
+    """
+    e = torch.exp(scores - scores.amax(dim=-1, keepdim=True))
+    return e * torch.reciprocal(e.sum(dim=-1, keepdim=True))
+
+
 def _make_eager_attention(batch: int, seq_len: int):
     def eager_attention_forward(
         module,
@@ -151,7 +166,7 @@ def _make_eager_attention(batch: int, seq_len: int):
             attn_weights = attn_weights * softcap
         if attention_mask is not None:
             attn_weights = attn_weights + attention_mask
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_weights = softmax_unfused(attn_weights.to(torch.float32)).to(query.dtype)
         if dropout and module.training:
             attn_weights = F.dropout(attn_weights, p=float(dropout), training=True)
         attn_output = torch.matmul(attn_weights, value).reshape(batch, n_heads, q_len, head_dim)

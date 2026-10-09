@@ -12,6 +12,15 @@ All notable changes to this project are documented here.
   requests to a root `config.json`, so installs now show up as downloads.
 
 ### Changed
+- Export: attention softmax is spelled out (`softmax_unfused` in
+  `model/trace_patches.py`: `amax`/`sub`/`exp`/`sum`/`reciprocal`/`mul`) in the
+  text and vision towers. A plain `softmax` between the two attention matmuls
+  is fused by MPSGraph into `mps_spi.sdpa`, which the macOS 27.2 ANE pre-check
+  rejects, so those towers fell back to the GPU. Re-exported text and vision
+  packages run fully on the ANE on M5 / macOS 27.2. Not yet published; macOS
+  27.0 (M4 Pro, M3 Ultra) re-verification pending. Added
+  `model/parity_text_embeds_ab.py` (text-only package A/B parity) and
+  `tests/test_softmax_unfused.py`. See `docs/M5_ANE_SOFTMAX_FIX.md`.
 - `ANE_REVISION` pinned to Hugging Face commit
   `1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` (adds the root `config.json`, updates
   the card and the `towers.yaml` notes; towers and `host/` byte-identical to
