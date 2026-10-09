@@ -17,19 +17,19 @@ All notable changes to this project are documented here.
   text and vision towers. A plain `softmax` between the two attention matmuls
   is fused by MPSGraph into `mps_spi.sdpa`, which the macOS 27.2 ANE pre-check
   rejects, so those towers fell back to the GPU. Re-exported text and vision
-  packages run fully on the ANE on M5 / macOS 27.2. Not yet published; macOS
-  27.0 (M4 Pro, M3 Ultra) re-verification pending. Added
+  towers run fully on the ANE on M5 / macOS 27.2 and on M4 Pro / M3 Ultra,
+  macOS 27.0. Text latency is unchanged on 27.0; vision is about 22-34% slower
+  there (414-466 ms vs 339-349 ms). On the M5 the ANE is slower than the GPU
+  for vision (426 vs 99 ms) and text (33 vs 24-27 ms). Added
   `model/parity_text_embeds_ab.py` (text-only package A/B parity) and
   `tests/test_softmax_unfused.py`. See `docs/M5_ANE_SOFTMAX_FIX.md`.
 - `ANE_REVISION` pinned to Hugging Face commit
   `1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` (adds the root `config.json`, updates
   the card and the `towers.yaml` notes; towers and `host/` byte-identical to
   `47d05aa`).
-- M5 / macOS 27.2 status reworded in the README, HF card, `towers.yaml`, and
-  docs: all three towers work and match the reference (cosine
-  0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently
-  run on the GPU because the macOS 27.2 ANE pre-check rejects them. Fully-ANE
-  placement stays validated on M4 Pro and M3 Ultra, macOS 27.0.
+- README, HF card, `towers.yaml`, and docs: all three towers fully on the
+  Neural Engine on M4 Pro / M3 Ultra (macOS 27.0) and M5 (macOS 27.2) with the
+  re-exported vision and text towers, with the measured timings and cosines.
 - Em dashes in the Markdown docs replaced with plain dashes.
 - `download_models.py` fetches the root `config.json` with the towers and
   verifies it against `ROOT_CONFIG_SHA256` like the other pinned files.

@@ -4,7 +4,7 @@
 
 No Hugging Face login or token is needed. Both repos are public and ungated. The download scripts need `huggingface_hub`, which `python -m pip install -e .` (or `.[demo]`) already installs.
 
-Fully on the ANE on **M4 Pro / M3 Ultra, macOS 27.0**. On **macOS 27.2 / M5** all three towers work and match the reference (cosine 0.99994-0.99997); audio runs on the ANE, and vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with `invalid MLIR-MPS program`). `warmup.py --require-ane` exits non-zero there because it requires every tower on the ANE.
+Fully on the ANE on **M4 Pro / M3 Ultra (macOS 27.0)** and **M5 (macOS 27.2)**; `warmup.py --require-ane` exits 0 on all three. On the M5 the ANE is slower than the GPU for vision and text (see the [README](../README.md#m5-macos-272)).
 
 The packages run under a separate Core AI interpreter (`coreai-core` 1.0.0b2 on Python 3.13). Setup and lookup order: [README → Core AI runtime](../README.md#core-ai-runtime).
 
@@ -155,6 +155,6 @@ export ANEMLL_COREAI_PYTHON=/path/to/anemll-forge/coreai/.venv/bin/python
 - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect: `python scripts/warmup.py --coreai-home /path/to/writable/home` (or `export CFFIXED_USER_HOME=/path/to/writable/home`; the cache becomes `<home>/Library/Caches/coreai-cache`). Keep `CFFIXED_USER_HOME` set for later runs so the samples and demo reuse that cache.
 - "Core AI Python not found" / "cannot import coreai.runtime": create the Core AI venv ([README → Core AI runtime](../README.md#core-ai-runtime)) or set `ANEMLL_COREAI_PYTHON`.
 - `sha256 mismatch …`: the file on disk is not the pinned one. Delete that tower or `host/` folder and rerun with `--force`.
-- On macOS 27.2 / M5, vision and text report `no (GPU)` (the ANE pre-check rejects them with `invalid MLIR-MPS program`). They work and match the reference; they just run on the GPU for now. Audio runs on the ANE. `--require-ane` exits 3 there.
+- On macOS 27.2 (M5), vision and text report `no (GPU)` and `--require-ane` exits 3 only with the towers from before the softmax fix (Hugging Face revision `1cbb580` or older). Rerun `download_models.py` to get the re-exported towers.
 - Rerunning either inference or warmup is safe. Download skips files that already match the pinned revision.
 - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.

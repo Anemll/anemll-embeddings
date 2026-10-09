@@ -20,7 +20,7 @@ python -m demo.server --backend coreai --port 8766                 # this Mac on
 python -m demo.server --backend coreai --host 0.0.0.0 --port 8766  # trusted LAN, see below
 ```
 
-First `warmup.py` load compiles each tower for this Mac and caches it. There is no separate per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra, macOS 27.0; on macOS 27.2 / M5 all three towers work, with audio on the ANE and vision and text currently on the GPU (the `/health` badge shows it).
+First `warmup.py` load compiles each tower for this Mac and caches it. There is no separate per-hardware compile to ship. Fully on the ANE on M4 Pro / M3 Ultra (macOS 27.0) and M5 (macOS 27.2); the `/health` badge shows the placement.
 
 ### Network exposure
 
@@ -128,7 +128,7 @@ Sparky’s two photos are the same black cat (Nikolai Bulykin, Medeo, Almaty). M
 
 ## Limits
 
-- Validated fully on the Neural Engine on an M4 Pro, macOS 27.0, with `--backend coreai`. On M5 / macOS 27.2 all three towers work and match the reference; audio runs on the Neural Engine, and vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them).
+- Validated fully on the Neural Engine with `--backend coreai` on an M4 Pro (macOS 27.0) and an M5 (macOS 27.2). On the M5 the ANE is slower than the GPU for photos (about 455 ms vs 123 ms per photo with the older GPU-placed towers).
 - Audio must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips return `audio too short (min N ms)`.
 - Browser uploads that are not WAV (webm/ogg from some mics) need `ffmpeg` on the server.
 - Images are capped at 20 MiB, audio at 30 MiB.

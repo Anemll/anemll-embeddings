@@ -79,8 +79,8 @@ About **35 ms** per sentence, **380 ms** per photo, **50 ms** per sound.
 
 ## Limitations that come from the hardware
 
-- M4 Pro / macOS 27.0 is the validated setup.
-- On M5 / macOS 27.2 all three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the ANE; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with `invalid MLIR-MPS program`).
+- Validated fully on the ANE on M4 Pro and M3 Ultra (macOS 27.0) and M5 (macOS 27.2).
+- On macOS 27.2 a `matmul -> softmax -> matmul` chain is fused by MPSGraph into an `sdpa` op that the ANE pre-check rejects, so the export spells the softmax out (`softmax_unfused`). That keeps vision and text on the ANE on 27.2, but vision is about 22-34% slower on 27.0 than with the fused softmax, and on the M5 the ANE is slower than the GPU for vision and text. See [M5_ANE_SOFTMAX_FIX.md](M5_ANE_SOFTMAX_FIX.md).
 - Audio shorter than one mel frame (about 9 ms at 16 kHz) cannot produce a soft token.
 
 ## History

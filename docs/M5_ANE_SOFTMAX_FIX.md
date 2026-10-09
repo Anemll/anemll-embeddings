@@ -1,10 +1,12 @@
 # M5 / macOS 27.2: unfused attention softmax puts text and vision on the ANE
 
-Status: fix verified on Apple M5, macOS 27.2 only. Not yet verified on macOS 27.0
-(M4 Pro, M3 Ultra). The packages on Hugging Face are still the old (published)
-ones; README, HF card, `hf/towers.yaml` and the digests in
-`scripts/download_common.py` describe those and are unchanged until the new
-packages are re-exported, verified on 27.0 and published.
+Status: verified on Apple M5 (macOS 27.2), M4 Pro and M3 Ultra (macOS 27.0).
+All three towers are fully on the ANE on all three Macs. Text latency is
+unchanged on 27.0; vision is 22-34% slower there. See
+[Verification on macOS 27.0](#verification-on-macos-270). The new towers are
+published on Hugging Face only after that trade-off is accepted; until then the
+`ANE_REVISION` pin and digests in `scripts/download_common.py` point at the
+older towers.
 
 ## Summary
 
@@ -138,7 +140,66 @@ path (`api.embedder.CoreAIBackend`), tool `model/parity_text_embeds_ab.py`:
 are not reproducible by hash (a re-export of the unchanged published code gives
 a different `main.hash`), so only behaviour is comparable.
 
-## macOS 27.0: why it should be safe, and what to re-verify
+## Verification on macOS 27.0
+
+Done on M4 Pro (macOS 27.0, build 26A5425a) and M3 Ultra (macOS 27.0, build
+26A428), each from a fresh checkout of this branch with a fresh
+`CFFIXED_USER_HOME`. Tested: the M5-exported packages above (`main.mlirb`
+sha256 `8181d927...` text, `5ebb5342...` vision) on both Macs, and a native
+re-export on the M4 Pro (sha256 `22c08bd2...` text, `d9fd3432...` vision;
+same embeddings as the M5 export to cosine 1.000000, same timings within 4%).
+Audio is the published `audio_s280` on every run.
+
+Placement: `scripts/warmup.py --require-ane` exits 0 for both the published
+and the new packages on both Macs; no `GPU_region` in the Core AI cache.
+
+Warm p50 on the ANE (dummy inputs, 100 iterations; vision 30):
+
+| Mac | Package set | text | vision | audio |
+|---|---|---|---|---|
+| M4 Pro | published | 34.2 ms | 339 ms | 11.2 ms |
+| M4 Pro | new (M5 export) | 34.8 ms | 429 ms | 11.2 ms |
+| M4 Pro | new (native export) | 33.5 ms | 414 ms | 11.2 ms |
+| M3 Ultra | published | 35.2 ms | 349 ms | 11.7 ms |
+| M3 Ultra | new (M5 export) | 35.2 ms | 465 ms | 11.6 ms |
+| M5 (27.2) | published (text, vision on GPU) | 24.0-27.2 ms | 99 ms | 13.4 ms |
+| M5 (27.2) | new | 32.6-33.0 ms | 426 ms | 13.8 ms |
+
+On real photos the vision forward is 414 ms (M4 Pro), 466 ms (M3 Ultra) and
+422 ms (M5) with the new tower, against 339 / 349 / 99 ms with the published
+one.
+
+Cosine of the final embedding (host path) vs the same host path with the
+patched PyTorch towers in FP32 on CPU, minimum over 12 text fixtures, 8 real
+photos (macOS user pictures) and 4 real sounds (speech and system sounds):
+
+| Mac | Package set | text | photos | sounds |
+|---|---|---|---|---|
+| M4 Pro | published | 0.999943 | 0.999903 | 0.998908 |
+| M4 Pro | new | 0.999934 | 0.999918 | 0.998951 |
+| M3 Ultra | published | 0.999943 | 0.999918 | 0.998909 |
+| M3 Ultra | new | 0.999934 | 0.999891 | 0.998951 |
+| M5 | new | 0.999934 | 0.999918 | 0.998951 |
+
+New vs published on 27.0: text 0.999990, photos 0.999955 or better, sounds
+0.999915 or better. The sound minimum is the same with both sets (the audio
+package did not change); the gap to FP32 is in the end-to-end audio path, not
+in this fix. On the M3 Ultra the photo minimum is 0.999891, just under 0.9999
+(published: 0.999918).
+
+Result: text is a free win (same speed and accuracy on 27.0, fully on the ANE
+on 27.2). Vision is 22-34% slower on 27.0 with the unfused softmax, and on the
+M5 the ANE is about 4x slower than the GPU for vision. Options:
+
+1. Publish both new towers (fully on the ANE everywhere, slower vision).
+2. Publish the new text tower only and keep the published vision tower (fast
+   on 27.0; on 27.2 vision stays on the GPU, which is faster there anyway).
+3. Per-OS vision packages (fused softmax for 27.0, unfused for 27.2+), picked
+   by `download_models.py` from the macOS version.
+4. Try to recover vision speed with the unfused softmax (for example without
+   the row max if vision scores stay in fp16 range, or different tiling).
+
+## Background: why macOS 27.0 was expected to be safe, and how it was checked
 
 Why it should be safe:
 
@@ -158,7 +219,7 @@ Real risk: on 27.0 the old graph probably ran attention through the fused ANE
 - fp16 numerics could differ (the unfused softmax accumulates in fp16 on the
   ANE).
 
-To re-verify on M4 Pro and M3 Ultra (macOS 27.0):
+Steps used for the verification above (M4 Pro and M3 Ultra, macOS 27.0):
 
 1. Check out this branch. Re-export with the commands below into a fresh
    artifacts dir, and use a fresh `CFFIXED_USER_HOME`.
@@ -193,7 +254,9 @@ text and 56 s for vision on the M5.
 
 ## Open questions
 
-- Verify on M4 Pro and M3 Ultra (27.0), as above.
+- Vision is 22-34% slower on 27.0 with the unfused softmax. Pick one of the
+  options in [Verification on macOS 27.0](#verification-on-macos-270) before
+  publishing the new vision tower.
 - The ANE is slower than the GPU on the M5 (text 33 vs 25 ms, vision 429 vs
   103 ms). Decide whether 27.2 should stay ANE-pinned or follow the hardware.
 - Tuning of the unfused attention (tiling, fusing steps) was not attempted.

@@ -33,10 +33,10 @@ python scripts/warmup.py --require-ane        # exit 3 = a tower is not fully on
 ANEMLL_HW_TESTS=1 python -m pytest tests/test_hardware_ane.py -q -s
 ```
 
-Say which chip and macOS version you ran on. On M5 / macOS 27.2 all three
-towers work and match the reference, but vision and text currently run on the
-GPU (the macOS 27.2 ANE pre-check rejects them), so `--require-ane` exits 3
-there. That is expected, not a regression.
+Say which chip and macOS version you ran on. `--require-ane` should exit 0 on
+M4 Pro / M3 Ultra (macOS 27.0) and M5 (macOS 27.2). If you change attention,
+keep the softmax spelled out (`softmax_unfused`): a plain `softmax` between the
+attention matmuls puts vision and text on the GPU on macOS 27.2.
 
 ## Guidelines
 
