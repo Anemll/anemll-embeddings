@@ -55,6 +55,92 @@ towers:
     parity_cosine_vs_fp32: 0.999934  # 12 text fixtures
     main_mlirb_sha256: 8181d927facbcee1817a1bcb5efbd9a502b5468d5c131c0839aa624b7e1b8e1a
 
+# STAGED, NOT UPLOADED: optional combined short-text package. Nothing downloads
+# it until TEXT_BUCKETS_REVISION and the digests are pinned in
+# scripts/download_common.py. Values marked PLACEHOLDER are filled after the
+# upload. It does not contain text_embeds_s320 (the shipped tower stays the
+# long-text path). See docs/TEXT_BUCKETS.md.
+optional_packages:
+  text_buckets:
+    status: staged, not uploaded
+    path: text_buckets/text_buckets.aimodel
+    revision: PLACEHOLDER-fill-after-HF-upload
+    sha256:
+      main.mlirb: PLACEHOLDER-fill-after-HF-upload
+      main.hash: PLACEHOLDER-fill-after-HF-upload
+    compute: expected fully on ANE per function; check with scripts/warmup.py --require-ane
+    parity_cosine_vs_s320: ">= 0.99999"   # M4 Pro (27.0) and M5 Max (27.2)
+    functions:
+      text_embeds_s32:
+        kind: bucket
+        sequence_length: 32
+        inputs:
+          inputs_embeds:  {shape: [1, 32, 512], dtype: float16}
+          attention_mask: {shape: [1, 32],      dtype: float16}
+        outputs:
+          embedding:      {shape: [1, 768], dtype: float16}
+        p50_ms: {m4_pro_macos_27_0: 3.0, m5_max_macos_27_2: 2.8}
+      text_embeds_s64:
+        kind: bucket
+        sequence_length: 64
+        inputs:
+          inputs_embeds:  {shape: [1, 64, 512], dtype: float16}
+          attention_mask: {shape: [1, 64],      dtype: float16}
+        outputs:
+          embedding:      {shape: [1, 768], dtype: float16}
+        p50_ms: {m4_pro_macos_27_0: 4.3, m5_max_macos_27_2: 3.6}
+      text_embeds_s128:
+        kind: bucket
+        sequence_length: 128
+        inputs:
+          inputs_embeds:  {shape: [1, 128, 512], dtype: float16}
+          attention_mask: {shape: [1, 128],      dtype: float16}
+        outputs:
+          embedding:      {shape: [1, 768], dtype: float16}
+        p50_ms: {m4_pro_macos_27_0: 7.1, m5_max_macos_27_2: 6.4}
+      text_embeds_s256:
+        kind: bucket
+        sequence_length: 256
+        inputs:
+          inputs_embeds:  {shape: [1, 256, 512], dtype: float16}
+          attention_mask: {shape: [1, 256],      dtype: float16}
+        outputs:
+          embedding:      {shape: [1, 768], dtype: float16}
+        p50_ms: {m4_pro_macos_27_0: 15.4, m5_max_macos_27_2: 13.5}
+      text_pack_128x8:
+        kind: pack
+        tokens: 128
+        max_texts: 8
+        inputs:
+          inputs_embeds:  {shape: [1, 128, 512],    dtype: float16}
+          attention_bias: {shape: [1, 1, 128, 128], dtype: float16}   # block-diagonal, -1e4 outside a text
+          positions:      {shape: [128, 1],         dtype: float16}   # position restarts per text
+          pool:           {shape: [8, 128],       dtype: float16}   # per-text mean-pooling matrix
+        outputs:
+          embedding:      {shape: [8, 768], dtype: float16}
+      text_pack_256x8:
+        kind: pack
+        tokens: 256
+        max_texts: 8
+        inputs:
+          inputs_embeds:  {shape: [1, 256, 512],    dtype: float16}
+          attention_bias: {shape: [1, 1, 256, 256], dtype: float16}   # block-diagonal, -1e4 outside a text
+          positions:      {shape: [256, 1],         dtype: float16}   # position restarts per text
+          pool:           {shape: [8, 256],       dtype: float16}   # per-text mean-pooling matrix
+        outputs:
+          embedding:      {shape: [8, 768], dtype: float16}
+      text_pack_256x16:
+        kind: pack
+        tokens: 256
+        max_texts: 16
+        inputs:
+          inputs_embeds:  {shape: [1, 256, 512],    dtype: float16}
+          attention_bias: {shape: [1, 1, 256, 256], dtype: float16}   # block-diagonal, -1e4 outside a text
+          positions:      {shape: [256, 1],         dtype: float16}   # position restarts per text
+          pool:           {shape: [16, 256],       dtype: float16}   # per-text mean-pooling matrix
+        outputs:
+          embedding:      {shape: [16, 768], dtype: float16}
+
 host_side:
   # Mirrored under host/ in this repo so inference is one download.
   # api.Embedder builds inputs_embeds on the host (tokenizer, processor,

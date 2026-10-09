@@ -58,9 +58,12 @@ Default `--dest` is `~/.anemll-embeddings` (or `$ANEMLL_EMBEDDINGS_HOME`). `api.
 | `--dest PATH` | `~/.anemll-embeddings` | Parent directory. `$ANEMLL_EMBEDDINGS_HOME` overrides the default. |
 | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. |
 | `--verify` | off | Re-hash the towers and host files already on disk against the pinned digests (no download). |
+| `--no-text-buckets` | off | Skip the optional combined short-text package `text_buckets/text_buckets.aimodel` (see below). |
 | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then `~/.anemll-embeddings/coreai-venv`, then a sibling or `~/anemll-forge/coreai/.venv` | Value printed for `ANEMLL_COREAI_PYTHON`. If none exists, commented setup lines are printed instead. |
 
 Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=18e1b7e85cdf0c58d924c5d270c7a4be1a40159a`, overridable with `ANEMLL_ANE_REVISION`; Google fallback stays at `914f7f8…`). There is no `--revision` flag. Skip-if-present is the default; use `--force` to fetch again.
+
+Optional short-text package (**not published yet**): the downloader knows `text_buckets/text_buckets.aimodel` (buckets `text_embeds_s32` ... `s256` and packed towers, see [docs/TEXT_BUCKETS.md](../docs/TEXT_BUCKETS.md)). Until `TEXT_BUCKETS_REVISION` and its SHA-256 digests are pinned in `scripts/download_common.py` (they are marked placeholders), it prints `text_buckets=not-published` and fetches nothing. Once pinned it is downloaded, verified (`main.mlirb`, `main.hash`) and symlinked as `artifacts/coreai/text_buckets.aimodel`, which `api.Embedder` picks up automatically.
 
 Custom dest:
 
@@ -77,7 +80,8 @@ python scripts/download_models.py --dest /path/to/fast/disk/anemll-embeddings
 | `--coreai-home DIR` | `$CFFIXED_USER_HOME`, else your home | Core AI's home; the specialization cache is `<DIR>/Library/Caches/coreai-cache`. Created if missing. |
 | `--cache-dir PATH` | - | Same as `--coreai-home`, given as the full cache path. Must end in `Library/Caches/coreai-cache` (Core AI has no free-form cache location); anything else is rejected. Mutually exclusive with `--coreai-home`. |
 | `--compute ane\|cpu` | `ane` | Device for this load |
-| `--require-ane` | off | Exit **3** unless every tower reports fully on the Neural Engine. Cannot be combined with `--compute cpu`. |
+| `--require-ane` | off | Exit **3** unless every tower reports fully on the Neural Engine. Cannot be combined with `--compute cpu`. When `coreai/text_buckets.aimodel` is present, its functions are loaded too, listed one per row with their own placement from the compiled manifest, and covered by this check. |
+| `--no-text-buckets` | off | Do not load `text_buckets.aimodel` (or single-function `text_embeds_sN` / `text_pack_NxT` packages). `ANEMLL_TEXT_BUCKETS=0` does the same. |
 
 ## Example output
 

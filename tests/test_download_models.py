@@ -35,6 +35,7 @@ from scripts.download_common import (  # noqa: E402
     ROOT_ALLOW,
     ROOT_CONFIG,
     ROOT_CONFIG_SHA256,
+    ROOT_CONFIG_STAGED_SHA256,
     SLIM_EMBED_NAME,
     TOWERS,
     all_bundles_complete,
@@ -436,8 +437,11 @@ def test_root_config_is_fetched_and_pinned() -> None:
     if len(ROOT_CONFIG_SHA256) != 64:
         _fail("ROOT_CONFIG_SHA256 is not a sha256 hex digest")
     hf_copy = REPO_ROOT / "hf" / ROOT_CONFIG
-    if hashlib.sha256(hf_copy.read_bytes()).hexdigest() != ROOT_CONFIG_SHA256:
-        _fail("hf/config.json drifted from ROOT_CONFIG_SHA256 (publish a new HF revision)")
+    # hf/config.json is the published file, or the staged next revision (adds the
+    # unpublished text_buckets descriptor): see ROOT_CONFIG_STAGED_SHA256.
+    digest = hashlib.sha256(hf_copy.read_bytes()).hexdigest()
+    if digest not in (ROOT_CONFIG_SHA256, ROOT_CONFIG_STAGED_SHA256):
+        _fail("hf/config.json drifted from ROOT_CONFIG_SHA256 / ROOT_CONFIG_STAGED_SHA256")
     json.loads(hf_copy.read_text(encoding="utf-8"))
 
 

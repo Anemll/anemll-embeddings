@@ -40,6 +40,14 @@ HOST_FOLDER = "host"
 ROOT_CONFIG = "config.json"
 ROOT_CONFIG_SHA256 = "9eaf9feee06cacabae2add12002c742c9b0e28df508d7f0c8db7e8255b541560"
 ROOT_CONFIG_BYTES = 2_812
+# hf/config.json in this repo is STAGED for the next Hub revision: it adds the
+# optional ``text_buckets`` descriptor (placeholders until the upload). The Hub
+# still serves the file pinned above, so downloads are verified against
+# ROOT_CONFIG_SHA256. After the upload, set ROOT_CONFIG_SHA256 to the digest
+# below (and ROOT_CONFIG_BYTES to ROOT_CONFIG_STAGED_BYTES) together with the
+# ANE_REVISION bump; tests/test_text_buckets_release.py enforces the pairing.
+ROOT_CONFIG_STAGED_SHA256 = "0b14ea7b582276a7f1ff232cb718b1b05c08ffb27baebaed792a902d07e99f83"
+ROOT_CONFIG_STAGED_BYTES = 6_158
 TOWERS = ("vision_s280", "audio_s280", "text_embeds_s320")
 BUNDLE_FILES = ("metadata.json", "main.hash", "main.mlirb")
 # SHA-256 of each tower's main.mlirb at ANE_REVISION (same values as
@@ -50,6 +58,34 @@ TOWER_MLIRB_SHA256 = {
     "audio_s280": "bbbd714866d5b37a2ccd9c8ec0899f966dbf5dac66031f886522a8fc6824c35f",
     "text_embeds_s320": "8181d927facbcee1817a1bcb5efbd9a502b5468d5c131c0839aa624b7e1b8e1a",
 }
+# --- Optional combined text package (STAGED, not on the Hub yet) ---------------
+# ``text_buckets/text_buckets.aimodel``: one multi-function package with the
+# short-text buckets text_embeds_s32/s64/s128/s256 and the packed towers
+# text_pack_128x8/256x8/256x16 (see docs/TEXT_BUCKETS.md). The downloader treats
+# it as OPTIONAL and skips it until the three values below are filled in after
+# the upload. To publish: upload text_buckets/ to ANE_REPO, then set
+# TEXT_BUCKETS_REVISION to the Hub commit that contains it, replace both
+# placeholders with the SHA-256 of the uploaded files, set TEXT_BUCKETS_BYTES,
+# and bump ANE_REVISION / ROOT_CONFIG_SHA256 to the same commit if the root
+# config.json changed. Never fill them with a guess.
+TEXT_BUCKETS = "text_buckets"
+TEXT_BUCKETS_PLACEHOLDER = "PLACEHOLDER-fill-after-HF-upload"
+TEXT_BUCKETS_REVISION: str | None = None  # HF commit that has text_buckets/ (None = not uploaded)
+TEXT_BUCKETS_SHA256 = {
+    "main.mlirb": TEXT_BUCKETS_PLACEHOLDER,
+    "main.hash": TEXT_BUCKETS_PLACEHOLDER,
+}
+TEXT_BUCKETS_BYTES = 0  # main.mlirb + main.hash + metadata.json on the Hub (fill after upload)
+TEXT_BUCKETS_FUNCTIONS = (
+    "text_embeds_s32",
+    "text_embeds_s64",
+    "text_embeds_s128",
+    "text_embeds_s256",
+    "text_pack_128x8",
+    "text_pack_256x8",
+    "text_pack_256x16",
+)
+TEXT_BUCKETS_ALLOW = (f"{TEXT_BUCKETS}/**",)
 # SHA-256 of the mirrored host/ payload at ANE_REVISION (host/SHA256SUMS).
 HOST_SHA256 = {
     "config.json": "b8f1e9931b57fbc054acdb445c41765d55b0074c58d145fa82839941ad1b5bb3",
@@ -148,6 +184,11 @@ def inference_download_bytes() -> int:
     )
 
 
+def text_buckets_download_bytes() -> int:
+    """Optional extra download (0 while the package is not published)."""
+    return TEXT_BUCKETS_BYTES if text_buckets_published() else 0
+
+
 def host_folder_bytes() -> int:
     """Mirrored host/ payload (copied files + extracted embed table)."""
     return sum(HOST_FILE_BYTES.values()) + EMBED_TABLE_BYTES
@@ -186,6 +227,28 @@ def bundle_complete(ane_dir: Path, name: str) -> bool:
 
 def all_bundles_complete(ane_dir: Path) -> bool:
     return all(bundle_complete(ane_dir, name) for name in TOWERS)
+
+
+def text_buckets_published() -> bool:
+    """True once the combined text package has a pinned revision and real digests."""
+    if not TEXT_BUCKETS_REVISION:
+        return False
+    return all(
+        len(digest) == 64 and all(ch in "0123456789abcdef" for ch in digest)
+        for digest in TEXT_BUCKETS_SHA256.values()
+    )
+
+
+def text_buckets_complete(ane_dir: Path) -> bool:
+    return bundle_complete(ane_dir, TEXT_BUCKETS)
+
+
+def text_buckets_checksums(ane_dir: Path) -> dict[Path, str]:
+    """Pinned digests of the combined text package (empty until it is published)."""
+    if not text_buckets_published():
+        return {}
+    root = bundle_path(ane_dir, TEXT_BUCKETS)
+    return {root / name: digest for name, digest in TEXT_BUCKETS_SHA256.items()}
 
 
 def host_payload_complete(folder: Path) -> bool:
@@ -258,6 +321,10 @@ def link_coreai(artifacts: Path, ane_dir: Path) -> dict[str, str]:
     status: dict[str, str] = {}
     for name in TOWERS:
         status[name] = ensure_symlink(coreai / f"{name}.aimodel", bundle_path(ane_dir, name))
+    if text_buckets_complete(ane_dir):
+        status[TEXT_BUCKETS] = ensure_symlink(
+            coreai / f"{TEXT_BUCKETS}.aimodel", bundle_path(ane_dir, TEXT_BUCKETS)
+        )
     return status
 
 

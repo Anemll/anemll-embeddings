@@ -63,5 +63,63 @@
     "query": "task: search result | query: ",
     "document": "title: none | text: "
   },
-  "details": "towers.yaml"
+  "details": "towers.yaml",
+  "optional_packages": {
+    "text_buckets": {
+      "status": "staged: not uploaded yet; revision and sha256 values are placeholders until the upload",
+      "optional": true,
+      "path": "text_buckets/text_buckets.aimodel",
+      "description": "One multi-function package with short-text buckets and packed batch towers. The shipped text_embeds_s320 tower stays the long-text path and is not duplicated here.",
+      "revision": "PLACEHOLDER-fill-after-HF-upload",
+      "sha256": {"main.mlirb": "PLACEHOLDER-fill-after-HF-upload", "main.hash": "PLACEHOLDER-fill-after-HF-upload"},
+      "functions": {
+        "text_embeds_s32": {
+          "kind": "bucket",
+          "sequence_length": 32,
+          "inputs": {"inputs_embeds": {"shape": [1, 32, 512], "dtype": "float16"}, "attention_mask": {"shape": [1, 32], "dtype": "float16"}},
+          "outputs": {"embedding": {"shape": [1, 768], "dtype": "float16"}}
+        },
+        "text_embeds_s64": {
+          "kind": "bucket",
+          "sequence_length": 64,
+          "inputs": {"inputs_embeds": {"shape": [1, 64, 512], "dtype": "float16"}, "attention_mask": {"shape": [1, 64], "dtype": "float16"}},
+          "outputs": {"embedding": {"shape": [1, 768], "dtype": "float16"}}
+        },
+        "text_embeds_s128": {
+          "kind": "bucket",
+          "sequence_length": 128,
+          "inputs": {"inputs_embeds": {"shape": [1, 128, 512], "dtype": "float16"}, "attention_mask": {"shape": [1, 128], "dtype": "float16"}},
+          "outputs": {"embedding": {"shape": [1, 768], "dtype": "float16"}}
+        },
+        "text_embeds_s256": {
+          "kind": "bucket",
+          "sequence_length": 256,
+          "inputs": {"inputs_embeds": {"shape": [1, 256, 512], "dtype": "float16"}, "attention_mask": {"shape": [1, 256], "dtype": "float16"}},
+          "outputs": {"embedding": {"shape": [1, 768], "dtype": "float16"}}
+        },
+        "text_pack_128x8": {
+          "kind": "pack",
+          "tokens": 128,
+          "max_texts": 8,
+          "inputs": {"inputs_embeds": {"shape": [1, 128, 512], "dtype": "float16"}, "attention_bias": {"shape": [1, 1, 128, 128], "dtype": "float16"}, "positions": {"shape": [128, 1], "dtype": "float16"}, "pool": {"shape": [8, 128], "dtype": "float16"}},
+          "outputs": {"embedding": {"shape": [8, 768], "dtype": "float16"}}
+        },
+        "text_pack_256x8": {
+          "kind": "pack",
+          "tokens": 256,
+          "max_texts": 8,
+          "inputs": {"inputs_embeds": {"shape": [1, 256, 512], "dtype": "float16"}, "attention_bias": {"shape": [1, 1, 256, 256], "dtype": "float16"}, "positions": {"shape": [256, 1], "dtype": "float16"}, "pool": {"shape": [8, 256], "dtype": "float16"}},
+          "outputs": {"embedding": {"shape": [8, 768], "dtype": "float16"}}
+        },
+        "text_pack_256x16": {
+          "kind": "pack",
+          "tokens": 256,
+          "max_texts": 16,
+          "inputs": {"inputs_embeds": {"shape": [1, 256, 512], "dtype": "float16"}, "attention_bias": {"shape": [1, 1, 256, 256], "dtype": "float16"}, "positions": {"shape": [256, 1], "dtype": "float16"}, "pool": {"shape": [16, 256], "dtype": "float16"}},
+          "outputs": {"embedding": {"shape": [16, 768], "dtype": "float16"}}
+        }
+      },
+      "details": "docs/TEXT_BUCKETS.md in https://github.com/Anemll/anemll-embeddings"
+    }
+  }
 }
