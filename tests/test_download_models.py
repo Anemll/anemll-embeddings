@@ -178,7 +178,7 @@ def test_inference_allow_excludes_full_weights() -> None:
         _fail("host allow should include the slim embed table")
     if matches_hf_patterns("model.safetensors", HOST_FOLDER_ALLOW, None):
         _fail("host allow should not match a root model.safetensors")
-    if ANE_REVISION != "1cbb580a392f2d4f57924dbc58fd77cc4351c1b7":
+    if ANE_REVISION != "18e1b7e85cdf0c58d924c5d270c7a4be1a40159a":
         _fail(f"ANE_REVISION {ANE_REVISION} is not the uploaded host/ pin")
     if SLIM_EMBED_NAME != HOST_SLIM_NAME:
         _fail("slim filename drifted between host and download")

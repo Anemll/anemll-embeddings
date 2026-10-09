@@ -9,9 +9,11 @@ The Neural Engine is the dedicated chip on Apple Silicon for this kind of work. 
 | Mac | macOS | Placement |
 | --- | --- | --- |
 | M4 Pro, M3 Ultra | 27.0 | All three towers fully on the Neural Engine (validated) |
-| M5 | 27.2 | All three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them). See [M5 results](#m5-macos-272). |
+| M5 | 27.2 | All three towers fully on the Neural Engine (validated). On the M5 the Neural Engine is slower than the GPU for vision (about 426 vs 99 ms) and text (about 33 vs 24-27 ms). See [M5 results](#m5-macos-272). |
 
-Run `python scripts/warmup.py --require-ane` to check your own Mac; it exits non-zero unless every tower is fully on the Neural Engine.
+Run `python scripts/warmup.py --require-ane` to check your own Mac; it exits non-zero unless every tower is fully on the Neural Engine. It exits 0 on all three Macs above.
+
+The vision and text towers were re-exported with an unfused attention softmax so they also place on the Neural Engine on macOS 27.2 ([details](docs/M5_ANE_SOFTMAX_FIX.md)). On macOS 27.0 that costs nothing for text, but vision is slower than before (about 414-466 ms instead of 339-349 ms per image).
 
 ## What is an embedding?
 
@@ -45,11 +47,11 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | `docs/` | How it works, historical plan, diagrams |
 | `tests/` | Unit and API tests |
 
-**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`). Inference is one download from that repo. If `host/` is missing on the pin, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
+**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `18e1b7e85cdf0c58d924c5d270c7a4be1a40159a`). Inference is one download from that repo. If `host/` is missing on the pin, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
 
 ## Requirements
 
-- An Apple Silicon Mac running macOS 27. Fully-ANE placement is validated on **M4 Pro and M3 Ultra, macOS 27.0**. On M5 / macOS 27.2 all three towers work too, with vision and text on the GPU (see the table above).
+- An Apple Silicon Mac running macOS 27. Fully-ANE placement is validated on **M4 Pro and M3 Ultra (macOS 27.0)** and **M5 (macOS 27.2)**.
 - A host Python 3.11 or newer (tested: 3.11 and 3.12) for this repo: `pip install -e ".[runtime]"` installs `torch` 2.14, `torchvision` 0.29, and `transformers` 5.19. Exact tested versions are in [`constraints.txt`](constraints.txt). `sentence-transformers` 6.1 is only needed for the reference model, fixtures, and export (`.[reference]`).
 - A **second** Python that can `import coreai.runtime` (Python 3.13 with `coreai-core` 1.0.0b2), found through `ANEMLL_COREAI_PYTHON` or the default locations. See [Core AI runtime](#core-ai-runtime).
 - The public ANE packages at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane), plus the slim Google host files (tokenizer / processor / 256 MiB embed table). The full ~740M checkpoint is only for re-export.
@@ -77,7 +79,7 @@ Re-exporting the packages (`model/export_coreai_towers.py`) needs the fuller aut
 
 ## Quick start
 
-Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS 27.2** all three towers work and match the reference; vision and text currently run on the GPU (see the table at the top).
+Fully on the Neural Engine on **M4 Pro / M3 Ultra (macOS 27.0)** and **M5 (macOS 27.2)**.
 
 1. **Install** the host side (in a virtualenv, Python 3.12 tested) and the [Core AI runtime](#core-ai-runtime):
 
@@ -101,7 +103,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
 
    | What | Source | Size |
    | --- | --- | --- |
-   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
+   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 18e1b7e85cdf0c58d924c5d270c7a4be1a40159a` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
    | Host tokenizer / processor / configs | same repo, `host/` (fallback: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b`) | **~37 MB** (`tokenizer.json` 32.2 MB, `tokenizer.model` 4.7 MB, plus `config.json`, processor / preprocessor configs, tokenizer config, chat template) |
    | Embed table `embed_tokens.safetensors` | same repo, `host/` (extracted from Google’s `model.safetensors`; not a full-weights download) | **256 MiB** (268,435,456 bytes, BF16 `[262144, 512]`, plus Gemma `sqrt(512)` scale) |
    | Package descriptor `config.json` | same repo, root (towers, shapes, `host/` paths; not a transformers config) | **~3 KB** |
@@ -136,7 +138,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
    | Flag | Default | Meaning |
    | --- | --- | --- |
    | `--dest PATH` | `~/.anemll-embeddings` | Parent directory (`ANEMLL_EMBEDDINGS_HOME` overrides the default) |
-   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
+   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=18e1b7e85cdf0c58d924c5d270c7a4be1a40159a`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
    | `--verify` | off | Re-hash files already on disk against the pinned digests |
    | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then the [default locations](#core-ai-runtime) | Value printed for `ANEMLL_COREAI_PYTHON` |
 
@@ -165,14 +167,14 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra, macOS 27.0**. On **M5 / macOS
    overall_placement=fullyOnANE
    ```
 
-   M4 Pro / macOS 27.0 warm first-run p50 is in [Results](#results) (vision 337 ms, audio 10.8 ms, text 34.8 ms). M3 Ultra matches M4 embeddings (cosine 1.000000 / 0.999995) and also runs fully on the ANE.
+   M4 Pro / macOS 27.0 warm p50 is in [Results](#results) (vision 414 ms, audio 11.2 ms, text 34.8 ms). M3 Ultra (vision 466 ms, audio 11.6 ms, text 35.2 ms) and M5 / macOS 27.2 also run fully on the ANE.
 
    **Troubleshooting**
 
    - A **cold** first warmup of ~111 s on M3 Ultra is normal (compile + write the cache). A **warm** load is ~0.06–0.1 s per tower.
    - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect Core AI's home: `python scripts/warmup.py --coreai-home /path/to/writable/home` (same as `export CFFIXED_USER_HOME=…`; the cache becomes `<home>/Library/Caches/coreai-cache`). Core AI has no free-form cache path, so `--cache-dir` only accepts a path ending in `Library/Caches/coreai-cache` and rejects anything else. Set `CFFIXED_USER_HOME` for later runs too (samples, demo) so they reuse that cache.
    - "no Core AI Python found" / "cannot import coreai.runtime": set up the [Core AI runtime](#core-ai-runtime) or set `ANEMLL_COREAI_PYTHON`.
-   - On macOS 27.2 / M5, vision and text report `no (GPU)`. They work and match the reference; they currently run on the GPU because the macOS 27.2 ANE pre-check rejects them. Audio runs on the ANE. `--require-ane` exits 3 there because it requires every tower on the ANE.
+   - On macOS 27.2 (M5), vision and text report `no (GPU)` and `--require-ane` exits 3 if you still have the towers from before the softmax fix (Hugging Face revision `1cbb580` or older). They work and match the reference, but the macOS 27.2 ANE check rejects them when Core AI first loads them on that Mac (not at export). Nothing is printed except `Failed to import MPS module`. Rerun `python scripts/download_models.py` to get the re-exported towers.
    - Rerunning `download_models.py` or `warmup.py` is safe. Download skips files that already match the pinned revision.
    - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.
 
@@ -234,13 +236,17 @@ Examples: `python samples/embed_sentence.py --backend mock`, `python samples/ima
 
 ## Results
 
-Measured on an **M4 Pro, macOS 27.0**. Cosine is the Neural Engine package versus the patched PyTorch model in FP32 on CPU. Inputs: the aurora fixture image, the `tone_a4` fixture clip, and a caption plus image tokens (269 tokens).
+Measured on an **M4 Pro, macOS 27.0**, with the re-exported vision and text towers (unfused attention softmax) and the unchanged audio tower. Cosine is the final embedding from the host path with the Neural Engine packages versus the same host path with the patched PyTorch towers in FP32 on CPU (minimum over 12 text fixtures, 8 real photos, and 4 real sounds). p50 is the warm tower forward on the Neural Engine.
 
-| Package | Placement | Cosine vs FP32 CPU | p50 |
+| Package | Placement | Cosine vs FP32 CPU (min) | p50 |
 | --- | --- | --- | --- |
-| `vision_s280` | fully ANE, 1 region | 0.999954 (row min 0.99979) | 337 ms |
-| `audio_s280` | fully ANE, 1 region | 0.999927 (25 valid rows, row min 0.99944) | 10.8 ms |
-| `text_embeds_s320` | fully ANE, 1 region | 0.999963 | 34.8 ms |
+| `vision_s280` | fully ANE, 1 region | 0.999918 (photos) | 414 ms |
+| `audio_s280` | fully ANE, 1 region | 0.998951 (sounds) | 11.2 ms |
+| `text_embeds_s320` | fully ANE, 1 region | 0.999934 (text) | 34.8 ms |
+
+The towers from before the softmax fix measured 339 ms (vision), 11.2 ms (audio) and 34.2 ms (text) on the same Mac, with cosines 0.999903 / 0.998908 / 0.999943. Text is unchanged; vision is about 22% slower. The audio cosine is the same with both sets (the audio package did not change).
+
+M3 Ultra, macOS 27.0, same packages: vision 466 ms (was 349 ms), audio 11.6 ms, text 35.2 ms (was 35.2 ms); cosine 0.999891 (photos), 0.998951 (sounds), 0.999934 (text).
 
 Each tower is one ANE region: `mps.fullyPlacedOnANE` and `mps.noGPUActivity`, with no GPU or CPU regions and no ANE validation messages.
 
@@ -255,15 +261,23 @@ End-to-end `Embedder(compute="ane")` scores on the same M4 Pro (cosine between t
 | bark vs `a dog barking` | 0.721 |
 | bark vs `a cat meowing` | 0.661 |
 
-About **35 ms** per sentence, **380 ms** per photo, **50 ms** per sound.
+The pair scores above were measured with the towers from before the softmax fix. The re-exported towers give the same embeddings as those to cosine 0.99998 or better for text and photos and 0.99991 for sounds on the same Mac.
+
+With the re-exported towers: about **35 ms** per sentence, **450 ms** per photo, **45 ms** per sound on the M4 Pro (was about 375 ms per photo).
 
 ### M5, macOS 27.2
 
-Measured on an **Apple M5 (32 GB), macOS 27.2**, with the same tower packages. All three towers work and match the reference. Audio runs on the Neural Engine; vision and text currently run on the GPU because the macOS 27.2 ANE pre-check rejects them (`invalid MLIR-MPS program`). A fix that puts the text tower on the Neural Engine on macOS 27.2 is being investigated.
+Measured on an **Apple M5 (32 GB), macOS 27.2**. With the re-exported vision and text towers, all three towers are **fully on the Neural Engine** (`warmup.py --require-ane` exits 0, no GPU regions). The towers from before the fix put vision and text on the GPU, because MPSGraph fuses `matmul -> softmax -> matmul` into an `sdpa` op that the macOS 27.2 ANE check rejects. The check runs when Core AI first loads the tower on that Mac (not at export); no error is printed, the only console output is `Failed to import MPS module`, and the tower lands on the GPU. The fix spells out the softmax; see [docs/M5_ANE_SOFTMAX_FIX.md](docs/M5_ANE_SOFTMAX_FIX.md).
 
-Fixtures matched the reference at cosine **0.99994-0.99997**. A cold first compile and warmup took **9.0 s**, and a warm load took **0.56 s**.
+| Package | Placement | Cosine vs FP32 CPU (min) | p50 on the ANE | Old towers (GPU) |
+| --- | --- | --- | --- | --- |
+| `vision_s280` | fully ANE | 0.999918 (photos) | 426 ms | 99 ms |
+| `audio_s280` | fully ANE | 0.998951 (sounds) | 13.8 ms | 13.4 ms (ANE) |
+| `text_embeds_s320` | fully ANE | 0.999934 (text) | 33 ms | 24-27 ms |
 
-End-to-end `Embedder(compute="ane")` scores on the M5 (cosine between two embeddings, after warmup), next to the M4 Pro numbers above:
+**On the M5 the Neural Engine is slower than the GPU** for vision (about 4x) and text (about 30%). End to end that is about 455 ms per photo on the ANE versus about 123 ms with the old towers on the GPU. The first ANE compile of the re-exported towers took about 24 s for text and 55 s for vision on the M5 (about 30 s and 60-70 s on macOS 27.0); warm loads take well under a second.
+
+End-to-end `Embedder(compute="ane")` scores on the M5 with the towers from before the fix (vision and text on the GPU; cosine between two embeddings, after warmup), next to the M4 Pro numbers above:
 
 | Pair | M5 | M4 Pro |
 | --- | --- | --- |
@@ -274,7 +288,7 @@ End-to-end `Embedder(compute="ane")` scores on the M5 (cosine between two embedd
 | bark vs `a dog barking` | 0.717 | 0.721 |
 | bark vs `a cat meowing` | 0.652 | 0.661 |
 
-About **32 ms** per sentence, **155 ms** per photo, **46 ms** per sound (warm).
+With those GPU towers: about **32 ms** per sentence, **155 ms** per photo, **46 ms** per sound (warm). The re-exported towers give the same embeddings as those to cosine 0.99992 or better for text and photos and 0.9993 for sounds on the M5.
 
 ## How it works
 
@@ -283,13 +297,14 @@ Deeper notes: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md). In short:
 - The model is three towers (vision ~170M, audio ~300M, text ~270M). Each becomes its own package. The host stitches them; the compiled graphs stay simple.
 - The Neural Engine wants 16-bit (fp16) math. The original PyTorch model forbids fp16 because it produces NaNs. Export still uses an fp16 graph (`cast16`), and rewrites RMSNorm / LayerNorm as `x / max|x|` before squaring so large activations (around 900) do not overflow.
 - Attention and masks were rewritten so every op is legal on the Neural Engine: no fused attention with mismatched key/value shapes, no 1-bit masks, no `-inf` (that is NaN in fp16; we use `-1e4`), no `aten.unfold`, no 64-bit gathers. Those were the old GPU/CPU leftovers. They are gone on the M4 Pro packages above.
+- Attention softmax is spelled out as `amax`/`sub`/`exp`/`sum`/`reciprocal`/`mul`. A plain `softmax` between the two attention matmuls is fused by MPSGraph into an `sdpa` op that the macOS 27.2 ANE check rejects when the tower is first loaded on that Mac ([details](docs/M5_ANE_SOFTMAX_FIX.md)).
 
 The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 
 ## Limitations
 
-- Fully-ANE placement is validated on M4 Pro and M3 Ultra running macOS 27.0.
-- On M5 / macOS 27.2 all three towers work and match the reference (cosine 0.99994-0.99997). Audio runs on the Neural Engine; vision and text currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with `invalid MLIR-MPS program`).
+- Fully-ANE placement is validated on M4 Pro and M3 Ultra running macOS 27.0, and on M5 running macOS 27.2.
+- The unfused attention softmax that makes vision and text place on the ANE on macOS 27.2 makes vision about 22-34% slower on macOS 27.0 (414-466 ms instead of 339-349 ms). On the M5 the ANE is slower than the GPU for vision (about 426 vs 99 ms) and text (about 33 vs 24-27 ms).
 - Audio clips must produce at least one mel frame (about 9 ms at 16 kHz). Shorter clips error instead of returning a bad vector.
 - There is no video package yet. `<|video|>` fixtures are skipped.
 - Weights are not in git. Use `scripts/download_models.py` for inference (~1.49 GB). Use `scripts/download_export_assets.py` only if you will re-convert. Check the [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) terms and the [ANE package card](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) before you download.

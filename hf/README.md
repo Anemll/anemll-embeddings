@@ -31,8 +31,8 @@ shared space, so you can compare any of them with cosine similarity.
 
 | Folder | Package | Input → output | p50 on M4 Pro (ANE) |
 |---|---|---|---|
-| `vision_s280/` | `vision_s280.aimodel` | 2520 image patches → 280 soft tokens | ~337 ms |
-| `audio_s280/` | `audio_s280.aimodel` | 280 mel frames → 70 soft tokens | ~11–26 ms |
+| `vision_s280/` | `vision_s280.aimodel` | 2520 image patches → 280 soft tokens | ~414 ms |
+| `audio_s280/` | `audio_s280.aimodel` | 280 mel frames → 70 soft tokens | ~11-26 ms |
 | `text_embeds_s320/` | `text_embeds_s320.aimodel` | 320 token embeddings → 768-d embedding | ~35 ms |
 | `host/` | tokenizer, processor, `embed_tokens.safetensors` | host-side lookup for `api.Embedder` | - |
 
@@ -44,7 +44,7 @@ descriptor of the same package (not a transformers config). Per-file origin for 
 Images and audio go through their tower first. Their soft tokens are then
 placed into the token sequence and run through `text_embeds_s320`, which
 produces the final embedding. Text goes straight to `text_embeds_s320`.
-End to end that is about 370 ms per image, 50–60 ms per audio clip, and
+End to end that is about 450 ms per image, 45-60 ms per audio clip, and
 35 ms per sentence on an M4 Pro.
 
 `host/` is the slim Google host side (~305 MB): tokenizer, processor /
@@ -62,25 +62,30 @@ Converted from `google/embeddinggemma-2` at revision
 
 - float16 weights and activations (the original is float32)
 - explicit attention (matmul + softmax) instead of fused SDPA, tiled so it stays on the ANE
+- softmax spelled out as max/sub/exp/sum/reciprocal/mul, so macOS 27.2 does not re-fuse attention into an SDPA op the ANE rejects (that check runs when Core AI first loads a tower on the Mac, not at export, and prints only `Failed to import MPS module` before falling back to the GPU)
 - fp16-safe RMSNorm
 - audio relative-position keys precomputed at export
 - vision and audio feed the text backbone as soft tokens interleaved with the text tokens (the host builds `inputs_embeds`)
 - fixed sequence lengths: 2520 patches / 280 frames / 320 tokens
 
-## Validation (M4 Pro and M3 Ultra, macOS 27.0)
+## Validation (M4 Pro and M3 Ultra, macOS 27.0; M5, macOS 27.2)
 
 - All three towers run **fully on the ANE** (no GPU or CPU regions) on
-  M4 Pro and M3 Ultra with macOS 27.0.
-- Cosine of each tower's ANE output vs its FP32 CPU reference:
-  vision **0.999954**, audio **0.999927**, text_embeds **0.999963**.
+  M4 Pro and M3 Ultra with macOS 27.0 and on M5 with macOS 27.2.
+- Cosine of the final embedding vs the same host path with the patched
+  towers in FP32 on CPU (minimum, M4 Pro): photos **0.999918**, sounds
+  **0.998951**, text **0.999934**.
+- Warm p50 on the ANE: M4 Pro vision 414 ms, audio 11.2 ms, text 34.8 ms;
+  M3 Ultra 466 / 11.6 / 35.2 ms; M5 426 / 13.8 / 33 ms. On the M5 the GPU
+  is faster for vision (about 99 ms) and text (about 24-27 ms).
 
 ## Limitations
 
-- Fully-ANE placement is validated on **M4 Pro and M3 Ultra with macOS 27.0**.
-- On **M5 with macOS 27.2**, all three towers work and match the reference
-  (cosine 0.99994-0.99997). Audio runs on the ANE; vision and text currently
-  run on the GPU (the macOS 27.2 ANE pre-check rejects them with "Parsing
-  failed, invalid MLIR-MPS program").
+- Fully-ANE placement is validated on **M4 Pro and M3 Ultra with macOS 27.0**
+  and **M5 with macOS 27.2**.
+- The vision tower is about 22-34% slower on macOS 27.0 than the earlier
+  export (414-466 ms instead of 339-349 ms), because its softmax is spelled
+  out so that it stays on the ANE on macOS 27.2.
 - Video is not converted.
 
 ## Usage
@@ -103,12 +108,12 @@ python scripts/warmup.py --require-ane
 With the default `~/.anemll-embeddings` layout no exports are needed. With a
 custom `--dest`, add the printed export lines to `~/.zshrc` or source them.
 `--require-ane` exits non-zero on Macs where a tower is not fully on the
-Neural Engine (on M5 / macOS 27.2 vision and text currently run on the GPU, so
-it exits non-zero there even though all three towers work).
+Neural Engine. It exits 0 on M4 Pro / M3 Ultra (macOS 27.0) and M5
+(macOS 27.2).
 
-The tower and `host/` files are byte-identical to commit
-`47d05aa218a227e887858fe571f8deb2f2a1d532`; later commits only update this
-card and the notes in `towers.yaml`, and add the root `config.json`. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
+`vision_s280` and `text_embeds_s320` were re-exported with an unfused
+attention softmax at this revision. `audio_s280` and the `host/` files are
+byte-identical to commit `47d05aa218a227e887858fe571f8deb2f2a1d532`. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
 `scripts/download_common.py`) and checks every tower and `host/` file against
 SHA-256 digests on download. `download_models.py` prefers `host/` here. If a pin does not have that
 folder yet, it falls back to the slim files on

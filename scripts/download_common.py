@@ -26,9 +26,11 @@ from api.runtime_paths import (
 )
 
 ANE_REPO = "anemll/anemll-embeddinggemma-2-ane"
-# Towers + mirrored host/ + root config.json on the Hub (towers and host/ are
-# byte-identical to 47d05aa). Override with ANEMLL_ANE_REVISION.
-ANE_REVISION = "1cbb580a392f2d4f57924dbc58fd77cc4351c1b7"
+# Towers + mirrored host/ + root config.json on the Hub. vision_s280 and
+# text_embeds_s320 are the re-exported towers (unfused attention softmax);
+# audio_s280 and host/ are byte-identical to 47d05aa. Override with
+# ANEMLL_ANE_REVISION.
+ANE_REVISION = "18e1b7e85cdf0c58d924c5d270c7a4be1a40159a"
 BASE_REPO = "google/embeddinggemma-2"
 BASE_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 HOST_FOLDER = "host"
@@ -44,9 +46,9 @@ BUNDLE_FILES = ("metadata.json", "main.hash", "main.mlirb")
 # hf/towers.yaml). Git-tracked, so a download is checked against this repo,
 # not against a manifest fetched from the same place as the payload.
 TOWER_MLIRB_SHA256 = {
-    "vision_s280": "d11f9d91a41a978ef419cd15b7b3633d47fc388b5d7327b302f4b4355f68b097",
+    "vision_s280": "5ebb5342a5c78ab2790c82358e3ad90092ea3bbdde6a9dc85a47d4ecc8d37c0c",
     "audio_s280": "bbbd714866d5b37a2ccd9c8ec0899f966dbf5dac66031f886522a8fc6824c35f",
-    "text_embeds_s320": "c52be1ab6401d69bb28b880498a90ca3f5891d419726e1531809584907a2d536",
+    "text_embeds_s320": "8181d927facbcee1817a1bcb5efbd9a502b5468d5c131c0839aa624b7e1b8e1a",
 }
 # SHA-256 of the mirrored host/ payload at ANE_REVISION (host/SHA256SUMS).
 HOST_SHA256 = {

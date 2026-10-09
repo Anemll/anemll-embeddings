@@ -1,12 +1,15 @@
 # Core AI towers in this repo. Signatures read from the packages with
 # coreai.runtime (AIModel.load -> function.desc) on M4 Pro, macOS 27.0.
+# vision_s280 and text_embeds_s320 re-exported with an unfused attention
+# softmax (fully on the ANE on macOS 27.2 too); audio_s280 unchanged.
 # Timings and parity measured with https://github.com/Anemll/anemll-embeddings
-# (fp16, compute=ane). Parity = cosine of the tower output on the Neural
-# Engine vs the FP32 CPU reference of the same tower.
+# (fp16, compute=ane). Parity = minimum cosine of the final embedding (host
+# path) with the Neural Engine packages vs the same host path with the patched
+# towers in FP32 on CPU (12 text fixtures, 8 photos, 4 sounds; M4 Pro).
 base_model: google/embeddinggemma-2
 base_model_revision: 914f7f89142e33e77833254d9c9b90c3cef7303b
 format: coreai .aimodel (assetVersion 2.0, producer coreai-core 1.0.0b2)
-validated_on: Apple M4 Pro, macOS 27.0
+validated_on: Apple M4 Pro and M3 Ultra, macOS 27.0; Apple M5, macOS 27.2
 embedding_dim: 768
 
 towers:
@@ -20,9 +23,9 @@ towers:
     outputs:
       soft_tokens:        {shape: [1, 280, 512],  dtype: float16}
     compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
-    p50_ms: 337                      # observed 327-357 ms per image
-    parity_cosine_vs_fp32: 0.999954
-    main_mlirb_sha256: d11f9d91a41a978ef419cd15b7b3633d47fc388b5d7327b302f4b4355f68b097
+    p50_ms: 414                      # M4 Pro; M3 Ultra 466, M5 426 (GPU-placed older export: 339 / 349 / 99)
+    parity_cosine_vs_fp32: 0.999918  # 8 photos
+    main_mlirb_sha256: 5ebb5342a5c78ab2790c82358e3ad90092ea3bbdde6a9dc85a47d4ecc8d37c0c
 
   audio_s280:
     path: audio_s280/audio_s280.aimodel
@@ -34,8 +37,8 @@ towers:
     outputs:
       soft_tokens:         {shape: [1, 1, 70, 512],  dtype: float16}
     compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
-    p50_ms: 10.8                     # observed 11-26 ms per clip
-    parity_cosine_vs_fp32: 0.999927  # over the real (unmasked) rows
+    p50_ms: 11.2                     # M4 Pro; M3 Ultra 11.6, M5 13.8; observed 11-26 ms per clip
+    parity_cosine_vs_fp32: 0.998951  # 4 sounds, end to end; tower rows vs FP32 0.999927
     main_mlirb_sha256: bbbd714866d5b37a2ccd9c8ec0899f966dbf5dac66031f886522a8fc6824c35f
 
   text_embeds_s320:
@@ -48,9 +51,9 @@ towers:
     outputs:
       embedding:      {shape: [1, 768],      dtype: float16}   # pooled + projected; L2-normalize on the host
     compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
-    p50_ms: 34.8                     # observed 34-42 ms per pass
-    parity_cosine_vs_fp32: 0.999963
-    main_mlirb_sha256: c52be1ab6401d69bb28b880498a90ca3f5891d419726e1531809584907a2d536
+    p50_ms: 34.8                     # M4 Pro; M3 Ultra 35.2, M5 33 (GPU on M5: 24-27)
+    parity_cosine_vs_fp32: 0.999934  # 12 text fixtures
+    main_mlirb_sha256: 8181d927facbcee1817a1bcb5efbd9a502b5468d5c131c0839aa624b7e1b8e1a
 
 host_side:
   # Mirrored under host/ in this repo so inference is one download.
@@ -85,14 +88,13 @@ host_side:
     document: "title: none | text: "
 
 end_to_end_per_input_on_m4_pro:   # tower + text_embeds pass, as the demo measures it
-  image: ~370 ms
-  audio: ~50-60 ms
+  image: ~450 ms
+  audio: ~45-60 ms
   text: ~35 ms
 
 known_limitations:
-  - Fully-ANE placement validated on M4 Pro and M3 Ultra with macOS 27.0.
-  - On M5 with macOS 27.2 all three towers work and match the reference (cosine
-    0.99994-0.99997). audio_s280 runs on the ANE; vision_s280 and text_embeds_s320
-    currently run on the GPU (the macOS 27.2 ANE pre-check rejects them with
-    "Parsing failed, invalid MLIR-MPS program").
+  - Fully-ANE placement validated on M4 Pro and M3 Ultra with macOS 27.0 and on
+    M5 with macOS 27.2.
+  - vision_s280 is about 22-34% slower on macOS 27.0 than the earlier export
+    (unfused softmax). On M5 the GPU is faster than the ANE for vision and text.
   - Video is not converted.

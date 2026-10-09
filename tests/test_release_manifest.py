@@ -33,14 +33,21 @@ def test_committed_manifest_matches_pin() -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["schema"] == rm.SCHEMA
     assert data["version"] == "v0.1.0"
-    # v0.1.0 shipped at HF 90d2ab4; later pins (ANE_REVISION) only add files
-    # (root config.json), so its tower/host digests still match the tables.
+    # v0.1.0 shipped at HF 90d2ab4. Its host/ and audio digests still match the
+    # tables; vision and text were re-exported later.
     assert data["huggingface"]["revision"] == "90d2ab497d423bba4ee29947b274c787bb4a1f0a"
     hub = data["huggingface"]["files"]
     for tower in ("vision_s280", "audio_s280", "text_embeds_s320"):
         assert f"{tower}/{tower}.aimodel/main.mlirb" in hub
     assert "host/embed_tokens.safetensors" in hub
-    for tower, digest in TOWER_MLIRB_SHA256.items():
+    # vision_s280 and text_embeds_s320 were re-exported after v0.1.0 (unfused
+    # softmax); v0.1.0 keeps the towers it shipped with.
+    shipped = dict(
+        TOWER_MLIRB_SHA256,
+        vision_s280="d11f9d91a41a978ef419cd15b7b3633d47fc388b5d7327b302f4b4355f68b097",
+        text_embeds_s320="c52be1ab6401d69bb28b880498a90ca3f5891d419726e1531809584907a2d536",
+    )
+    for tower, digest in shipped.items():
         assert hub[f"{tower}/{tower}.aimodel/main.mlirb"]["sha256"] == digest
     for name, digest in HOST_SHA256.items():
         assert hub[f"host/{name}"]["sha256"] == digest

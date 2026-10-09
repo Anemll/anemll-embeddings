@@ -17,6 +17,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from model.trace_patches import softmax_unfused
+
 # Longest image side in patches for 280 soft tokens with a 3×3 pooler.
 VISION_MAX_SIDE = 280 * 3
 
@@ -139,9 +141,10 @@ def _vision_attn_forward(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """All heads at once ``[B, H, S, D]``, attention in query blocks (fp16, ANE).
 
-    MPSGraph fuses each block into an ANE ``sdpa``; Q, K and V share the
-    ``[B, H, *, D]`` layout, which the ANE needs (it refuses sdpa when K and
-    V shapes differ). Softmax rows are independent, so the blocks are exact.
+    Q, K and V share the ``[B, H, *, D]`` layout. The softmax is spelled out
+    (``softmax_unfused``): a plain ``softmax`` between the two matmuls is fused
+    into ``mps_spi.sdpa``, which the macOS 27.2 ANE pre-check rejects.
+    Softmax rows are independent, so the blocks are exact.
     """
     batch, seq_len, _ = hidden_states.shape
     head_dim = int(self.head_dim)
@@ -182,7 +185,7 @@ def _vision_attn_forward(
             scores = torch.matmul(q_g[:, :, b * rows : (b + 1) * rows], key_t_g) * scale
             if mask is not None:
                 scores = scores + mask
-            parts.append(torch.matmul(torch.softmax(scores, dim=-1), v_g))
+            parts.append(torch.matmul(softmax_unfused(scores), v_g))
         groups.append(torch.cat(parts, dim=2) if n_blocks > 1 else parts[0])
     out = torch.cat(groups, dim=1) if n_groups > 1 else groups[0]
     attn_output = out.transpose(1, 2).reshape(batch, seq_len, hidden)
