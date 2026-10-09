@@ -62,7 +62,7 @@ Converted from `google/embeddinggemma-2` at revision
 
 - float16 weights and activations (the original is float32)
 - explicit attention (matmul + softmax) instead of fused SDPA, tiled so it stays on the ANE
-- softmax spelled out as max/sub/exp/sum/reciprocal/mul, so macOS 27.2 does not re-fuse attention into an SDPA op the ANE rejects
+- softmax spelled out as max/sub/exp/sum/reciprocal/mul, so macOS 27.2 does not re-fuse attention into an SDPA op the ANE rejects (that check runs when Core AI first loads a tower on the Mac, not at export, and prints only `Failed to import MPS module` before falling back to the GPU)
 - fp16-safe RMSNorm
 - audio relative-position keys precomputed at export
 - vision and audio feed the text backbone as soft tokens interleaved with the text tokens (the host builds `inputs_embeds`)

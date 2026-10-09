@@ -15,8 +15,10 @@ All notable changes to this project are documented here.
 - Export: attention softmax is spelled out (`softmax_unfused` in
   `model/trace_patches.py`: `amax`/`sub`/`exp`/`sum`/`reciprocal`/`mul`) in the
   text and vision towers. A plain `softmax` between the two attention matmuls
-  is fused by MPSGraph into `mps_spi.sdpa`, which the macOS 27.2 ANE pre-check
-  rejects, so those towers fell back to the GPU. Re-exported text and vision
+  is fused by MPSGraph into `mps_spi.sdpa`, which the macOS 27.2 ANE check
+  rejects when Core AI first loads the tower on that Mac (not at export; the
+  only console output is `Failed to import MPS module`), so those towers fell
+  back to the GPU. Re-exported text and vision
   towers run fully on the ANE on M5 / macOS 27.2 and on M4 Pro / M3 Ultra,
   macOS 27.0. Text latency is unchanged on 27.0; vision is about 22-34% slower
   there (414-466 ms vs 339-349 ms). On the M5 the ANE is slower than the GPU

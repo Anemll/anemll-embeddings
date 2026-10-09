@@ -121,8 +121,9 @@ def softmax_unfused(scores: torch.Tensor) -> torch.Tensor:
     """Last-dim softmax as ``amax`` / ``sub`` / ``exp`` / ``sum`` / ``reciprocal`` / ``mul``.
 
     A ``softmax`` between two matmuls is fused by MPSGraph into
-    ``mps_spi.sdpa``, which the macOS 27.2 ANE pre-check rejects
-    (``invalid MLIR-MPS program``), so the whole tower lands on the GPU.
+    ``mps_spi.sdpa``, which the macOS 27.2 ANE check rejects when Core AI
+    first loads the tower on the Mac (only ``Failed to import MPS module`` is
+    printed), so the whole tower lands on the GPU.
     The max-subtract form with a final ``divide`` is recognised as a softmax
     again and fused the same way; ``reciprocal`` then ``mul`` is not.
     The row max is needed: valid scores reach ~20 and fp16 ``exp`` overflows

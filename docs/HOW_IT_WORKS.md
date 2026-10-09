@@ -80,7 +80,7 @@ About **35 ms** per sentence, **380 ms** per photo, **50 ms** per sound.
 ## Limitations that come from the hardware
 
 - Validated fully on the ANE on M4 Pro and M3 Ultra (macOS 27.0) and M5 (macOS 27.2).
-- On macOS 27.2 a `matmul -> softmax -> matmul` chain is fused by MPSGraph into an `sdpa` op that the ANE pre-check rejects, so the export spells the softmax out (`softmax_unfused`). That keeps vision and text on the ANE on 27.2, but vision is about 22-34% slower on 27.0 than with the fused softmax, and on the M5 the ANE is slower than the GPU for vision and text. See [M5_ANE_SOFTMAX_FIX.md](M5_ANE_SOFTMAX_FIX.md).
+- On macOS 27.2 a `matmul -> softmax -> matmul` chain is fused by MPSGraph into an `sdpa` op that the ANE check rejects when Core AI first loads the tower on that Mac (not at export; the only console output is `Failed to import MPS module`), so the export spells the softmax out (`softmax_unfused`). That keeps vision and text on the ANE on 27.2, but vision is about 22-34% slower on 27.0 than with the fused softmax, and on the M5 the ANE is slower than the GPU for vision and text. See [M5_ANE_SOFTMAX_FIX.md](M5_ANE_SOFTMAX_FIX.md).
 - Audio shorter than one mel frame (about 9 ms at 16 kHz) cannot produce a soft token.
 
 ## History

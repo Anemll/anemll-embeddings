@@ -14,8 +14,10 @@ older towers.
   back to the GPU; `audio_s280` stays on the ANE.
 - Cause: a `softmax` between the two attention matmuls
   (`q @ K^T -> softmax -> @ V`). MPSGraph fuses that chain into an
-  `mps_spi.sdpa` op, and the 27.2 ANE pre-check rejects the graph, so Core AI
-  places the whole tower on the GPU.
+  `mps_spi.sdpa` op, and the 27.2 ANE check rejects the graph, so Core AI
+  places the whole tower on the GPU. The check runs when Core AI first loads
+  (specializes) the tower on that Mac, not at export, and prints no error:
+  the only console output is `Failed to import MPS module`.
 - Fix: spell the softmax out as `amax`/`sub`/`exp`/`sum`/`reciprocal`/`mul`
   (`softmax_unfused` in `model/trace_patches.py`), used by the text and vision
   attention.
@@ -62,9 +64,9 @@ Caveats:
   before any dump, so there is no dump of the rejected `sdpa` op, and nothing
   here proves the fused `sdpa` is the cause - only that removing the softmax
   pattern fixes placement.
-- The pre-check message `invalid MLIR-MPS program` was not printed in these
-  runs; the only console output for rejected towers was
-  `Failed to import MPS module`.
+- No rejection message was printed in these runs (earlier notes quoted
+  `invalid MLIR-MPS program`; that string never appeared). The only console
+  output for rejected towers was `Failed to import MPS module`, at first load.
 - The published text package compiles to 4 nested GPU regions
   (`GPU_region_0_nested_0..3`); the new one to a single ANE region.
 

@@ -174,7 +174,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra (macOS 27.0)** and **M5 (macOS
    - A **cold** first warmup of ~111 s on M3 Ultra is normal (compile + write the cache). A **warm** load is ~0.06–0.1 s per tower.
    - If warmup dies while loading, the Core AI cache may be unwritable or a broken symlink (`~/Library/Caches/coreai-cache`). Fix that path, or redirect Core AI's home: `python scripts/warmup.py --coreai-home /path/to/writable/home` (same as `export CFFIXED_USER_HOME=…`; the cache becomes `<home>/Library/Caches/coreai-cache`). Core AI has no free-form cache path, so `--cache-dir` only accepts a path ending in `Library/Caches/coreai-cache` and rejects anything else. Set `CFFIXED_USER_HOME` for later runs too (samples, demo) so they reuse that cache.
    - "no Core AI Python found" / "cannot import coreai.runtime": set up the [Core AI runtime](#core-ai-runtime) or set `ANEMLL_COREAI_PYTHON`.
-   - On macOS 27.2 (M5), vision and text report `no (GPU)` and `--require-ane` exits 3 if you still have the towers from before the softmax fix (Hugging Face revision `1cbb580` or older). They work and match the reference, but the 27.2 ANE pre-check rejects them. Rerun `python scripts/download_models.py` to get the re-exported towers.
+   - On macOS 27.2 (M5), vision and text report `no (GPU)` and `--require-ane` exits 3 if you still have the towers from before the softmax fix (Hugging Face revision `1cbb580` or older). They work and match the reference, but the macOS 27.2 ANE check rejects them when Core AI first loads them on that Mac (not at export). Nothing is printed except `Failed to import MPS module`. Rerun `python scripts/download_models.py` to get the re-exported towers.
    - Rerunning `download_models.py` or `warmup.py` is safe. Download skips files that already match the pinned revision.
    - To force a recompile: `rm -rf ~/Library/Caches/coreai-cache` then run `python scripts/warmup.py` again.
 
@@ -267,7 +267,7 @@ With the re-exported towers: about **35 ms** per sentence, **450 ms** per photo,
 
 ### M5, macOS 27.2
 
-Measured on an **Apple M5 (32 GB), macOS 27.2**. With the re-exported vision and text towers, all three towers are **fully on the Neural Engine** (`warmup.py --require-ane` exits 0, no GPU regions). The towers from before the fix put vision and text on the GPU, because MPSGraph fuses `matmul -> softmax -> matmul` into an `sdpa` op that the macOS 27.2 ANE pre-check rejects. The fix spells out the softmax; see [docs/M5_ANE_SOFTMAX_FIX.md](docs/M5_ANE_SOFTMAX_FIX.md).
+Measured on an **Apple M5 (32 GB), macOS 27.2**. With the re-exported vision and text towers, all three towers are **fully on the Neural Engine** (`warmup.py --require-ane` exits 0, no GPU regions). The towers from before the fix put vision and text on the GPU, because MPSGraph fuses `matmul -> softmax -> matmul` into an `sdpa` op that the macOS 27.2 ANE check rejects. The check runs when Core AI first loads the tower on that Mac (not at export); no error is printed, the only console output is `Failed to import MPS module`, and the tower lands on the GPU. The fix spells out the softmax; see [docs/M5_ANE_SOFTMAX_FIX.md](docs/M5_ANE_SOFTMAX_FIX.md).
 
 | Package | Placement | Cosine vs FP32 CPU (min) | p50 on the ANE | Old towers (GPU) |
 | --- | --- | --- | --- | --- |
@@ -297,7 +297,7 @@ Deeper notes: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md). In short:
 - The model is three towers (vision ~170M, audio ~300M, text ~270M). Each becomes its own package. The host stitches them; the compiled graphs stay simple.
 - The Neural Engine wants 16-bit (fp16) math. The original PyTorch model forbids fp16 because it produces NaNs. Export still uses an fp16 graph (`cast16`), and rewrites RMSNorm / LayerNorm as `x / max|x|` before squaring so large activations (around 900) do not overflow.
 - Attention and masks were rewritten so every op is legal on the Neural Engine: no fused attention with mismatched key/value shapes, no 1-bit masks, no `-inf` (that is NaN in fp16; we use `-1e4`), no `aten.unfold`, no 64-bit gathers. Those were the old GPU/CPU leftovers. They are gone on the M4 Pro packages above.
-- Attention softmax is spelled out as `amax`/`sub`/`exp`/`sum`/`reciprocal`/`mul`. A plain `softmax` between the two attention matmuls is fused by MPSGraph into an `sdpa` op that the macOS 27.2 ANE pre-check rejects ([details](docs/M5_ANE_SOFTMAX_FIX.md)).
+- Attention softmax is spelled out as `amax`/`sub`/`exp`/`sum`/`reciprocal`/`mul`. A plain `softmax` between the two attention matmuls is fused by MPSGraph into an `sdpa` op that the macOS 27.2 ANE check rejects when the tower is first loaded on that Mac ([details](docs/M5_ANE_SOFTMAX_FIX.md)).
 
 The original conversion plan is in [docs/PLAN.md](docs/PLAN.md) (historical).
 
