@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 ## Unreleased
 
 ### Added
+- `Embedder.embed_texts(texts, role=..., dim=..., pack=True)`: embed a list
+  of texts in order, with optional Matryoshka `dim` (128/256/512/768, also on
+  `embed_text`). `samples/grep_embed.py`: semantic grep over the lines of a
+  file.
+- Prototype short-text towers (not published): fixed-shape buckets
+  `text_embeds_s32`/`s64`/`s128`/`s256` and packed towers `text_pack_<N>x<T>`
+  (block-diagonal bias, per-text positions, pooling matrix), exported with
+  `model/export_text_buckets.py`, alone or as one multi-function
+  `text_buckets.aimodel`. The runtime uses them when they sit next to
+  `text_embeds_s320.aimodel`; without them nothing changes. See
+  `docs/TEXT_BUCKETS.md`.
 - Root `config.json` on the Hugging Face package (`hf/config.json` here): a
   small JSON descriptor of the Core AI towers (paths, input/output shapes),
   the base model pin, the 768-d embedding, and where the `host/` files live.

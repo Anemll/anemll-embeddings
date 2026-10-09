@@ -86,6 +86,14 @@ Short posts (192, median 21 tokens): 27.7 texts/s on `s320`, 243.6 with
 buckets, 623.8 packed (auto). Every packed row matched its `s320` result
 with cosine >= 0.999988.
 
+Tower-time figures repeat within a few percent between runs. Wall figures
+do not: a later run on the same Mac (combined package, scratch and Core AI
+cache on an external SSD instead of the internal one) gave 23.6 / 157.8 /
+469.3 texts/s wall for `s320` / buckets / auto on the same lines, with 29.2 /
+329 / 758 tower-time. The gap is host-side per-call cost (npz file and JSON
+line to the worker), so it shows most with many small calls. Treat the wall
+numbers as 15x to 25x over `s320` and the tower-time as the steady part.
+
 Wall time includes about 1.3 ms (bucket) to 2.8 ms (packed feed) of worker
 round trip per call (npz file, JSON line, copies).
 
