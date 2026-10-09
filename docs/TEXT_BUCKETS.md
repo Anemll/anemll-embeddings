@@ -152,3 +152,24 @@ python model/export_text_buckets.py --artifacts ~/text-buckets \
 CFFIXED_USER_HOME=/tmp/fresh-cache python model/bench_text_buckets.py \
     --artifacts <artifacts dir> --model <host model dir> --json bench.json
 ```
+
+## Swift API (macOS 27 SDK)
+
+The macOS 27 SDK ships `CoreAI.framework` (re-exports `CoreAIDelegates`) and
+`CoreAIRuntime.framework` (under `System/Library/SubFrameworks`), both with
+`.swiftinterface` files and no C headers. `CoreAIRuntime` has `AIModel`
+(`functionNames`, `functionDescriptor(for:)`), `InferenceFunction`
+(`run(inputs: [String: NDArray], ...)` and an async `encode`), `NDArray`,
+`NDArrayDescriptor`, `ComputeStream` and Metal-buffer interop. So a Swift app
+can list and run the functions of a multi-function package such as
+`text_buckets.aimodel` and pick a bucket or pack function per call. The Swift
+adapter in this repo has not been changed; this branch only touches the
+Python host.
+
+## Open questions
+
+- Ship the extra towers on Hugging Face (combined package or per-tower)?
+  Not done: no HF upload from this branch.
+- Check the FluidInference repo license before any code reuse.
+- Swift adapter: add bucket and pack selection there too?
+- Results are from macOS 27.0 on an M4 Pro; the M5 on 27.2 is not measured.
