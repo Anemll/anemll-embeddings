@@ -97,6 +97,34 @@ numbers as 15x to 25x over `s320` and the tower-time as the steady part.
 Wall time includes about 1.3 ms (bucket) to 2.8 ms (packed feed) of worker
 round trip per call (npz file, JSON line, copies).
 
+## Results on Apple M5 Max, macOS 27.2
+
+Independent run on a different chip and OS (reported by a separate test of
+draft PR #16, head `0f3b2ee`; M5 Max, macOS 27.2). Same code, fresh Core AI
+cache.
+
+- Placement: all eight functions (`text_embeds_s32`, `s64`, `s128`, `s256`,
+  `text_pack_128x8`, `text_pack_256x8`, `text_pack_256x16`, and the
+  prototype package's own `text_embeds_s320`) are `fullyOnANE`.
+- Parity: cosine >= 0.99999 against the shipped `text_embeds_s320`.
+- Tests: 181 passed (the same unit suite), hardware tests passed.
+
+| Function | warm p50, one call (M5 Max, macOS 27.2) | M4 Pro, macOS 27.0 |
+|---|---|---|
+| `text_embeds_s32` | 2.8 ms | 3.0 ms |
+| `text_embeds_s64` | 3.6 ms | 4.3 ms |
+| `text_embeds_s128` | 6.4 ms | 7.1 ms |
+| `text_embeds_s256` | 13.5 ms | 15.4 ms |
+| `text_embeds_s320` (shipped) | 31.5 ms | 35.1 ms |
+
+Packed batches ran at about 747-779 texts/s on the M5 Max (as reported; the
+report does not say whether that is wall or tower time, and the M5 Max pack
+p50 values were not part of it). For comparison, the M4 Pro packed plans
+above gave 418-666 texts/s wall and 520-860 tower time in the first run, and
+307-481 wall and 485-843 tower time in the later run. The M4 Pro column in
+the table is that later run (combined package, external SSD); the first
+table above is the earlier run.
+
 ## Package sizes and Core AI multi-function packages
 
 Each separate package carries its own copy of the weights:
@@ -126,6 +154,43 @@ The first load specializes every function in the package for the chip.
 So shipping one combined `text_buckets.aimodel` (or replacing
 `text_embeds_s320` with it) costs about 21 MB, not about 2 GB.
 
+### Decision: the combined package does not carry its own `text_embeds_s320`
+
+The first prototype package also contained a re-exported `text_embeds_s320`.
+Compared on an M4 Pro (macOS 27.0, fresh cache, 162 texts: the 12 fixtures
+plus 150 source lines, host path with extras off, so every text runs on the
+one function):
+
+| | shipped `text_embeds_s320` package | `text_embeds_s320` inside the combined package |
+|---|---|---|
+| placement (per-function manifest) | fullyOnANE | fullyOnANE |
+| cosine between the two | 1.0 (min over 162 texts) | |
+| end-to-end p50, one short query | 42.4 ms | 42.5 ms |
+| bytes in `main.mlirb` | 290.9 MB (own package) | +17.4 MB (311.9 MB vs 294.5 MB without it) |
+
+The outputs are identical and the speed is the same, so the copy adds only
+17.4 MB of download and one more function to specialize at first load. The
+host never used it (the shipped tower is loaded first and a function with the
+same name is skipped). The combined package therefore holds only the four
+buckets and the three packs: export with `--buckets 32,64,128,256`
+(294.5 MB, about 3.6 MB more than `text_embeds_s320` alone).
+
+### Placement caveat for a fresh multi-function export
+
+On the same M4 Pro, the combined package built on 2026-10-09 10:14 (with
+`s320`) is `fullyOnANE` for every function (fresh cache, `scripts/warmup.py
+--require-ane` exits 0 again today). Four later exports from the same code
+(`--buckets 32,64,128,256` with and without `s320`, with and without
+`--skip-check`, buckets only, packs only) all load but report every extra
+function as GPU, while a separate single-function `text_embeds_s32.aimodel`
+exported today is fully on the ANE. The cause is not found yet; it is not
+the extra `s320`, the pack math check, or free disk space on the home volume
+(3 GB or more was free during the compiles). `scripts/warmup.py --require-ane`
+now catches this per function, and the host ignores extras that are not fully
+on the ANE, so such a package is harmless but gives no speed-up. Re-check any
+final export with `warmup.py --require-ane` on a fresh cache before it is
+uploaded.
+
 ## Host
 
 - `api/text_batch.py` (numpy only): bucket choice, pack planning
@@ -147,8 +212,10 @@ So shipping one combined `text_buckets.aimodel` (or replacing
 ```bash
 # export (embeddings venv; conversion uses ANEMLL_COREAI_PYTHON)
 python model/export_text_buckets.py --artifacts ~/text-buckets \
-    --buckets 32,64,128,256,320 --pack 128x8,256x8,256x16 --layout multi
-# then put text_buckets.aimodel next to text_embeds_s320.aimodel and
+    --buckets 32,64,128,256 --pack 128x8,256x8,256x16 --layout multi
+# then put text_buckets.aimodel next to text_embeds_s320.aimodel, check it
+python scripts/warmup.py --require-ane   # every function must say yes, on a fresh cache
+# and
 CFFIXED_USER_HOME=/tmp/fresh-cache python model/bench_text_buckets.py \
     --artifacts <artifacts dir> --model <host model dir> --json bench.json
 ```
@@ -169,7 +236,10 @@ Python host.
 ## Open questions
 
 - Ship the extra towers on Hugging Face (combined package or per-tower)?
-  Not done: no HF upload from this branch.
+  Not done: no HF upload from this branch. The download path is staged
+  (placeholders in `scripts/download_common.py`, `hf/config.json`,
+  `hf/towers.yaml`). Blocker: a fresh export must first land fully on the
+  ANE (see the placement caveat above).
 - Check the FluidInference repo license before any code reuse.
 - Swift adapter: add bucket and pack selection there too?
-- Results are from macOS 27.0 on an M4 Pro; the M5 on 27.2 is not measured.
+- Measured on an M4 Pro (macOS 27.0) and an M5 Max (macOS 27.2). M3 Ultra and the base M5 are not measured with these towers.

@@ -120,9 +120,9 @@ embedder.close()
 
 `embed_texts` returns L2-normalized `float32` rows in input order. `dim` is one of 128, 256, 512 or 768 (the sizes the model card lists): the first `dim` values are kept and normalized again. Compare vectors only at the same `dim`. `embed_text(..., dim=...)` does the same for one text. `pack=False` runs one text per call.
 
-With only the published towers, every text runs on `text_embeds_s320` (about 35 ms per text on an M4 Pro). Optional extra text packages next to `text_embeds_s320.aimodel` are picked up automatically (prototype, not on Hugging Face yet; see [docs/TEXT_BUCKETS.md](../docs/TEXT_BUCKETS.md)):
+With only the published towers, every text runs on `text_embeds_s320` (about 35 ms per text on an M4 Pro, 31.5 ms on an M5 Max). Optional extra text packages next to `text_embeds_s320.aimodel` are picked up automatically (prototype, not on Hugging Face yet; M4 Pro on macOS 27.0 and M5 Max on macOS 27.2 are fully on the ANE with the prototype package; packed batches ran at about 747-779 texts/s on the M5 Max; see [docs/TEXT_BUCKETS.md](../docs/TEXT_BUCKETS.md)):
 
-- buckets `text_embeds_s32` / `s64` / `s128` / `s256`: a text runs on the smallest one that holds it (3.2 ms for a short query instead of 34 ms);
+- buckets `text_embeds_s32` / `s64` / `s128` / `s256`: a text runs on the smallest one that holds it (3.0 ms for a short query instead of 35 ms on an M4 Pro; 2.8 ms instead of 31.5 ms on an M5 Max, macOS 27.2);
 - packed towers `text_pack_<N>x<T>`: up to T short texts in one N-token call, rows identical to one-text calls (cosine >= 0.99999);
 - or one combined `text_buckets.aimodel` with all of these functions (about 300 MB, shared weights).
 

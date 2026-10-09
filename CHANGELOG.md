@@ -15,7 +15,21 @@ All notable changes to this project are documented here.
   `model/export_text_buckets.py`, alone or as one multi-function
   `text_buckets.aimodel`. The runtime uses them when they sit next to
   `text_embeds_s320.aimodel`; without them nothing changes. See
-  `docs/TEXT_BUCKETS.md`.
+  `docs/TEXT_BUCKETS.md`. Measured on an M4 Pro (macOS 27.0) and an M5 Max
+  (macOS 27.2): every function fully on the Neural Engine, cosine >= 0.99999
+  against the shipped `text_embeds_s320`. The combined package no longer
+  carries its own `text_embeds_s320` (identical output, same speed, 17.4 MB
+  smaller); export with `--buckets 32,64,128,256`.
+- `scripts/warmup.py` loads `text_buckets.aimodel` when it is present, lists
+  each bucket / pack function with its own placement (read from the compiled
+  manifest), and `--require-ane` covers them. `--no-text-buckets` skips them.
+- `scripts/download_models.py` knows the optional combined package
+  `text_buckets/text_buckets.aimodel` (fetch, SHA-256 check, symlink). It is
+  not on the Hub yet: its revision and digests are marked placeholders in
+  `scripts/download_common.py`, `hf/config.json` and `hf/towers.yaml`, and the
+  download is skipped (`text_buckets=not-published`) until they are filled in.
+  `--no-text-buckets` skips it. `hf/config.json` is staged for the next Hub
+  revision (`ROOT_CONFIG_STAGED_SHA256`); the published pin is unchanged.
 - Root `config.json` on the Hugging Face package (`hf/config.json` here): a
   small JSON descriptor of the Core AI towers (paths, input/output shapes),
   the base model pin, the 768-d embedding, and where the `host/` files live.
@@ -57,6 +71,14 @@ All notable changes to this project are documented here.
   verifies it against `ROOT_CONFIG_SHA256` like the other pinned files.
   Existing installs see the new pin and refresh; unchanged files are not
   downloaded again.
+
+### Fixed
+- Warm Core AI cache: `scripts/warmup.py` (and the demo's `/health`) reported
+  `vision_s280` as `unknown` on a second run, so `--require-ane` exited 3,
+  although the cached manifest shows vision fully on the Neural Engine. The
+  placement lookup stripped whitespace bytes from the binary `main.hash`;
+  vision's hash ends in `0x0c`, so the cache folder name came out one byte
+  short. The raw bytes are now used as is. Also on `main`.
 
 ## 0.1.0
 
