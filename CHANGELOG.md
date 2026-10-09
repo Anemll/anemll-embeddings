@@ -10,6 +10,13 @@ All notable changes to this project are documented here.
   the base model pin, the 768-d embedding, and where the `host/` files live.
   It is not a transformers config. The Hub's default download counter counts
   requests to a root `config.json`, so installs now show up as downloads.
+- New `vision_s280` and `text_embeds_s320` towers on Hugging Face at
+  `18e1b7e85cdf0c58d924c5d270c7a4be1a40159a`, exported with the unfused
+  attention softmax (`main.mlirb` sha256 `5ebb5342...` vision, `8181d927...`
+  text). One export for every Mac: fully on the Neural Engine on M4 Pro /
+  M3 Ultra (macOS 27.0) and M5 (macOS 27.2). Vision is 22-34% slower on
+  macOS 27.0 than the previous export (414-466 ms vs 339-349 ms); text is
+  unchanged there. `audio_s280`, `host/` and `config.json` are unchanged.
 
 ### Changed
 - Export: attention softmax is spelled out (`softmax_unfused` in
@@ -26,9 +33,11 @@ All notable changes to this project are documented here.
   `model/parity_text_embeds_ab.py` (text-only package A/B parity) and
   `tests/test_softmax_unfused.py`. See `docs/M5_ANE_SOFTMAX_FIX.md`.
 - `ANE_REVISION` pinned to Hugging Face commit
-  `1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` (adds the root `config.json`, updates
-  the card and the `towers.yaml` notes; towers and `host/` byte-identical to
-  `47d05aa`).
+  `18e1b7e85cdf0c58d924c5d270c7a4be1a40159a` with the re-exported `vision_s280`
+  (`main.mlirb` sha256 `5ebb5342...`) and `text_embeds_s320` (`8181d927...`);
+  `audio_s280` and `host/` byte-identical to `47d05aa`. Earlier in this
+  release cycle the pin was `1cbb580` (adds the root `config.json`).
+  Existing installs see the new pin and download the two new towers.
 - README, HF card, `towers.yaml`, and docs: all three towers fully on the
   Neural Engine on M4 Pro / M3 Ultra (macOS 27.0) and M5 (macOS 27.2) with the
   re-exported vision and text towers, with the measured timings and cosines.

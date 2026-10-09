@@ -25,7 +25,7 @@ towers:
     compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
     p50_ms: 414                      # M4 Pro; M3 Ultra 466, M5 426 (GPU-placed older export: 339 / 349 / 99)
     parity_cosine_vs_fp32: 0.999918  # 8 photos
-    main_mlirb_sha256: d11f9d91a41a978ef419cd15b7b3633d47fc388b5d7327b302f4b4355f68b097
+    main_mlirb_sha256: 5ebb5342a5c78ab2790c82358e3ad90092ea3bbdde6a9dc85a47d4ecc8d37c0c
 
   audio_s280:
     path: audio_s280/audio_s280.aimodel
@@ -53,7 +53,7 @@ towers:
     compute: fully on ANE (fullyOnANE, no GPU/CPU regions)
     p50_ms: 34.8                     # M4 Pro; M3 Ultra 35.2, M5 33 (GPU on M5: 24-27)
     parity_cosine_vs_fp32: 0.999934  # 12 text fixtures
-    main_mlirb_sha256: c52be1ab6401d69bb28b880498a90ca3f5891d419726e1531809584907a2d536
+    main_mlirb_sha256: 8181d927facbcee1817a1bcb5efbd9a502b5468d5c131c0839aa624b7e1b8e1a
 
 host_side:
   # Mirrored under host/ in this repo so inference is one download.

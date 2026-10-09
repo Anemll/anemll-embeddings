@@ -47,7 +47,7 @@ One input (for example the phrase “white house”) always gives exactly one ve
 | `docs/` | How it works, historical plan, diagrams |
 | `tests/` | Unit and API tests |
 
-**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`). Inference is one download from that repo. If `host/` is missing on the pin, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
+**Model weights are not in this git repo.** The converted Neural Engine packages and the slim `host/` folder (tokenizer, processor, extracted embed table) live on Hugging Face at [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) (commit `18e1b7e85cdf0c58d924c5d270c7a4be1a40159a`). Inference is one download from that repo. If `host/` is missing on the pin, `scripts/download_models.py` falls back to [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) at `914f7f89142e33e77833254d9c9b90c3cef7303b` (still not the full 1.49 GB `model.safetensors`). Re-export uses that full checkpoint. Both are Apache-2.0 under Google’s terms, not MIT.
 
 ## Requirements
 
@@ -103,7 +103,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra (macOS 27.0)** and **M5 (macOS
 
    | What | Source | Size |
    | --- | --- | --- |
-   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 1cbb580a392f2d4f57924dbc58fd77cc4351c1b7` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
+   | ANE towers (`vision_s280`, `audio_s280`, `text_embeds_s320`) | [anemll/anemll-embeddinggemma-2-ane](https://huggingface.co/anemll/anemll-embeddinggemma-2-ane) `@ 18e1b7e85cdf0c58d924c5d270c7a4be1a40159a` | **~1.19 GB** (vision 307 MB, audio 589 MB, text_embeds 291 MB) |
    | Host tokenizer / processor / configs | same repo, `host/` (fallback: [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) `@ 914f7f89142e33e77833254d9c9b90c3cef7303b`) | **~37 MB** (`tokenizer.json` 32.2 MB, `tokenizer.model` 4.7 MB, plus `config.json`, processor / preprocessor configs, tokenizer config, chat template) |
    | Embed table `embed_tokens.safetensors` | same repo, `host/` (extracted from Google’s `model.safetensors`; not a full-weights download) | **256 MiB** (268,435,456 bytes, BF16 `[262144, 512]`, plus Gemma `sqrt(512)` scale) |
    | Package descriptor `config.json` | same repo, root (towers, shapes, `host/` paths; not a transformers config) | **~3 KB** |
@@ -138,7 +138,7 @@ Fully on the Neural Engine on **M4 Pro / M3 Ultra (macOS 27.0)** and **M5 (macOS
    | Flag | Default | Meaning |
    | --- | --- | --- |
    | `--dest PATH` | `~/.anemll-embeddings` | Parent directory (`ANEMLL_EMBEDDINGS_HOME` overrides the default) |
-   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=1cbb580a392f2d4f57924dbc58fd77cc4351c1b7`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
+   | `--force` | off | Re-download even if the pinned revision is already on disk. Otherwise the script skips. Revisions are pinned in `scripts/download_common.py` (`ANE_REVISION=18e1b7e85cdf0c58d924c5d270c7a4be1a40159a`, overridable with `ANEMLL_ANE_REVISION`); there is no `--revision` flag. |
    | `--verify` | off | Re-hash files already on disk against the pinned digests |
    | `--coreai-python PATH` | `$ANEMLL_COREAI_PYTHON`, then the [default locations](#core-ai-runtime) | Value printed for `ANEMLL_COREAI_PYTHON` |
 

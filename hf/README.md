@@ -111,9 +111,9 @@ custom `--dest`, add the printed export lines to `~/.zshrc` or source them.
 Neural Engine. It exits 0 on M4 Pro / M3 Ultra (macOS 27.0) and M5
 (macOS 27.2).
 
-The tower and `host/` files are byte-identical to commit
-`47d05aa218a227e887858fe571f8deb2f2a1d532`; later commits only update this
-card and the notes in `towers.yaml`, and add the root `config.json`. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
+`vision_s280` and `text_embeds_s320` were re-exported with an unfused
+attention softmax at this revision. `audio_s280` and the `host/` files are
+byte-identical to commit `47d05aa218a227e887858fe571f8deb2f2a1d532`. The GitHub repo pins an exact revision of this repo (`ANE_REVISION` in
 `scripts/download_common.py`) and checks every tower and `host/` file against
 SHA-256 digests on download. `download_models.py` prefers `host/` here. If a pin does not have that
 folder yet, it falls back to the slim files on
