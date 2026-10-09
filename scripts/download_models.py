@@ -11,6 +11,11 @@ Writes:
     <dest>/ane/                              ANE towers + config.json (+ host/ when mirrored)
     <dest>/embeddinggemma-2/                 tokenizer / processor / embed_tokens.safetensors
     <dest>/artifacts/coreai/<name>.aimodel   symlinks Embedder expects
+
+The combined short-text package ``text_buckets/text_buckets.aimodel`` is
+optional and not published yet: it is skipped (``text_buckets=not-published``)
+until ``TEXT_BUCKETS_REVISION`` and its digests are pinned in
+``scripts/download_common.py``. ``--no-text-buckets`` skips it even then.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import download_common  # noqa: E402
 from scripts.download_common import (  # noqa: E402
     ANE_INFERENCE_ALLOW,
     ANE_REPO,
@@ -35,6 +41,8 @@ from scripts.download_common import (  # noqa: E402
     INFERENCE_HOST_ALLOW,
     INFERENCE_HOST_IGNORE,
     SLIM_EMBED_NAME,
+    TEXT_BUCKETS,
+    TEXT_BUCKETS_ALLOW,
     TOWERS,
     all_bundles_complete,
     ane_revision,
@@ -51,6 +59,10 @@ from scripts.download_common import (  # noqa: E402
     package_checksums,
     revision_matches,
     snapshot,
+    text_buckets_checksums,
+    text_buckets_complete,
+    text_buckets_download_bytes,
+    text_buckets_published,
     verify_sha256,
     write_revision,
 )
@@ -72,6 +84,40 @@ def verify_ane(ane_dir: Path, rev: str) -> str:
         return "unpinned"
     _check(verify_sha256(package_checksums(ane_dir)), "ANE towers + config.json")
     return "ok"
+
+
+def verify_text_buckets(ane_dir: Path) -> str:
+    """Check ``main.mlirb`` / ``main.hash`` of the combined text package."""
+    if not text_buckets_published():
+        return "not-published"
+    if not text_buckets_complete(ane_dir):
+        return "absent"
+    _check(verify_sha256(text_buckets_checksums(ane_dir)), f"{TEXT_BUCKETS}.aimodel")
+    return "ok"
+
+
+def download_text_buckets(ane_dir: Path, *, force: bool, enabled: bool = True) -> str:
+    """Fetch the optional combined text package once it has a pin.
+
+    Returns ``disabled``, ``not-published`` (no pinned revision / digests yet;
+    nothing is fetched), ``skipped`` (already on the pinned revision) or
+    ``downloaded``. Failing verification aborts, like the main towers.
+    """
+    if not enabled:
+        return "disabled"
+    if not text_buckets_published():
+        return "not-published"
+    folder = ane_dir / TEXT_BUCKETS
+    rev = str(download_common.TEXT_BUCKETS_REVISION)
+    if not force and text_buckets_complete(ane_dir) and revision_matches(folder, rev):
+        return "skipped"
+    print(f"download {ANE_REPO}/{TEXT_BUCKETS} @{rev} -> {folder}")
+    snapshot(ANE_REPO, rev, ane_dir, allow_patterns=TEXT_BUCKETS_ALLOW)
+    if not text_buckets_complete(ane_dir):
+        raise SystemExit(f"download finished but {TEXT_BUCKETS}.aimodel is incomplete")
+    verify_text_buckets(ane_dir)
+    write_revision(folder, rev)
+    return "downloaded"
 
 
 def verify_mirrored_host(folder: Path, rev: str) -> str:
@@ -170,6 +216,12 @@ def main(argv: list[str] | None = None) -> int:
         "(fresh downloads are always verified)",
     )
     parser.add_argument(
+        "--no-text-buckets",
+        action="store_true",
+        help="skip the optional combined text package (short-text buckets and packed "
+        "towers); it is only fetched once it is published and pinned",
+    )
+    parser.add_argument(
         "--coreai-python",
         type=Path,
         default=None,
@@ -181,7 +233,9 @@ def main(argv: list[str] | None = None) -> int:
     ane_dir = dest / "ane"
     model_dir = dest / "embeddinggemma-2"
     artifacts = dest / "artifacts"
-    total = inference_download_bytes()
+    total = inference_download_bytes() + (
+        0 if args.no_text_buckets else text_buckets_download_bytes()
+    )
     rev = ane_revision()
 
     print(
@@ -191,6 +245,9 @@ def main(argv: list[str] | None = None) -> int:
         f"About {format_gb(total)} on disk. No HF login. Weights Apache-2.0; code MIT."
     )
     ane_status = download_ane(ane_dir, force=bool(args.force))
+    text_status = download_text_buckets(
+        ane_dir, force=bool(args.force), enabled=not args.no_text_buckets
+    )
     host_status = download_host(model_dir, ane_dir=ane_dir, force=bool(args.force))
     embed_status = "mirrored"
     if not host_payload_complete(model_dir):
@@ -199,6 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"missing {model_dir / SLIM_EMBED_NAME}")
     if args.verify:
         print(f"verify towers: {verify_ane(ane_dir, rev)}")
+        print(f"verify {TEXT_BUCKETS}: {verify_text_buckets(ane_dir)}")
         if (ane_dir / HOST_FOLDER).is_dir():
             print(f"verify host/: {verify_mirrored_host(ane_dir / HOST_FOLDER, rev)}")
     links = link_coreai(artifacts, ane_dir)
@@ -207,7 +265,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.coreai_python is not None
         else coreai_python_export()
     )
-    print(f"ane={ane_status}  host={host_status}  embed={embed_status}  links={links}")
+    print(
+        f"ane={ane_status}  {TEXT_BUCKETS}={text_status}  host={host_status}  "
+        f"embed={embed_status}  links={links}"
+    )
     print()
     print("# add these to your shell (~/.zshrc or a sourced env file):")
     print(env_exports(artifacts=artifacts, model=model_dir, coreai_python=py))

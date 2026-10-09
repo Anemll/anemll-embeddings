@@ -36,6 +36,8 @@ shared space, so you can compare any of them with cosine similarity.
 | `text_embeds_s320/` | `text_embeds_s320.aimodel` | 320 token embeddings → 768-d embedding | ~35 ms |
 | `host/` | tokenizer, processor, `embed_tokens.safetensors` | host-side lookup for `api.Embedder` | - |
 
+An optional multi-function package `text_buckets/text_buckets.aimodel` (short-text buckets and packed batch towers) is **staged but not uploaded**: `config.json` and `towers.yaml` describe it with placeholder digests, and nothing downloads it until it is published and pinned.
+
 Exact input/output names, shapes, dtypes, and checksums are in
 [`towers.yaml`](towers.yaml). The root [`config.json`](config.json) is a short JSON
 descriptor of the same package (not a transformers config). Per-file origin for `host/` is in

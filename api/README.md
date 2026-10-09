@@ -103,6 +103,35 @@ That is a text rule. “Anything significant” on the Alert page is `1 - cosine
 
 ---
 
+## Many texts at once (buckets, packing, Matryoshka)
+
+```python
+from api import Embedder
+
+embedder = Embedder(compute="ane")
+lines = open("notes.txt").read().splitlines()
+docs = embedder.embed_texts(lines, role="document")       # (len(lines), 768), in order
+q = embedder.embed_text("how do I reset the cache")       # (768,)
+best = (docs @ q).argsort()[::-1][:5]
+small = embedder.embed_texts(lines, role="document", dim=256)   # Matryoshka: (n, 256)
+print(embedder.last_batch.as_dict())                      # calls, towers used, tower ms
+embedder.close()
+```
+
+`embed_texts` returns L2-normalized `float32` rows in input order. `dim` is one of 128, 256, 512 or 768 (the sizes the model card lists): the first `dim` values are kept and normalized again. Compare vectors only at the same `dim`. `embed_text(..., dim=...)` does the same for one text. `pack=False` runs one text per call.
+
+With only the published towers, every text runs on `text_embeds_s320` (about 35 ms per text on an M4 Pro, 31.5 ms on an M5 Max). Optional extra text packages next to `text_embeds_s320.aimodel` are picked up automatically (prototype, not on Hugging Face yet; M4 Pro on macOS 27.0 and M5 Max on macOS 27.2 are fully on the ANE with the prototype package; packed batches ran at about 747-779 texts/s on the M5 Max; see [docs/TEXT_BUCKETS.md](../docs/TEXT_BUCKETS.md)):
+
+- buckets `text_embeds_s32` / `s64` / `s128` / `s256`: a text runs on the smallest one that holds it (3.0 ms for a short query instead of 35 ms on an M4 Pro; 2.8 ms instead of 31.5 ms on an M5 Max, macOS 27.2);
+- packed towers `text_pack_<N>x<T>`: up to T short texts in one N-token call, rows identical to one-text calls (cosine >= 0.99999);
+- or one combined `text_buckets.aimodel` with all of these functions (about 300 MB, shared weights).
+
+The host picks one text per call or a packed tower from each tower's measured latency. Only towers that load fully on the ANE are used. `ANEMLL_TEXT_BUCKETS=0` ignores the extras. Other backends (`mock`, `reference`) embed one text at a time.
+
+Semantic grep over a file: `python samples/grep_embed.py notes.txt "how do I reset the cache"` (`--save idx.npz` keeps the vectors, `--load idx.npz QUERY` searches them again, `--dim 256`, `--backend mock`).
+
+---
+
 ## Constructor
 
 ```python
@@ -117,4 +146,4 @@ Embedder(
 
 `backend="reference"` is the full Sentence-Transformers checkpoint on CPU (parity target, not ANE).
 
-Runnable scripts: `samples/embed_sentence.py`, `samples/image_text_search.py`, `samples/sound_matching.py`, `samples/camera_alert_rule.py`.
+Runnable scripts: `samples/embed_sentence.py`, `samples/grep_embed.py`, `samples/image_text_search.py`, `samples/sound_matching.py`, `samples/camera_alert_rule.py`.

@@ -109,9 +109,13 @@ def package_main_hash_hex(pkg: Path) -> str | None:
     path = Path(pkg) / "main.hash"
     if not path.is_file():
         return None
-    raw = path.read_bytes().strip()
+    raw = path.read_bytes()
     if not raw:
         return None
+    # Hex text with a trailing newline is accepted. Do NOT strip raw bytes: a
+    # binary digest may start or end with a whitespace byte (vision_s280's
+    # hash ends in 0x0c), and stripping it changes the folder name, so a warm
+    # start would not find the manifest and report "unknown".
     try:
         text = raw.decode("ascii").strip().lower()
     except UnicodeDecodeError:
@@ -153,6 +157,58 @@ def manifest_label_for_package(pkg: Path, cache: Path | None = None) -> str | No
         return None
     newest = max(found, key=lambda path: path.stat().st_mtime)
     return _label_from_blob(newest.read_bytes())
+
+
+def function_label_from_manifest(blob: bytes, fn_name: str) -> str | None:
+    """Placement of ONE function in a multi-function package's manifest.
+
+    The compiled manifest has an ``Entry Function Attributes`` table keyed
+    by ``<function>_<hash>_<n>``. A function placed whole on the ANE carries
+    ``mps.fullyPlacedOnANE`` there. ``None`` when the function is not listed.
+    """
+    import plistlib
+
+    try:
+        data = plistlib.loads(blob)
+    except Exception:  # noqa: BLE001 - not a plist; caller falls back
+        return None
+    prefix = f"{fn_name}_"
+    found: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "Entry Function Attributes" and isinstance(value, dict):
+                    for name, attrs in value.items():
+                        if str(name).startswith(prefix):
+                            found.append(repr(attrs))
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    if not found:
+        return None
+    text = " ".join(found)
+    if "fullyPlacedOnANE" in text:
+        return "fullyOnANE"
+    if "_ANE_region_" in text:
+        return "ANE+GPU"
+    return "GPU"
+
+
+def function_label_for_package(pkg: Path, fn_name: str, cache: Path | None = None) -> str | None:
+    root = CACHE if cache is None else cache
+    digest = package_main_hash_hex(pkg)
+    if digest is None or not root.is_dir():
+        return None
+    found = _manifests_named(root, digest)
+    if not found:
+        return None
+    newest = max(found, key=lambda path: path.stat().st_mtime)
+    return function_label_from_manifest(newest.read_bytes(), fn_name)
 
 
 def _manifest_label(since: float, cache: Path | None = None) -> str | None:
@@ -212,53 +268,136 @@ def _desc_dtypes(fn) -> dict[str, str]:
     return out
 
 
-async def _load_all(packages: dict[str, str], compute: str) -> dict:
-    from coreai.runtime import AIModel, NDArray
+def _zeros_feed(fn) -> dict[str, np.ndarray]:
+    """Warmup feed from the function's own descriptors (extra text towers).
 
+    Zeros everywhere except ``attention_mask`` (ones), so a bucket sees a
+    full-length text and a packed tower sees an empty pack.
+    """
+    feed = {}
+    for name in list(fn.desc.input_names):
+        desc = fn.desc.input_descriptor(name)
+        shape = tuple(int(dim or 1) for dim in desc.shape)
+        dtype = np.float16 if "16" in str(desc.dtype) else np.float32
+        fill = 1.0 if name == "attention_mask" else 0.0
+        feed[name] = np.full(shape, fill, dtype=dtype)
+    return feed
+
+
+async def _load_one(
+    model, fn_name: str, feed_np, pkg: Path, started: float, spec: str, multi: bool = False
+):
+    from coreai.runtime import NDArray
+
+    fn = model.load_function(fn_name)
+    if feed_np is None:
+        feed_np = _zeros_feed(fn)
+    else:
+        feed_np = feed_np(_desc_dtypes(fn))
+    feed = {name: NDArray(feed_np[name]) for name in fn.desc.input_names}
+    t0 = time.perf_counter()
+    await fn(inputs=feed)
+    warmup_ms = (time.perf_counter() - t0) * 1000.0
+    # A second, warm call: the host uses it to choose between text towers.
+    t0 = time.perf_counter()
+    await fn(inputs=feed)
+    warm_ms = (time.perf_counter() - t0) * 1000.0
+    if multi:
+        # One manifest covers every function; read this function's entry.
+        # Not listed means unknown, never a borrowed ANE label.
+        placement = function_label_for_package(pkg, fn_name) or "unknown"
+    else:
+        placement = _placement(model, started, pkg)
+    row = {
+        "loaded": True,
+        "warmup_ms": warmup_ms,
+        "warm_ms": warm_ms,
+        "placement": placement,
+        "simulated": False,
+        "entry": fn_name,
+        "specialization": spec,
+        "inputs": {
+            name: list(fn.desc.input_descriptor(name).shape) for name in fn.desc.input_names
+        },
+    }
+    return fn, row
+
+
+async def _load_model(pkg: Path, opts):
+    from coreai.runtime import AIModel
+
+    if opts is not None:
+        return await AIModel.load(pkg, specialization_options=opts)
+    return await AIModel.load(pkg)
+
+
+async def _load_all(
+    packages: dict[str, str], compute: str, text_packages: list[str] | None = None
+) -> dict:
     opts, spec = _host_specialization(compute)
     towers: dict[str, dict] = {}
     loaded = {}
     for key in TOWER_ORDER:
+        if key not in packages:
+            continue
         pkg = Path(packages[key])
-        entry = TOWER_ENTRIES[key if key != "text" else "text_embeds"]
-        if key == "text":
-            entry = TOWER_ENTRIES["text_embeds"]
+        entry = TOWER_ENTRIES["text_embeds" if key == "text" else key]
         started = time.time()
         if not pkg.exists():
             raise FileNotFoundError(f"missing {key} package: {pkg}")
         _log(f"load {key} {pkg} spec={spec}")
         t_load = time.perf_counter()
-        if opts is not None:
-            model = await AIModel.load(pkg, specialization_options=opts)
-        else:
-            model = await AIModel.load(pkg)
+        model = await _load_model(pkg, opts)
         names = list(model.function_names)
         fn_name = entry if entry in names else names[0]
-        fn = model.load_function(fn_name)
         load_ms = (time.perf_counter() - t_load) * 1000.0
-        dtypes = _desc_dtypes(fn)
         dummy_key = "text_embeds" if key == "text" else key
-        feed_np = dummy_numpy_inputs(dummy_key, dtypes)
-        feed = {name: NDArray(feed_np[name]) for name in fn.desc.input_names}
-        t0 = time.perf_counter()
-        await fn(inputs=feed)
-        warmup_ms = (time.perf_counter() - t0) * 1000.0
-        place = _placement(model, started, pkg)
-        loaded[key] = fn
-        towers[fn_name] = {
-            "loaded": True,
-            "load_ms": load_ms,
-            "warmup_ms": warmup_ms,
-            "placement": place,
-            "simulated": False,
-            "entry": fn_name,
-            "specialization": spec,
-        }
-        _log(
-            f"ready {fn_name} load_ms={load_ms:.1f} warmup_ms={warmup_ms:.1f} "
-            f"placement={place}"
+        fn, row = await _load_one(
+            model,
+            fn_name,
+            lambda dtypes, k=dummy_key: dummy_numpy_inputs(k, dtypes),
+            pkg,
+            started,
+            spec,
         )
-    places = [row["placement"] for row in towers.values()]
+        row["load_ms"] = load_ms
+        loaded[key] = fn
+        towers[fn_name] = row
+        _log(
+            f"ready {fn_name} load_ms={load_ms:.1f} warmup_ms={row['warmup_ms']:.1f} "
+            f"placement={row['placement']}"
+        )
+    # Optional text buckets / packed towers: every function in each package,
+    # keyed by function name. A failure here leaves the main towers working.
+    for raw in text_packages or []:
+        pkg = Path(raw)
+        started = time.time()
+        try:
+            _log(f"load text extras {pkg} spec={spec}")
+            t_load = time.perf_counter()
+            model = await _load_model(pkg, opts)
+            load_ms = (time.perf_counter() - t_load) * 1000.0
+            names = list(model.function_names)
+            for fn_name in names:
+                if fn_name in towers:
+                    # Same function already loaded from its own package
+                    # (a combined package may also carry text_embeds_s320).
+                    continue
+                fn, row = await _load_one(
+                    model, fn_name, None, pkg, started, spec, multi=len(names) > 1
+                )
+                row["load_ms"] = load_ms
+                row["extra"] = True
+                loaded[fn_name] = fn
+                towers[fn_name] = row
+                _log(
+                    f"ready {fn_name} warmup_ms={row['warmup_ms']:.1f} "
+                    f"placement={row['placement']}"
+                )
+        except Exception as exc:  # noqa: BLE001 - extras are optional
+            _log(f"text extras {pkg} failed: {type(exc).__name__}: {exc}")
+            towers[pkg.name] = {"loaded": False, "extra": True, "error": str(exc)}
+    places = [row["placement"] for row in towers.values() if row.get("loaded")]
     overall = places[0] if places and all(item == places[0] for item in places) else "mixed"
     return {"functions": loaded, "towers": towers, "placement": overall, "specialization": spec}
 
@@ -291,7 +430,11 @@ async def _serve() -> None:
             req = json.loads(line)
             cmd = req.get("cmd")
             if cmd == "load":
-                report = await _load_all(req["packages"], req.get("compute") or "ane")
+                report = await _load_all(
+                    req["packages"],
+                    req.get("compute") or "ane",
+                    req.get("text_packages") or [],
+                )
                 state["functions"] = report.pop("functions")
                 _reply({"ok": True, **{k: v for k, v in report.items()}})
             elif cmd == "forward":
