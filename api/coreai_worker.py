@@ -109,9 +109,13 @@ def package_main_hash_hex(pkg: Path) -> str | None:
     path = Path(pkg) / "main.hash"
     if not path.is_file():
         return None
-    raw = path.read_bytes().strip()
+    raw = path.read_bytes()
     if not raw:
         return None
+    # Hex text with a trailing newline is accepted. Do NOT strip raw bytes: a
+    # binary digest may start or end with a whitespace byte (vision_s280's
+    # hash ends in 0x0c), and stripping it changes the folder name, so a warm
+    # start would not find the manifest and report "unknown".
     try:
         text = raw.decode("ascii").strip().lower()
     except UnicodeDecodeError:
